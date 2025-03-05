@@ -1,6 +1,7 @@
 // ----------------------------------------------------
 // script.js (Tablolu cevap + özel parçalama yaklaşımı) 
 // + Benzersiz user_id üretme (Local Storage)
+// + Görsel popup fonksiyonu
 // ----------------------------------------------------
 
 // 1) Tarayıcıda kalıcı (localStorage) benzersiz kullanıcı ID oluşturma
@@ -27,6 +28,15 @@ function getOrCreateUserId() {
   return newId;
 }
 
+// 2) Görsele tıklanınca modal içinde açmayı sağlayan fonksiyon
+function showPopupImage(imgUrl) {
+  // Modal içindeki büyük resme src atıyoruz
+  $("#popupImage").attr("src", imgUrl);
+  // Bootstrap 4 kullanıyorsanız, data-toggle ve data-target ile modal zaten açılıyor.
+  // Yine de ekstra olarak açmak isterseniz:
+  // $("#imageModal").modal("show");
+}
+
 function extractTextContentBlock(fullText) {
   const regex = /\[TextContentBlock\(.*?value=(['"])([\s\S]*?)\1.*?\)\]/;
   const match = regex.exec(fullText);
@@ -39,19 +49,26 @@ function extractTextContentBlock(fullText) {
 function markdownTableToHTML(mdTable) {
   const lines = mdTable.trim().split("\n").map(line => line.trim());
   if (lines.length < 2) {
-    return `<p>${mdTable}</p>`;
+    return `<p>${mdTable}</p>`; 
   }
   const headerLine = lines[0];
   const headerCells = headerLine.split("|").map(cell => cell.trim()).filter(Boolean);
   const bodyLines = lines.slice(2);
 
-  let html = `<table class="table table-bordered table-sm my-blue-table">
-<thead><tr>`;
+  let html = `
+    <table class="table table-bordered table-sm my-blue-table">
+      <thead>
+        <tr>
+  `;
 
   headerCells.forEach(cell => {
     html += `<th>${cell}</th>`;
   });
-  html += `</tr></thead><tbody>\n`;
+  html += `
+        </tr>
+      </thead>
+      <tbody>
+  `;
 
   bodyLines.forEach(line => {
     if (!line.trim()) return;
@@ -61,9 +78,12 @@ function markdownTableToHTML(mdTable) {
     cols.forEach(col => {
       html += `<td>${col}</td>`;
     });
-    html += `</tr>\n`;
+    html += `</tr>`;
   });
-  html += `</tbody>\n</table>`;
+  html += `
+      </tbody>
+    </table>
+  `;
   return html;
 }
 
@@ -144,11 +164,13 @@ function processBotMessage(fullText, uniqueId) {
   const extractedValue = extractTextContentBlock(normalizedText);
   const textToCheck = extractedValue ? extractedValue : normalizedText;
 
+  // Tablo regex
   const tableRegexGlobal = /(\|.*?\|\n\|.*?\|\n[\s\S]+?)(?=\n\n|$)/g;
   let newBubbles = [];
   let lastIndex = 0;
   let match;
 
+  // Tablo öncesi ve sonrası metni bölme
   while ((match = tableRegexGlobal.exec(textToCheck)) !== null) {
     const tableMarkdown = match[1];
     const textBefore = textToCheck.substring(lastIndex, match.index).trim();
@@ -162,6 +184,7 @@ function processBotMessage(fullText, uniqueId) {
     lastIndex = tableRegexGlobal.lastIndex;
   }
 
+  // Son tablodan sonraki metin
   if (lastIndex < textToCheck.length) {
     const textAfter = textToCheck.substring(lastIndex).trim();
     if (textAfter) {
@@ -172,59 +195,21 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // -- ÖZEL KONTROL: 2. baloncuk varsa, son satırı '-' ile başlamıyorsa 3. baloncuğa taşı
-  if (newBubbles.length >= 3) {
-    let secondBubble = newBubbles[1];
-    let thirdBubble = newBubbles[2];
-    if (secondBubble.type === "text" && thirdBubble.type === "text") {
-      let lines = secondBubble.content.split(/\r?\n/).map(line => line.trim());
-      if (lines.length > 0) {
-        let lastLine = lines[lines.length - 1];
-        if (!lastLine.startsWith('-')) {
-          lines.pop();
-          secondBubble.content = lines.join('\n');
-          if (thirdBubble.content.trim()) {
-            thirdBubble.content = lastLine + '\n' + thirdBubble.content;
-          } else {
-            thirdBubble.content = lastLine;
-          }
-        }
-      }
-    }
-  }
-
-  // EĞER 2. BALONCUĞUN SON SATIRINI ZORLA KOPARMAK İSTİYORSANIZ
-  if (newBubbles.length === 2) {
-    let secondBubble = newBubbles[1];
-    if (secondBubble.type === "text") {
-      let lines = secondBubble.content.split(/\r?\n/).map(l => l.trim());
-      if (lines.length > 0) {
-        let lastLine = lines[lines.length - 1];
-        if (!lastLine.startsWith('-')) {
-          lines.pop();
-          secondBubble.content = lines.join('\n');
-          if (newBubbles[2]) {
-            newBubbles[2].content = lastLine + '\n' + newBubbles[2].content;
-          } else {
-            // Yeni bir baloncuk yarat
-            newBubbles.push({ type: 'text', content: lastLine });
-          }
-        }
-      }
-    }
-  }
-
+  // Bot loading div'i kaldıralım
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
   newBubbles.forEach((bubble) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     let bubbleContent = "";
+
     if (bubble.type === "table") {
       bubbleContent = markdownTableToHTML(bubble.content);
     } else {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
+
+    // Botun mesajını HTML olarak ekle
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
         <img src="static/images/fotograf.png"
@@ -253,6 +238,7 @@ $(document).ready(function () {
 
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    // Kullanıcının mesaj balonu
     const userHtml = `
       <div class="d-flex justify-content-end mb-4">
         <div class="msg_cotainer_send">
@@ -267,6 +253,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
+    // Botun "yazıyor" şeklindeki placeholder'ı
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
@@ -282,7 +269,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
-    // 3) Artık user_id: localUserId olarak POST ediyoruz
+    // 3) user_id = localUserId şeklinde POST isteği
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -305,6 +292,7 @@ $(document).ready(function () {
         function readChunk() {
           return reader.read().then(({ done, value }) => {
             if (done) {
+              // Akış bitti, tüm chunk'ları aldık, işleyelim
               processBotMessage(botMessage, uniqueId);
               return;
             }
@@ -321,6 +309,7 @@ $(document).ready(function () {
         $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
       });
 
+    // 9 dakika sonra bildirim çubuğu gösterme
     setTimeout(() => {
       document.getElementById('notificationBar').style.display = 'block';
     }, 9 * 60 * 1000);

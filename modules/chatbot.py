@@ -153,10 +153,9 @@ class ChatbotAPI:
 
         self.logger.info("Background DB writer thread stopped.")
 
-    # (Opsiyonel) DB'den cache yükleme metodu
     def _load_cache_from_db(self):
         """
-        Dilerseniz DB'den son X kaydı çekip self.fuzzy_cache'e doldurabilirsiniz.
+        İsteğe bağlı: DB'den son X kaydı çekip self.fuzzy_cache'e doldurabilirsiniz.
         """
         self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
 
@@ -191,13 +190,7 @@ class ChatbotAPI:
 
         self.logger.info("[_load_cache_from_db] Tamamlandı.")
 
-    # ----------------------------------------------------------------
-    # MODELLER VE ASİSTANLAR
-    # ----------------------------------------------------------------
     def _extract_models(self, text: str) -> set:
-        """
-        Metin içinde 'fabia', 'scala' veya 'kamiq' geçiyorsa set halinde döndürür.
-        """
         lower_t = text.lower()
         models = set()
         if "fabia" in lower_t:
@@ -209,10 +202,6 @@ class ChatbotAPI:
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
-        """
-        'fabia' / 'kamiq' / 'scala' -> ilgili asistan_id (self.ASSISTANT_CONFIG içinden).
-        Bulunamazsa None döner.
-        """
         model_name = model_name.lower()
         for asst_id, keywords in self.ASSISTANT_CONFIG.items():
             for kw in keywords:
@@ -220,14 +209,7 @@ class ChatbotAPI:
                     return asst_id
         return None
 
-    # ----------------------------------------------------------------
-    # FUZZY CACHE - ARAMA VE KAYDETME
-    # ----------------------------------------------------------------
     def _search_in_assistant_cache(self, user_id, assistant_id, new_question, threshold):
-        """
-        assistant_id'nin önbelleğinde new_question'a benzer bir soru arar.
-        Return: (answer_bytes, matched_question, found_asst_id) ya da (None, None, None).
-        """
         if not assistant_id:
             return None, None, None
         if user_id not in self.fuzzy_cache:
@@ -265,19 +247,12 @@ class ChatbotAPI:
         threshold=0.8,
         allow_cross_assistant=True
     ):
-        """
-        Belirtilen 'assistant_id' önbelleğinde arar. CROSS_ASSISTANT_CACHE=True ise ve allow_cross_assistant=True ise
-        diğer asistanların önbelleğini de tarar.
-        Return: (answer_bytes, matched_question, found_asst_id) veya (None, None, None)
-        """
-        # 1) İlk önce ilgili asistan cache
-        ans, matched_q, found_aid = self._search_in_assistant_cache(
+        ans, matched_q, found_asst_id = self._search_in_assistant_cache(
             user_id, assistant_id, new_question, threshold
         )
         if ans:
-            return ans, matched_q, found_aid
+            return ans, matched_q, found_asst_id
 
-        # 2) cross-assistant
         if allow_cross_assistant and self.CROSS_ASSISTANT_CACHE and user_id in self.fuzzy_cache:
             for other_aid in self.fuzzy_cache[user_id]:
                 if other_aid == assistant_id:
@@ -310,10 +285,11 @@ class ChatbotAPI:
         record = (user_id, q_lower, answer_bytes, time.time())
         self.fuzzy_cache_queue.put(record)
 
-    # ----------------------------------------------------------------
-    # /ask ENDPOINT
-    # ----------------------------------------------------------------
     def _ask(self):
+        """
+        Kullanıcıdan POST isteği ile gelen veriyi işleyerek yanıt oluşturur.
+        Görsel istekleri için cache devre dışı bırakılmıştır.
+        """
         try:
             data = request.get_json()
             if not data:
@@ -334,29 +310,23 @@ class ChatbotAPI:
         else:
             session['last_activity'] = time.time()
 
-        # 1) Yazım hatası düzelt
         corrected_message = self._correct_typos(user_message)
-        lower_corrected = corrected_message.lower()
+        lower_corrected = corrected_message.lower().strip()
 
-        # 2) Eski asistan
         old_assistant_id = None
         if user_id in self.user_states:
             old_assistant_id = self.user_states[user_id].get("assistant_id")
 
-        # 3) Yeni model adı var mı?
         new_assistant_id = None
         for aid, keywords in self.ASSISTANT_CONFIG.items():
             if any(k.lower() in lower_corrected for k in keywords):
                 new_assistant_id = aid
                 break
 
-        # Kullanıcı state yapısı (threads dict dahil) yoksa oluştur
         if user_id not in self.user_states:
             self.user_states[user_id] = {}
-            # YENİ: Her kullanıcı için "threads" adlı dict
             self.user_states[user_id]["threads"] = {}
 
-        # Cross-assistant ayarı
         if new_assistant_id:
             assistant_id = new_assistant_id
             allow_cross = False
@@ -366,29 +336,32 @@ class ChatbotAPI:
 
         self.user_states[user_id]["assistant_id"] = assistant_id
 
-        # 4) Önbellek araması
-        cached_answer, matched_question, found_asst_id = self._find_fuzzy_cached_answer(
-            user_id,
-            corrected_message,
-            assistant_id,
-            threshold=0.8,
-            allow_cross_assistant=allow_cross
-        )
+        # Görsel isteği mi?
+        is_image_req = self.utils.is_image_request(user_message)
 
-        if cached_answer:
-            # 4a) Model uyuşmazlığı
+        # Görsel isteklerinde cache kullanma
+        if is_image_req:
+            cached_answer, matched_question, found_asst_id = None, None, None
+        else:
+            cached_answer, matched_question, found_asst_id = self._find_fuzzy_cached_answer(
+                user_id,
+                corrected_message,
+                assistant_id,
+                threshold=0.8,
+                allow_cross_assistant=allow_cross
+            )
+
+        if cached_answer and not is_image_req:
             user_models = self._extract_models(corrected_message)
             cache_models = self._extract_models(matched_question) if matched_question else set()
 
+            # Model uyuşmazlığı?
             if user_models and not user_models.issubset(cache_models):
                 self.logger.info("Model uyuşmazlığı -> cache bypass.")
-                # Cache bypass
             else:
-                # 4b) Cross-assistant'tan geldiyse
                 if found_asst_id and (new_assistant_id is None):
                     self.user_states[user_id]["assistant_id"] = found_asst_id
 
-                # Cevap içindeki model
                 answer_text = cached_answer.decode("utf-8")
                 models_in_answer = self._extract_models(answer_text)
                 if len(models_in_answer) == 1:
@@ -404,22 +377,20 @@ class ChatbotAPI:
                 time.sleep(1)
                 return self.app.response_class(cached_answer, mimetype="text/plain")
 
-        # 5) Yoksa yeni yanıt üret
         def caching_generator():
             chunks = []
             for chunk in self._generate_response(corrected_message, user_id):
                 chunks.append(chunk)
                 yield chunk
 
-            final_bytes = b"".join(chunks)
-            final_aid = self.user_states[user_id].get("assistant_id", assistant_id)
-            self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, final_aid)
+            # Görsel isteği değilse yanıtı cache'e yaz
+            if not is_image_req:
+                final_bytes = b"".join(chunks)
+                final_aid = self.user_states[user_id].get("assistant_id", assistant_id)
+                self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, final_aid)
 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
 
-    # ----------------------------------------------------------------
-    # BASİT TİPO DÜZELTMESİ
-    # ----------------------------------------------------------------
     def _correct_typos(self, user_message):
         known_words = ["premium", "elite", "monte", "carlo"]
         splitted = user_message.split()
@@ -431,7 +402,6 @@ class ChatbotAPI:
             else:
                 new_tokens.append(token)
 
-        # "monte" + "carlo" => "monte carlo"
         combined_tokens = []
         skip_next = False
         for i in range(len(new_tokens)):
@@ -448,9 +418,99 @@ class ChatbotAPI:
                 combined_tokens.append(new_tokens[i])
         return " ".join(combined_tokens)
 
-    # ----------------------------------------------------------------
-    # YANIT ÜRETME (TABLO, GÖRSEL, OPENAI vb.)
-    # ----------------------------------------------------------------
+    def _render_side_by_side_images(self, images, context="model"):
+        """
+        Basit örnek: Görselleri yatay veya grid şekilde sıralama.
+        """
+        mc_std = [
+            img for img in images
+            if "monte" in img.lower()
+               and "carlo" in img.lower()
+               and "standart" in img.lower()
+        ]
+        pm_ops = [
+            img for img in images
+            if "premium" in img.lower()
+               and "opsiyonel" in img.lower()
+        ]
+        others = [img for img in images if img not in mc_std and img not in pm_ops]
+
+        if not images:
+            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
+            return
+
+        yield """
+        <div style="display: flex; justify-content: space-between; gap: 60px;">
+          <!-- SOL SÜTUN: MONTE CARLO STANDART -->
+          <div style="flex:1;">
+        """.encode("utf-8")
+
+        if mc_std:
+            left_title = os.path.splitext(mc_std[0])[0].replace("_", " ")
+            yield f"<h3>{left_title}</h3>".encode("utf-8")
+
+            for img_file in mc_std:
+                img_url = f"/static/images/{img_file}"
+                base_name = os.path.splitext(img_file)[0].replace("_", " ")
+                block_html = f"""
+                <div style="text-align: center; margin-bottom:20px;">
+                  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
+                  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+                    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+                  </a>
+                </div>
+                """
+                yield block_html.encode("utf-8")
+        else:
+            yield "<h3>Monte Carlo Standart Görseli Yok</h3>".encode("utf-8")
+
+        yield "</div>".encode("utf-8")  # sol sütun kapanış
+
+        yield """
+          <div style="flex:1;">
+        """.encode("utf-8")
+
+        if pm_ops:
+            right_title = os.path.splitext(pm_ops[0])[0].replace("_", " ")
+            yield f"<h3>{right_title}</h3>".encode("utf-8")
+
+            for img_file in pm_ops:
+                img_url = f"/static/images/{img_file}"
+                base_name = os.path.splitext(img_file)[0].replace("_", " ")
+                block_html = f"""
+                <div style="text-align: center; margin-bottom:20px;">
+                  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
+                  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+                    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+                  </a>
+                </div>
+                """
+                yield block_html.encode("utf-8")
+        else:
+            yield "<h3>Premium Opsiyonel Görseli Yok</h3>".encode("utf-8")
+
+        yield """
+          </div> <!-- Sağ sütun kapanış -->
+        </div> <!-- Ana flex kapanış -->
+        """.encode("utf-8")
+
+        if others:
+            yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
+            yield '<div style="display: flex; flex-wrap: wrap; gap: 20px;">'.encode("utf-8")
+            for img_file in others:
+                img_url = f"/static/images/{img_file}"
+                base_name = os.path.splitext(img_file)[0].replace("_", " ")
+                block_html = f"""
+                <div style="text-align: center; margin: 5px;">
+                  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
+                  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+                    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+                  </a>
+                </div>
+                """
+                yield block_html.encode("utf-8")
+            yield '</div>'.encode("utf-8")
+
     def _generate_response(self, user_message, user_id):
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
 
@@ -458,7 +518,262 @@ class ChatbotAPI:
         assistant_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "")
         lower_msg = user_message.lower()
 
-        # 1) Opsiyonel tablolar (Fabia)
+        if "current_trim" not in self.user_states[user_id]:
+            self.user_states[user_id]["current_trim"] = ""
+
+        # ---------------------------
+        # 1) MODEL + "görsel" -> renk (genel)
+        # ---------------------------
+        model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
+        if re.search(model_image_pattern, lower_msg):
+            matched_model = re.search(model_image_pattern, lower_msg).group(1)  # scala/fabia/kamiq
+
+            all_colors = self.config.KNOWN_COLORS
+            found_color_images = []
+            for clr in all_colors:
+                filter_str = f"{matched_model} {clr}"
+                results = self.image_manager.filter_images_multi_keywords(filter_str)
+                found_color_images.extend(results)
+
+            unique_color_images = list(set(found_color_images))
+            if unique_color_images:
+                save_to_db(user_id, user_message, f"{matched_model.title()} renk görselleri listeleniyor.")
+                yield f"<b>{matched_model.title()} Renk Görselleri</b><br>".encode("utf-8")
+                yield from self._render_side_by_side_images(unique_color_images, context="color")
+            else:
+                save_to_db(user_id, user_message, f"{matched_model.title()} için renk görseli bulunamadı.")
+                yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+            return
+
+        # ---------------------------
+        # 2) Dış görsel istekleri
+        # ---------------------------
+        if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
+            if not assistant_id or not assistant_name:
+                save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
+                yield ("Hangi modelin dış görsellerini görmek istersiniz? "
+                       "(Fabia, Scala, Kamiq vb.)\n").encode("utf-8")
+                return
+
+            trim_name = self.user_states[user_id]["current_trim"]
+            if "premium" in lower_msg:
+                trim_name = "premium"
+            elif "monte carlo" in lower_msg:
+                trim_name = "monte carlo"
+            elif "elite" in lower_msg:
+                trim_name = "elite"
+
+            self.user_states[user_id]["current_trim"] = trim_name
+
+            model_title = assistant_name.title()
+            if trim_name:
+                final_title = f"{model_title} {trim_name.title()} Dış Görselleri"
+            else:
+                final_title = f"{model_title} Dış Görselleri"
+
+            save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
+            yield f"<b>{final_title}</b><br>".encode("utf-8")
+
+            # (ÖNEMLİ DEĞİŞİKLİK)
+            # 1) Renk görsellerini trim_name olmadan getiriyoruz -> sadece "assistant_name + renk"
+            all_colors = self.config.KNOWN_COLORS
+            found_color_images = []
+            for clr in all_colors:
+                # Donanım (premium/monte/elite) eklemiyoruz:
+                filter_str = f"{assistant_name} {clr}"
+                results = self.image_manager.filter_images_multi_keywords(filter_str)
+                found_color_images.extend(results)
+
+            unique_color_images = list(set(found_color_images))
+            if unique_color_images:
+                yield "<h4>Renk Görselleri</h4>".encode("utf-8")
+                yield from self._render_side_by_side_images(unique_color_images, context="color")
+                yield "<br>".encode("utf-8")
+            else:
+                yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
+
+            # 2) Jant görselleri -> "assistant_name + trim_name + jant"
+            if trim_name:
+                filter_jant = f"{assistant_name} {trim_name} jant"
+            else:
+                filter_jant = f"{assistant_name} jant"
+
+            jant_images = self.image_manager.filter_images_multi_keywords(filter_jant)
+            if jant_images:
+                yield "<h4>Jant Görselleri (Standart + Opsiyonel)</h4>".encode("utf-8")
+                yield from self._render_side_by_side_images(jant_images, context="jant")
+            else:
+                yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
+
+            return
+
+        # ---------------------------
+        # 3) İç görsel istekleri
+        # ---------------------------
+        if any(kw in lower_msg for kw in ["iç", "ic"]):
+            if not assistant_id or not assistant_name:
+                save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
+                yield ("Hangi modelin iç görsellerini görmek istersiniz? "
+                       "(Fabia, Scala, Kamiq vb.)\n").encode("utf-8")
+                return
+
+            trim_name = self.user_states[user_id]["current_trim"]
+            if "premium" in lower_msg:
+                trim_name = "premium"
+            elif "monte carlo" in lower_msg:
+                trim_name = "monte carlo"
+            elif "elite" in lower_msg:
+                trim_name = "elite"
+
+            self.user_states[user_id]["current_trim"] = trim_name
+
+            categories = [
+                "direksiyon simidi",
+                "döşeme",
+                "koltuk",
+                "multimedya"
+            ]
+
+            model_and_trim_title = assistant_name.title()
+            if trim_name:
+                model_and_trim_title += f" {trim_name.title()}"
+            model_and_trim_title += " İç Görselleri"
+
+            save_to_db(user_id, user_message, f"{model_and_trim_title} listeleniyor.")
+            yield f"<b>{model_and_trim_title}</b><br><br>".encode("utf-8")
+
+            any_image_found = False
+            for cat in categories:
+                if trim_name:
+                    full_filter = f"{assistant_name} {trim_name} {cat}"
+                else:
+                    full_filter = f"{assistant_name} {cat}"
+
+                found_images = self.image_manager.filter_images_multi_keywords(full_filter)
+                yield f"<h4>{cat.title()} Görselleri</h4>".encode("utf-8")
+                if found_images:
+                    any_image_found = True
+                    yield from self._render_side_by_side_images(found_images, context="ic")
+                    yield "<br>".encode("utf-8")
+                else:
+                    yield f"{cat.title()} görseli bulunamadı.<br><br>".encode("utf-8")
+
+            if not any_image_found:
+                yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
+
+            return
+
+        # 4) "Evet" kontrolü (renk seçimi vs.)
+        trimmed_msg = user_message.strip().lower()
+        if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
+            pending_colors = self.user_states[user_id].get("pending_color_images", [])
+            if pending_colors:
+                asst_name = assistant_name.lower() if assistant_name else "scala"
+                all_found_images = []
+                for clr in pending_colors:
+                    keywords = f"{asst_name} {clr}"
+                    results = self.image_manager.filter_images_multi_keywords(keywords)
+                    all_found_images.extend(results)
+
+                if not all_found_images:
+                    save_to_db(user_id, user_message, "Bu renklerle ilgili görsel bulunamadı.")
+                    yield "Bu renklerle ilgili görsel bulunamadı.\n".encode("utf-8")
+                    return
+
+                save_to_db(user_id, user_message, "Renk görselleri listelendi (evet).")
+                yield "<b>İşte seçtiğiniz renk görselleri:</b><br>".encode("utf-8")
+                yield from self._render_side_by_side_images(all_found_images, context=None)
+                self.user_states[user_id]["pending_color_images"] = []
+                return
+
+        # 5) Özel karşılaştırma örneği (Fabia Premium vs Monte Carlo) - opsiyonel
+        if ("fabia" in lower_msg
+            and "premium" in lower_msg
+            and "monte carlo" in lower_msg
+            and self.utils.is_image_request(user_message)):
+            fabia_pairs = [
+                ("Fabia_Premium_Ay_Beyazı.png", "Fabia_Monte_Carlo_Ay_Beyazı.png"),
+            ]
+            save_to_db(user_id, user_message, "Fabia Premium vs Monte Carlo görsel karşılaştırma.")
+            yield "<div style='display: flex; flex-direction: row; gap: 20px;'>".encode("utf-8")
+            for left_img, right_img in fabia_pairs:
+                left_url = f"/static/images/{left_img}"
+                right_url = f"/static/images/{right_img}"
+                left_title = left_img.replace("_", " ").replace(".png", "")
+                right_title = right_img.replace("_", " ").replace(".png", "")
+
+                html_pair = f"""
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <div>
+                    <div style="font-weight: bold; margin-bottom: 6px;">{left_title}</div>
+                    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{left_url}')">
+                      <img src="{left_url}" alt="{left_title}" style="max-width: 350px;" />
+                    </a>
+                  </div>
+                  <div>
+                    <div style="font-weight: bold; margin-bottom: 6px;">{right_title}</div>
+                    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{right_url}')">
+                      <img src="{right_url}" alt="{right_title}" style="max-width: 350px;" />
+                    </a>
+                  </div>
+                </div>
+                """
+                yield html_pair.encode("utf-8")
+            yield "</div>".encode("utf-8")
+            return
+
+        # 6) Genel "görsel" isteği mi?
+        if self.utils.is_image_request(user_message):
+            if not assistant_id:
+                save_to_db(user_id, user_message, "Henüz asistan seçilmedi, görsel yok.")
+                yield "Henüz bir asistan seçilmediği için görsel gösteremiyorum.\n".encode("utf-8")
+                return
+
+            if not assistant_name:
+                save_to_db(user_id, user_message, "Asistan adını bulamadım.")
+                yield "Asistan adını bulamadım.\n".encode("utf-8")
+                return
+
+            trim_name = self.user_states[user_id]["current_trim"]
+            if "premium" in lower_msg:
+                trim_name = "premium"
+            elif "monte carlo" in lower_msg:
+                trim_name = "monte carlo"
+            elif "elite" in lower_msg:
+                trim_name = "elite"
+            self.user_states[user_id]["current_trim"] = trim_name
+
+            if any(x in lower_msg for x in ["elite", "premium", "monte carlo"]):
+                context = "model"
+            elif any(x in lower_msg for x in ["standart", "opsiyonel"]):
+                context = "donanim"
+            else:
+                context = None
+
+            if trim_name:
+                keyword = self.utils.extract_image_keyword(user_message, f"{assistant_name} {trim_name}")
+                if keyword:
+                    full_filter = f"{assistant_name} {trim_name} {keyword}"
+                else:
+                    full_filter = f"{assistant_name} {trim_name}"
+            else:
+                keyword = self.utils.extract_image_keyword(user_message, assistant_name)
+                if keyword:
+                    full_filter = f"{assistant_name} {keyword}"
+                else:
+                    full_filter = assistant_name
+
+            found_images = self.image_manager.filter_images_multi_keywords(full_filter)
+            if not found_images:
+                save_to_db(user_id, user_message, f"'{full_filter}' için görsel yok.")
+                yield f"'{full_filter}' için uygun bir görsel bulamadım.\n".encode("utf-8")
+                return
+
+            save_to_db(user_id, user_message, f"{len(found_images)} görsel bulundu ve listelendi.")
+            yield from self._render_side_by_side_images(found_images, context=context)
+            return
+
+        # 7) Opsiyonel tablolar
         if "fabia" in lower_msg and "opsiyonel" in lower_msg:
             if "premium" in lower_msg:
                 save_to_db(user_id, user_message, "Fabia Premium opsiyonel tablosu.")
@@ -473,7 +788,6 @@ class ChatbotAPI:
                        "(Premium / Monte Carlo)\n").encode("utf-8")
                 return
 
-        # 2) Opsiyonel tablolar (Kamiq)
         if "kamiq" in lower_msg and "opsiyonel" in lower_msg:
             if "elite" in lower_msg:
                 save_to_db(user_id, user_message, "Kamiq Elite opsiyonel tablosu.")
@@ -492,7 +806,6 @@ class ChatbotAPI:
                        "(Elite / Premium / Monte Carlo)\n").encode("utf-8")
                 return
 
-        # 3) Opsiyonel tablolar (Scala)
         if "scala" in lower_msg and "opsiyonel" in lower_msg:
             if "elite" in lower_msg:
                 save_to_db(user_id, user_message, "Scala Elite opsiyonel tablosu.")
@@ -511,136 +824,17 @@ class ChatbotAPI:
                        "(Elite / Premium / Monte Carlo)\n").encode("utf-8")
                 return
 
-        # 4) "Evet" kontrolü -> pending_color_images
-        trimmed_msg = user_message.strip().lower()
-        if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
-            pending_colors = self.user_states[user_id].get("pending_color_images", [])
-            if pending_colors:
-                asst_name = assistant_name.lower() if assistant_name else "scala"
-
-                all_found_images = []
-                for clr in pending_colors:
-                    keywords = f"{asst_name} {clr}"
-                    results = self.image_manager.filter_images_multi_keywords(keywords)
-                    all_found_images.extend(results)
-
-                if asst_name == "scala":
-                    sorted_images = self.utils.multi_group_sort(all_found_images, "scala_custom")
-                elif asst_name == "kamiq":
-                    sorted_images = self.utils.multi_group_sort(all_found_images, "kamiq_custom")
-                else:
-                    sorted_images = self.utils.multi_group_sort(all_found_images, None)
-
-                if not sorted_images:
-                    save_to_db(user_id, user_message, "Bu renklerle ilgili görsel bulunamadı.")
-                    yield "Bu renklerle ilgili görsel bulunamadı.\n".encode("utf-8")
-                    return
-
-                save_to_db(user_id, user_message, "Renk görselleri listelendi (evet).")
-                yield "<b>İşte seçtiğiniz renk görselleri:</b><br>".encode("utf-8")
-                for img_file in sorted_images:
-                    img_url = f"/static/images/{img_file}"
-                    base_name, _ = os.path.splitext(img_file)
-                    pretty_name = base_name.replace("_", " ")
-                    yield f"<h4>{pretty_name}</h4>\n".encode("utf-8")
-                    yield f'<img src="{img_url}" alt="{pretty_name}" style="max-width:300px; margin:5px;" />\n'.encode("utf-8")
-
-                self.user_states[user_id]["pending_color_images"] = []
-                return
-
-        # 5) Özel case: Fabia Premium vs Monte Carlo görsel karşılaştırma
-        if ("fabia" in lower_msg
-            and "premium" in lower_msg
-            and "monte carlo" in lower_msg
-            and self.utils.is_image_request(user_message)):
-            fabia_pairs = [
-                ("Fabia_Premium_Ay_Beyazı.png", "Fabia_Monte_Carlo_Ay_Beyazı.png"),
-            ]
-            save_to_db(user_id, user_message, "Fabia Premium vs Monte Carlo görsel karşılaştırma.")
-            yield "<div style='display: flex; flex-direction: column; gap: 15px;'>".encode("utf-8")
-            for left_img, right_img in fabia_pairs:
-                left_url = f"/static/images/{left_img}"
-                right_url = f"/static/images/{right_img}"
-                left_title = left_img.replace("_", " ").replace(".png", "")
-                right_title = right_img.replace("_", " ").replace(".png", "")
-
-                html_pair = f"""
-                <div style="display: flex; flex-direction: row; align-items: center; gap: 20px;">
-                  <img src="{left_url}" alt="{left_title}" style="max-width: 300px;" />
-                  <img src="{right_url}" alt="{right_title}" style="max-width: 300px;" />
-                </div>
-                """
-                yield html_pair.encode("utf-8")
-            yield "</div>".encode("utf-8")
-            return
-
-        # 6) Görsel isteği mi?
-        if self.utils.is_image_request(user_message):
-            if not assistant_id:
-                save_to_db(user_id, user_message, "Henüz asistan seçilmedi, görsel yok.")
-                yield "Henüz bir asistan seçilmediği için görsel gösteremiyorum.\n".encode("utf-8")
-                return
-
-            if not assistant_name:
-                save_to_db(user_id, user_message, "Asistan adını bulamadım.")
-                yield "Asistan adını bulamadım.\n".encode("utf-8")
-                return
-
-            keyword = self.utils.extract_image_keyword(user_message, assistant_name)
-            if keyword:
-                full_filter = f"{assistant_name} {keyword}"
-            else:
-                full_filter = assistant_name
-
-            found_images = self.image_manager.filter_images_multi_keywords(full_filter)
-            if not found_images:
-                save_to_db(user_id, user_message, f"'{full_filter}' için görsel yok.")
-                yield f"'{full_filter}' için uygun bir görsel bulamadım.\n".encode("utf-8")
-                return
-
-            # Gruplama
-            if "scala görsel" in lower_msg:
-                desired_group = "scala_custom"
-            elif "kamiq görsel" in lower_msg:
-                desired_group = "kamiq_custom"
-            elif "monte carlo" in lower_msg:
-                desired_group = "monte_carlo"
-            elif ("premium" in lower_msg) or ("elite" in lower_msg):
-                desired_group = "premium_elite"
-            elif "fabia" in lower_msg:
-                desired_group = "fabia_12"
-            elif "scala" in lower_msg:
-                desired_group = "scala_12"
-            elif "kamiq" in lower_msg:
-                desired_group = "kamiq_12"
-            else:
-                desired_group = None
-
-            sorted_images = self.utils.multi_group_sort(found_images, desired_group)
-            save_to_db(user_id, user_message, f"{len(sorted_images)} görsel bulundu ve listelendi.")
-            for img_file in sorted_images:
-                img_url = f"/static/images/{img_file}"
-                base_name, _ = os.path.splitext(img_file)
-                pretty_name = base_name.replace("_", " ")
-                yield f"<h4>{pretty_name}</h4>\n".encode("utf-8")
-                yield f'<img src="{img_url}" alt="{pretty_name}" style="max-width:300px; margin:5px;" />\n'.encode("utf-8")
-            return
-
-        # 7) Normal Chat (OpenAI)
+        # 8) Normal Chat (OpenAI vb.)
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
             yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
             return
 
         try:
-            # -----------------------------------------------------------
-            # YENİ: Her asistan için AYRI thread_id saklıyoruz
-            # -----------------------------------------------------------
             threads_dict = self.user_states[user_id].get("threads", {})
             thread_id = threads_dict.get(assistant_id)
 
             if not thread_id:
-                # Bu asistan_id için ilk kez thread açıyoruz
                 new_thread = self.client.beta.threads.create(
                     messages=[{"role": "user", "content": user_message}]
                 )
@@ -648,19 +842,16 @@ class ChatbotAPI:
                 threads_dict[assistant_id] = thread_id
                 self.user_states[user_id]["threads"] = threads_dict
             else:
-                # Bu asistan için zaten thread_id var, user mesajını ekleyelim
                 self.client.beta.threads.messages.create(
                     thread_id=thread_id,
                     role="user",
                     content=user_message
                 )
 
-            # Asistan çalıştır
             run = self.client.beta.threads.runs.create(
                 thread_id=thread_id,
                 assistant_id=assistant_id
             )
-            # -----------------------------------------------------------
 
             start_time = time.time()
             timeout = 30
@@ -688,10 +879,9 @@ class ChatbotAPI:
                 yield "Yanıt alma zaman aşımına uğradı.\n".encode("utf-8")
                 return
 
-            # DB'ye kaydet
             save_to_db(user_id, user_message, assistant_response)
 
-            # Renk varsa pending_color_images'e kaydet
+            # Renk ismi tespiti
             if "görsel olarak görmek ister misiniz?" in assistant_response.lower():
                 detected_colors = self.utils.parse_color_names(assistant_response)
                 if detected_colors:

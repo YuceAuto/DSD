@@ -83,11 +83,35 @@
     </div><!-- .row -->
   </div><!-- .container-fluid -->
 
+  <!-- ===================================================== -->
+  <!-- BURADA GÖRSELLERİ POPUP (MODAL) İÇİNDE GÖRÜNTÜLEYECEK YAPI -->
+  <!-- ===================================================== -->
+  <div class="modal fade" id="imageModal" tabindex="-1" role="dialog" aria-labelledby="imageModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+      <div class="modal-content" style="background: none; border: none;">
+        <div class="modal-body text-center" style="position: relative;">
+          <button type="button"
+                  class="close"
+                  data-dismiss="modal"
+                  aria-label="Close"
+                  style="position: absolute; right: 15px; top: 15px; color: #fff; opacity: 1;">
+            <span aria-hidden="true">&times;</span>
+          </button>
+          <img id="popupImage"
+               src=""
+               alt="Büyük Görsel"
+               style="max-width: 100%; height: auto; border-radius: 8px;" />
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ===================================================== -->
+
   <!-- jQuery / Bootstrap JS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
   <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
 
-  <!-- script.js (Birinci Kod'daki tablo-parçalama yapısıyla) -->
+  <!-- script.js (tablolu cevap ve resim modal fonksiyonları vb.) -->
   <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
