@@ -82,10 +82,10 @@ class ChatbotAPI:
         self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
         self.worker_thread.start()
 
-        # Önbellekteki cevabın geçerli kalma süresi (örnek: 1 saat)
+        # Önbellekteki cevabın geçerli kalma süresi (1 saat)
         self.CACHE_EXPIRY_SECONDS = 3600
 
-        # Cross-assistant cache devrede (global flag)
+        # Cross-assistant cache devrede
         self.CROSS_ASSISTANT_CACHE = True
 
         # Flask route tanımları
@@ -155,7 +155,7 @@ class ChatbotAPI:
 
     def _load_cache_from_db(self):
         """
-        İsteğe bağlı: DB'den son X kaydı çekip self.fuzzy_cache'e doldurabilirsiniz.
+        (Opsiyonel) DB'den son X kaydı çekip self.fuzzy_cache'e doldurabilirsiniz.
         """
         self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
 
@@ -191,6 +191,9 @@ class ChatbotAPI:
         self.logger.info("[_load_cache_from_db] Tamamlandı.")
 
     def _extract_models(self, text: str) -> set:
+        """
+        Kullanıcı mesajındaki 'fabia', 'scala', 'kamiq' kelimelerini yakalar.
+        """
         lower_t = text.lower()
         models = set()
         if "fabia" in lower_t:
@@ -253,6 +256,7 @@ class ChatbotAPI:
         if ans:
             return ans, matched_q, found_asst_id
 
+        # Cross assistant cache
         if allow_cross_assistant and self.CROSS_ASSISTANT_CACHE and user_id in self.fuzzy_cache:
             for other_aid in self.fuzzy_cache[user_id]:
                 if other_aid == assistant_id:
@@ -288,7 +292,6 @@ class ChatbotAPI:
     def _ask(self):
         """
         Kullanıcıdan POST isteği ile gelen veriyi işleyerek yanıt oluşturur.
-        Görsel istekleri için cache devre dışı bırakılmıştır.
         """
         try:
             data = request.get_json()
@@ -313,15 +316,31 @@ class ChatbotAPI:
         corrected_message = self._correct_typos(user_message)
         lower_corrected = corrected_message.lower().strip()
 
+        # Kullanıcının mesajında kaç model/donanım var?
+        user_models = self._extract_models(corrected_message)
+        user_trims = set()
+        if "premium" in lower_corrected:
+            user_trims.add("premium")
+        if "monte carlo" in lower_corrected:
+            user_trims.add("monte carlo")
+        if "elite" in lower_corrected:
+            user_trims.add("elite")
+
+        new_assistant_id = None
+        # 2+ model veya 2+ donanım -> All Models Bot
+        if len(user_models) >= 2 or len(user_trims) >= 2:
+            new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
+
         old_assistant_id = None
         if user_id in self.user_states:
             old_assistant_id = self.user_states[user_id].get("assistant_id")
 
-        new_assistant_id = None
-        for aid, keywords in self.ASSISTANT_CONFIG.items():
-            if any(k.lower() in lower_corrected for k in keywords):
-                new_assistant_id = aid
-                break
+        # Eğer yukarıda 2+ modeli/donanımı yakalayamazsak, eski mantığa göre asistan seç
+        if not new_assistant_id:
+            for aid, keywords in self.ASSISTANT_CONFIG.items():
+                if any(k.lower() in lower_corrected for k in keywords):
+                    new_assistant_id = aid
+                    break
 
         if user_id not in self.user_states:
             self.user_states[user_id] = {}
@@ -352,11 +371,11 @@ class ChatbotAPI:
             )
 
         if cached_answer and not is_image_req:
-            user_models = self._extract_models(corrected_message)
+            # Model uyuşmazlığı kontrolü
+            user_models_in_msg = self._extract_models(corrected_message)
             cache_models = self._extract_models(matched_question) if matched_question else set()
 
-            # Model uyuşmazlığı?
-            if user_models and not user_models.issubset(cache_models):
+            if user_models_in_msg and not user_models_in_msg.issubset(cache_models):
                 self.logger.info("Model uyuşmazlığı -> cache bypass.")
             else:
                 if found_asst_id and (new_assistant_id is None):
@@ -422,12 +441,14 @@ class ChatbotAPI:
         """
         Basit örnek: Görselleri yatay veya grid şekilde sıralama.
         """
+        # Monte Carlo standart
         mc_std = [
             img for img in images
             if "monte" in img.lower()
                and "carlo" in img.lower()
                and "standart" in img.lower()
         ]
+        # Premium opsiyonel
         pm_ops = [
             img for img in images
             if "premium" in img.lower()
@@ -439,11 +460,12 @@ class ChatbotAPI:
             yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
             return
 
+        # 1) Sol sütun (Monte Carlo)
         yield """
-        <div style="display: flex; justify-content: space-between; gap: 60px;">
-          <!-- SOL SÜTUN: MONTE CARLO STANDART -->
-          <div style="flex:1;">
-        """.encode("utf-8")
+<div style="display: flex; justify-content: space-between; gap: 60px;">
+  <!-- SOL SÜTUN: MONTE CARLO STANDART -->
+  <div style="flex:1;">
+""".encode("utf-8")
 
         if mc_std:
             left_title = os.path.splitext(mc_std[0])[0].replace("_", " ")
@@ -453,22 +475,23 @@ class ChatbotAPI:
                 img_url = f"/static/images/{img_file}"
                 base_name = os.path.splitext(img_file)[0].replace("_", " ")
                 block_html = f"""
-                <div style="text-align: center; margin-bottom:20px;">
-                  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-                  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-                    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-                  </a>
-                </div>
-                """
+<div style="text-align: center; margin-bottom:20px;">
+  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+  </a>
+</div>
+"""
                 yield block_html.encode("utf-8")
         else:
             yield "<h3>Monte Carlo Standart Görseli Yok</h3>".encode("utf-8")
 
-        yield "</div>".encode("utf-8")  # sol sütun kapanış
+        yield "</div>".encode("utf-8")
 
+        # 2) Sağ sütun (Premium opsiyonel)
         yield """
-          <div style="flex:1;">
-        """.encode("utf-8")
+  <div style="flex:1;">
+""".encode("utf-8")
 
         if pm_ops:
             right_title = os.path.splitext(pm_ops[0])[0].replace("_", " ")
@@ -478,22 +501,23 @@ class ChatbotAPI:
                 img_url = f"/static/images/{img_file}"
                 base_name = os.path.splitext(img_file)[0].replace("_", " ")
                 block_html = f"""
-                <div style="text-align: center; margin-bottom:20px;">
-                  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-                  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-                    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-                  </a>
-                </div>
-                """
+<div style="text-align: center; margin-bottom:20px;">
+  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+  </a>
+</div>
+"""
                 yield block_html.encode("utf-8")
         else:
             yield "<h3>Premium Opsiyonel Görseli Yok</h3>".encode("utf-8")
 
         yield """
-          </div> <!-- Sağ sütun kapanış -->
-        </div> <!-- Ana flex kapanış -->
-        """.encode("utf-8")
+  </div> <!-- Sağ sütun kapanış -->
+</div> <!-- Ana flex kapanış -->
+""".encode("utf-8")
 
+        # 3) Kalan (others)
         if others:
             yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
             yield '<div style="display: flex; flex-wrap: wrap; gap: 20px;">'.encode("utf-8")
@@ -501,15 +525,15 @@ class ChatbotAPI:
                 img_url = f"/static/images/{img_file}"
                 base_name = os.path.splitext(img_file)[0].replace("_", " ")
                 block_html = f"""
-                <div style="text-align: center; margin: 5px;">
-                  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
-                  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-                    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
-                  </a>
-                </div>
-                """
+<div style="text-align: center; margin: 5px;">
+  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+  </a>
+</div>
+"""
                 yield block_html.encode("utf-8")
-            yield '</div>'.encode("utf-8")
+            yield "</div>".encode("utf-8")
 
     def _generate_response(self, user_message, user_id):
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
@@ -521,12 +545,12 @@ class ChatbotAPI:
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # ---------------------------
+        # --------------------------------------------------------
         # 1) MODEL + "görsel" -> renk (genel)
-        # ---------------------------
+        # --------------------------------------------------------
         model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
         if re.search(model_image_pattern, lower_msg):
-            matched_model = re.search(model_image_pattern, lower_msg).group(1)  # scala/fabia/kamiq
+            matched_model = re.search(model_image_pattern, lower_msg).group(1)
 
             all_colors = self.config.KNOWN_COLORS
             found_color_images = []
@@ -545,14 +569,13 @@ class ChatbotAPI:
                 yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
             return
 
-        # ---------------------------
+        # --------------------------------------------------------
         # 2) Dış görsel istekleri
-        # ---------------------------
+        # --------------------------------------------------------
         if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
-                yield ("Hangi modelin dış görsellerini görmek istersiniz? "
-                       "(Fabia, Scala, Kamiq vb.)\n").encode("utf-8")
+                yield "Hangi modelin dış görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
                 return
 
             trim_name = self.user_states[user_id]["current_trim"]
@@ -574,12 +597,10 @@ class ChatbotAPI:
             save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
             yield f"<b>{final_title}</b><br>".encode("utf-8")
 
-            # (ÖNEMLİ DEĞİŞİKLİK)
-            # 1) Renk görsellerini trim_name olmadan getiriyoruz -> sadece "assistant_name + renk"
+            # Renk görselleri
             all_colors = self.config.KNOWN_COLORS
             found_color_images = []
             for clr in all_colors:
-                # Donanım (premium/monte/elite) eklemiyoruz:
                 filter_str = f"{assistant_name} {clr}"
                 results = self.image_manager.filter_images_multi_keywords(filter_str)
                 found_color_images.extend(results)
@@ -592,7 +613,7 @@ class ChatbotAPI:
             else:
                 yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
 
-            # 2) Jant görselleri -> "assistant_name + trim_name + jant"
+            # Jant görselleri
             if trim_name:
                 filter_jant = f"{assistant_name} {trim_name} jant"
             else:
@@ -604,17 +625,15 @@ class ChatbotAPI:
                 yield from self._render_side_by_side_images(jant_images, context="jant")
             else:
                 yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
-
             return
 
-        # ---------------------------
+        # --------------------------------------------------------
         # 3) İç görsel istekleri
-        # ---------------------------
+        # --------------------------------------------------------
         if any(kw in lower_msg for kw in ["iç", "ic"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
-                yield ("Hangi modelin iç görsellerini görmek istersiniz? "
-                       "(Fabia, Scala, Kamiq vb.)\n").encode("utf-8")
+                yield "Hangi modelin iç görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
                 return
 
             trim_name = self.user_states[user_id]["current_trim"]
@@ -660,10 +679,11 @@ class ChatbotAPI:
 
             if not any_image_found:
                 yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
-
             return
 
+        # --------------------------------------------------------
         # 4) "Evet" kontrolü (renk seçimi vs.)
+        # --------------------------------------------------------
         trimmed_msg = user_message.strip().lower()
         if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
             pending_colors = self.user_states[user_id].get("pending_color_images", [])
@@ -686,7 +706,9 @@ class ChatbotAPI:
                 self.user_states[user_id]["pending_color_images"] = []
                 return
 
-        # 5) Özel karşılaştırma örneği (Fabia Premium vs Monte Carlo) - opsiyonel
+        # --------------------------------------------------------
+        # 5) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
+        # --------------------------------------------------------
         if ("fabia" in lower_msg
             and "premium" in lower_msg
             and "monte carlo" in lower_msg
@@ -703,26 +725,28 @@ class ChatbotAPI:
                 right_title = right_img.replace("_", " ").replace(".png", "")
 
                 html_pair = f"""
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <div>
-                    <div style="font-weight: bold; margin-bottom: 6px;">{left_title}</div>
-                    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{left_url}')">
-                      <img src="{left_url}" alt="{left_title}" style="max-width: 350px;" />
-                    </a>
-                  </div>
-                  <div>
-                    <div style="font-weight: bold; margin-bottom: 6px;">{right_title}</div>
-                    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{right_url}')">
-                      <img src="{right_url}" alt="{right_title}" style="max-width: 350px;" />
-                    </a>
-                  </div>
-                </div>
-                """
+<div style="display: flex; align-items: center; gap: 10px;">
+  <div>
+    <div style="font-weight: bold; margin-bottom: 6px;">{left_title}</div>
+    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{left_url}')">
+      <img src="{left_url}" alt="{left_title}" style="max-width: 350px;" />
+    </a>
+  </div>
+  <div>
+    <div style="font-weight: bold; margin-bottom: 6px;">{right_title}</div>
+    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{right_url}')">
+      <img src="{right_url}" alt="{right_title}" style="max-width: 350px;" />
+    </a>
+  </div>
+</div>
+"""
                 yield html_pair.encode("utf-8")
             yield "</div>".encode("utf-8")
             return
 
+        # --------------------------------------------------------
         # 6) Genel "görsel" isteği mi?
+        # --------------------------------------------------------
         if self.utils.is_image_request(user_message):
             if not assistant_id:
                 save_to_db(user_id, user_message, "Henüz asistan seçilmedi, görsel yok.")
@@ -773,58 +797,83 @@ class ChatbotAPI:
             yield from self._render_side_by_side_images(found_images, context=context)
             return
 
+        # --------------------------------------------------------
         # 7) Opsiyonel tablolar
-        if "fabia" in lower_msg and "opsiyonel" in lower_msg:
-            if "premium" in lower_msg:
-                save_to_db(user_id, user_message, "Fabia Premium opsiyonel tablosu.")
-                yield FABIA_PREMIUM_MD.encode("utf-8")
-                return
-            elif "monte carlo" in lower_msg:
-                save_to_db(user_id, user_message, "Fabia Monte Carlo opsiyonel tablosu.")
-                yield FABIA_MONTE_CARLO_MD.encode("utf-8")
-                return
-            else:
-                yield ("Fabia modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                       "(Premium / Monte Carlo)\n").encode("utf-8")
-                return
+        # --------------------------------------------------------
+        # Eğer 2+ model veya 2+ donanım geçiyorsa tekil tablo bypass
+        user_models_in_msg = self._extract_models(user_message)
+        user_trims_in_msg = set()
+        if "premium" in lower_msg:
+            user_trims_in_msg.add("premium")
+        if "elite" in lower_msg:
+            user_trims_in_msg.add("elite")
+        if "monte carlo" in lower_msg:
+            user_trims_in_msg.add("monte carlo")
 
-        if "kamiq" in lower_msg and "opsiyonel" in lower_msg:
-            if "elite" in lower_msg:
-                save_to_db(user_id, user_message, "Kamiq Elite opsiyonel tablosu.")
-                yield KAMIQ_ELITE_MD.encode("utf-8")
-                return
-            elif "premium" in lower_msg:
-                save_to_db(user_id, user_message, "Kamiq Premium opsiyonel tablosu.")
-                yield KAMIQ_PREMIUM_MD.encode("utf-8")
-                return
-            elif "monte carlo" in lower_msg:
-                save_to_db(user_id, user_message, "Kamiq Monte Carlo opsiyonel tablosu.")
-                yield KAMIQ_MONTE_CARLO_MD.encode("utf-8")
-                return
-            else:
-                yield ("Kamiq modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                       "(Elite / Premium / Monte Carlo)\n").encode("utf-8")
-                return
+        if len(user_models_in_msg) >= 2 or len(user_trims_in_msg) >= 2:
+            self.logger.info("Birden çok model veya donanım tespit edildi. Tekil tabloyu atlıyoruz.")
+            # Direkt #8'e geçsin.
+        else:
+            # Tekil tablo (yalnızca 1 model + 1 donanım)
+            if "fabia" in lower_msg and "opsiyonel" in lower_msg:
+                if "premium" in lower_msg:
+                    save_to_db(user_id, user_message, "Fabia Premium opsiyonel tablosu.")
+                    yield FABIA_PREMIUM_MD.encode("utf-8")
+                    return
+                elif "monte carlo" in lower_msg:
+                    save_to_db(user_id, user_message, "Fabia Monte Carlo opsiyonel tablosu.")
+                    yield FABIA_MONTE_CARLO_MD.encode("utf-8")
+                    return
+                else:
+                    yield (
+                        "Fabia modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
+                        "(Premium / Monte Carlo)\n"
+                    ).encode("utf-8")
+                    return
 
-        if "scala" in lower_msg and "opsiyonel" in lower_msg:
-            if "elite" in lower_msg:
-                save_to_db(user_id, user_message, "Scala Elite opsiyonel tablosu.")
-                yield SCALA_ELITE_MD.encode("utf-8")
-                return
-            elif "premium" in lower_msg:
-                save_to_db(user_id, user_message, "Scala Premium opsiyonel tablosu.")
-                yield SCALA_PREMIUM_MD.encode("utf-8")
-                return
-            elif "monte carlo" in lower_msg:
-                save_to_db(user_id, user_message, "Scala Monte Carlo opsiyonel tablosu.")
-                yield SCALA_MONTE_CARLO_MD.encode("utf-8")
-                return
-            else:
-                yield ("Scala modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                       "(Elite / Premium / Monte Carlo)\n").encode("utf-8")
-                return
+            if "kamiq" in lower_msg and "opsiyonel" in lower_msg:
+                if "elite" in lower_msg:
+                    save_to_db(user_id, user_message, "Kamiq Elite opsiyonel tablosu.")
+                    yield KAMIQ_ELITE_MD.encode("utf-8")
+                    return
+                elif "premium" in lower_msg:
+                    save_to_db(user_id, user_message, "Kamiq Premium opsiyonel tablosu.")
+                    yield KAMIQ_PREMIUM_MD.encode("utf-8")
+                    return
+                elif "monte carlo" in lower_msg:
+                    save_to_db(user_id, user_message, "Kamiq Monte Carlo opsiyonel tablosu.")
+                    yield KAMIQ_MONTE_CARLO_MD.encode("utf-8")
+                    return
+                else:
+                    yield (
+                        "Kamiq modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
+                        "(Elite / Premium / Monte Carlo)\n"
+                    ).encode("utf-8")
+                    return
 
+            if "scala" in lower_msg and "opsiyonel" in lower_msg:
+                if "elite" in lower_msg:
+                    save_to_db(user_id, user_message, "Scala Elite opsiyonel tablosu.")
+                    yield SCALA_ELITE_MD.encode("utf-8")
+                    return
+                elif "premium" in lower_msg:
+                    save_to_db(user_id, user_message, "Scala Premium opsiyonel tablosu.")
+                    yield SCALA_PREMIUM_MD.encode("utf-8")
+                    return
+                elif "monte carlo" in lower_msg:
+                    save_to_db(user_id, user_message, "Scala Monte Carlo opsiyonel tablosu.")
+                    yield SCALA_MONTE_CARLO_MD.encode("utf-8")
+                    return
+                else:
+                    yield (
+                        "Scala modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
+                        "(Elite / Premium / Monte Carlo)\n"
+                    ).encode("utf-8")
+                    return
+
+        # --------------------------------------------------------
         # 8) Normal Chat (OpenAI vb.)
+        # --------------------------------------------------------
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
             yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
