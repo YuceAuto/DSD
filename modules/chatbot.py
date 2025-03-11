@@ -15,7 +15,7 @@ from modules.image_manager import ImageManager
 from modules.markdown_utils import MarkdownProcessor
 from modules.config import Config
 from modules.utils import Utils
-from modules.db import create_tables, save_to_db, send_email, get_db_connection
+from modules.db import create_tables, save_to_db, send_email, get_db_connection, update_customer_answer
 
 import secrets
 
@@ -118,6 +118,19 @@ class ChatbotAPI:
                 if now - session['last_activity'] > self.SESSION_TIMEOUT:
                     return jsonify({"active": False})
             return jsonify({"active": True})
+
+        # YENİ EKLENDİ: "Beğen" butonuna tıklayınca DB güncelleyen endpoint
+        @self.app.route("/like", methods=["POST"])
+        def like_endpoint():
+            data = request.get_json()
+            conv_id = data.get("conversation_id")
+            if not conv_id:
+                return jsonify({"error": "No conversation_id provided"}), 400
+            try:
+                update_customer_answer(conv_id, 1)
+                return jsonify({"status": "ok"}), 200
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
 
     # ----------------------------------------------------------------
     # ARKA PLANDA DB'YE YAZAN THREAD
@@ -546,7 +559,7 @@ class ChatbotAPI:
             self.user_states[user_id]["current_trim"] = ""
 
         # --------------------------------------------------------
-        # 1) MODEL + "görsel" -> renk (genel)
+        # (1) Model + "görsel" -> renk (genel)
         # --------------------------------------------------------
         model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
         if re.search(model_image_pattern, lower_msg):
@@ -570,7 +583,7 @@ class ChatbotAPI:
             return
 
         # --------------------------------------------------------
-        # 2) Dış görsel istekleri
+        # (2) Dış görsel istekleri
         # --------------------------------------------------------
         if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
             if not assistant_id or not assistant_name:
@@ -628,7 +641,7 @@ class ChatbotAPI:
             return
 
         # --------------------------------------------------------
-        # 3) İç görsel istekleri
+        # (3) İç görsel istekleri
         # --------------------------------------------------------
         if any(kw in lower_msg for kw in ["iç", "ic"]):
             if not assistant_id or not assistant_name:
@@ -682,7 +695,7 @@ class ChatbotAPI:
             return
 
         # --------------------------------------------------------
-        # 4) "Evet" kontrolü (renk seçimi vs.)
+        # (4) "Evet" kontrolü (renk seçimi vs.)
         # --------------------------------------------------------
         trimmed_msg = user_message.strip().lower()
         if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
@@ -707,7 +720,7 @@ class ChatbotAPI:
                 return
 
         # --------------------------------------------------------
-        # 5) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
+        # (5) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
         # --------------------------------------------------------
         if ("fabia" in lower_msg
             and "premium" in lower_msg
@@ -745,7 +758,7 @@ class ChatbotAPI:
             return
 
         # --------------------------------------------------------
-        # 6) Genel "görsel" isteği mi?
+        # (6) Genel "görsel" isteği mi?
         # --------------------------------------------------------
         if self.utils.is_image_request(user_message):
             if not assistant_id:
@@ -798,9 +811,8 @@ class ChatbotAPI:
             return
 
         # --------------------------------------------------------
-        # 7) Opsiyonel tablolar
+        # (7) Opsiyonel tablolar
         # --------------------------------------------------------
-        # Eğer 2+ model veya 2+ donanım geçiyorsa tekil tablo bypass
         user_models_in_msg = self._extract_models(user_message)
         user_trims_in_msg = set()
         if "premium" in lower_msg:
@@ -872,7 +884,7 @@ class ChatbotAPI:
                     return
 
         # --------------------------------------------------------
-        # 8) Normal Chat (OpenAI vb.)
+        # (8) Normal Chat (OpenAI vb.)
         # --------------------------------------------------------
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
@@ -928,7 +940,9 @@ class ChatbotAPI:
                 yield "Yanıt alma zaman aşımına uğradı.\n".encode("utf-8")
                 return
 
-            save_to_db(user_id, user_message, assistant_response)
+            # YENİ: Eklenen satırın ID'sini alıp son satırda [CONVERSATION_ID=xxx] gönderiyoruz.
+            conversation_id = save_to_db(user_id, user_message, assistant_response)
+            yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
             # Renk ismi tespiti
             if "görsel olarak görmek ister misiniz?" in assistant_response.lower():

@@ -223,7 +223,7 @@ body, html {
 
 /* 1) Modal içindeki resmi büyütme (daha geniş göstermek için) */
 #popupImage {
-  max-width: 800px; /* 1200px üst sınır, isterseniz daha da artırabilirsiniz */
+  max-width: 800px;
   width: 100%;
   height: auto;
   border-radius: 8px;
@@ -236,8 +236,8 @@ body, html {
 
 /* 3) Modal açıldığında arka planı siyah, ancak yarı şeffaf yapmak */
 .modal-backdrop.show {
-  background-color: rgba(0, 0, 0, 0.7) !important; /* %70 opak siyah (arkaplan görülebilir) */
-  opacity: 1 !important;                           /* rgba()'ya dokunmaması için 1 bırakıyoruz */
-  backdrop-filter: none !important;                /* Bulanıklığı tamamen kapat */
+  background-color: rgba(0, 0, 0, 0.7) !important; 
+  opacity: 1 !important;                           
+  backdrop-filter: none !important;                
   -webkit-backdrop-filter: none !important;
 }

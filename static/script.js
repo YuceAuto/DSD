@@ -1,12 +1,13 @@
 // ----------------------------------------------------
-// script.js (Tablolu cevap + özel parçalama yaklaşımı) 
+// script.js (Tablolu cevap + özel parçalama yaklaşımı)
 // + Benzersiz user_id üretme (Local Storage)
 // + Görsel popup fonksiyonu
+// + Sadece son baloncukta "Beğen" butonu
+// + Beğen butonuna tıklayınca /like POST isteği
 // ----------------------------------------------------
 
 // 1) Tarayıcıda kalıcı (localStorage) benzersiz kullanıcı ID oluşturma
 function getOrCreateUserId() {
-  // Daha önce localStorage'da kaydedilmiş mi?
   let existing = localStorage.getItem("skodaBotUserId");
   if (existing) {
     return existing;
@@ -14,10 +15,8 @@ function getOrCreateUserId() {
   // Yeni bir UUID üret
   let newId;
   if (window.crypto && crypto.randomUUID) {
-    // Modern tarayıcılarda crypto.randomUUID()
     newId = crypto.randomUUID();
   } else {
-    // Fallback (basit bir pseudo-UUID)
     newId = 'xxxx-4xxx-yxxx-xxxx'.replace(/[xy]/g, function (c) {
       let r = Math.random() * 16 | 0;
       let v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -30,11 +29,7 @@ function getOrCreateUserId() {
 
 // 2) Görsele tıklanınca modal içinde açmayı sağlayan fonksiyon
 function showPopupImage(imgUrl) {
-  // Modal içindeki büyük resme src atıyoruz
   $("#popupImage").attr("src", imgUrl);
-  // Bootstrap 4 kullanıyorsanız, data-toggle ve data-target ile modal zaten açılıyor.
-  // Yine de ekstra olarak açmak isterseniz:
-  // $("#imageModal").modal("show");
 }
 
 function extractTextContentBlock(fullText) {
@@ -49,25 +44,22 @@ function extractTextContentBlock(fullText) {
 function markdownTableToHTML(mdTable) {
   const lines = mdTable.trim().split("\n").map(line => line.trim());
   if (lines.length < 2) {
-    return `<p>${mdTable}</p>`; 
+    return `<p>${mdTable}</p>`;
   }
   const headerLine = lines[0];
   const headerCells = headerLine.split("|").map(cell => cell.trim()).filter(Boolean);
   const bodyLines = lines.slice(2);
 
-  let html = `
-    <table class="table table-bordered table-sm my-blue-table">
-      <thead>
-        <tr>
-  `;
+  let html = `<table class="table table-bordered table-sm my-blue-table">
+                <thead>
+                  <tr>`;
 
   headerCells.forEach(cell => {
     html += `<th>${cell}</th>`;
   });
-  html += `
-        </tr>
-      </thead>
-      <tbody>
+  html += `   </tr>
+            </thead>
+            <tbody>
   `;
 
   bodyLines.forEach(line => {
@@ -81,9 +73,8 @@ function markdownTableToHTML(mdTable) {
     html += `</tr>`;
   });
   html += `
-      </tbody>
-    </table>
-  `;
+            </tbody>
+          </table>`;
   return html;
 }
 
@@ -156,11 +147,22 @@ function splitNonTableTextIntoBubbles(fullText) {
 }
 
 function processBotMessage(fullText, uniqueId) {
-  const normalizedText = fullText
+  // Bot'tan gelen ham text'i normalleştir
+  let normalizedText = fullText
     .replace(/\\n/g, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/[–—]/g, '-');
 
+  // Özel pattern "[CONVERSATION_ID=xxx]" yakala
+  let conversationId = null;
+  const matchConv = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
+  if (matchConv) {
+    conversationId = matchConv[1];
+    // Metinden bu satırı çıkaralım ki baloncukta görünmesin
+    normalizedText = normalizedText.replace(matchConv[0], "");
+  }
+
+  // Bazı özel pattern'leri ayıklama (opsiyonel)
   const extractedValue = extractTextContentBlock(normalizedText);
   const textToCheck = extractedValue ? extractedValue : normalizedText;
 
@@ -195,21 +197,35 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // Bot loading div'i kaldıralım
+  // Bot "typing" placeholder'ını kaldır
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
-  newBubbles.forEach((bubble) => {
+  // Her bubble'ı ayrı mesaj balonu yaparak ekrana bas
+  newBubbles.forEach((bubble, index) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    let bubbleContent = "";
 
+    let bubbleContent = "";
     if (bubble.type === "table") {
       bubbleContent = markdownTableToHTML(bubble.content);
     } else {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
-    // Botun mesajını HTML olarak ekle
+    // Sadece son baloncukta "Beğen" butonu
+    const isLastBubble = (index === newBubbles.length - 1);
+    let likeButtonHtml = "";
+    if (isLastBubble && conversationId) {
+      likeButtonHtml = `
+        <button class="like-button"
+                style="margin-top:6px;"
+                data-conversation-id="${conversationId}">
+          Beğen
+        </button>
+      `;
+    }
+
+    // BOT MESAJ BALONU
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
         <img src="static/images/fotograf.png"
@@ -217,17 +233,18 @@ function processBotMessage(fullText, uniqueId) {
              alt="bot image">
         <div class="msg_cotainer">
           <span id="botMessageContent-${bubbleId}">${bubbleContent}</span>
+          ${likeButtonHtml}
         </div>
         <span class="msg_time">${currentTime}</span>
       </div>
     `;
+
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
   });
 }
 
 $(document).ready(function () {
-  // 2) Sayfa yüklendiğinde benzersiz user ID al
   const localUserId = getOrCreateUserId();
 
   $("#messageArea").on("submit", function (e) {
@@ -269,7 +286,6 @@ $(document).ready(function () {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
-    // 3) user_id = localUserId şeklinde POST isteği
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -292,7 +308,7 @@ $(document).ready(function () {
         function readChunk() {
           return reader.read().then(({ done, value }) => {
             if (done) {
-              // Akış bitti, tüm chunk'ları aldık, işleyelim
+              // Tüm chunk'lar tamamlandı
               processBotMessage(botMessage, uniqueId);
               return;
             }
@@ -314,4 +330,44 @@ $(document).ready(function () {
       document.getElementById('notificationBar').style.display = 'block';
     }, 9 * 60 * 1000);
   });
+});
+
+// "Beğen" butonuna tıklama olayı
+$(document).on("click", ".like-button", function(event) {
+  event.preventDefault();
+  const $btn = $(this);
+  if ($btn.hasClass("clicked")) {
+    // Beğeniyi geri alma örneği (isteğe bağlı)
+    $btn.removeClass("clicked");
+    $btn.text("Beğen");
+
+    const convId = $btn.data("conversation-id");
+    if (convId) {
+      // İsterseniz DB'de 0 yapmak için /like ile farklı parametre yollayabilirsiniz.
+      // Örnek: /unlike endpointi vb.
+      // Bu kod opsiyonel
+    }
+  } else {
+    // İlk kez beğen
+    $btn.addClass("clicked");
+    $btn.text("Beğenildi");
+
+    const convId = $btn.data("conversation-id");
+    if (convId) {
+      fetch("/like", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: convId })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "ok") {
+          console.log("Veritabanı güncellendi: customer_answer=1");
+        } else {
+          console.log("Like güncelleme hatası:", data);
+        }
+      })
+      .catch(err => console.error("Like POST hatası:", err));
+    }
+  }
 });
