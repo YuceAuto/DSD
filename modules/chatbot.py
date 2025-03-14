@@ -1,4 +1,3 @@
-
 import os
 import time
 import logging
@@ -91,77 +90,91 @@ class ChatbotAPI:
         self.CROSS_ASSISTANT_CACHE = True
 
         # =====================================================
-        # GÜNCELLENMİŞ SYSTEM PROMPTLAR (PDF yerine kamiq_data.py)
+        # GÜNCELLENMİŞ SYSTEM PROMPTLAR
         # =====================================================
         self.SYSTEM_PROMPTS = {
             "asst_fw6RpRp8PbNiLUR1KB2XtAkK": """
-Sen bir yardımcı asistansın.
-- Kullanıcıya Skoda Kamiq modelleriyle ilgili bilgi ver.
-- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
-- Tutarlı ol, önceki mesajları unutma.
+Sen bir yardımcı asistansın.  
+- Kullanıcıya Skoda Kamiq modelleriyle ilgili bilgi ver.  
+- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver. 
+- Tutarlı ol, önceki mesajları unutma.  
 - Samimi ve anlaşılır bir dille konuş.
 - Tüm cevapların detaylı (Markdown tablo ile göster) ve anlaşılır olsun.
-
-Eğer bu tabloda bulunan özellikler modelde varsa (örneğin: Elite'de S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum (SKODA KAMIQ MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle)).
-
+Eğer bu tabloda bulunan özellikler model de varsa (örneğin: Elite'de S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum SKODA KAMIQ MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle)
 Eğer Kamiq Premium'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
 Eğer Kamiq Elite'de standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
 Eğer Kamiq Monte Carlo'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
+Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. Eğer kullanıcı sorduğun soruları olumlu yanıt (yani görmek isterse) yanıtı almasını sağla.
+Kullanıcının sorduğu sorunun içeriği belgelerde mevcutsa kullanıcıyı bilgilendir. 
+Eğer kullanıcının sorduğu sorunun içeriği belgelerde yoksa (örneğin: masaj özelliğinin olmaması) bu araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, karbon salınımını, çevreye zararı...) kullanıcıya bildir.
+Kullanıcıya asla bu şekilde bilgiler verme: "ilgili bilgiye ulaşmak için "Kamiq Opsiyonel Donanım.pdf" dosyasını kontrol ediyorum. Bir saniye lütfen." 
+Sadece kullanıcıya cevabı ilet.
 
-Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. 
-Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. 
-Eğer kullanıcı sorduğun soruları olumlu yanıt verirse (yani görmek isterse) detaya gir.
-
-Kullanıcının sorduğu sorunun içeriği belgelerde (kamiq_data.py dosyasındaki tablolar) mevcutsa kullanıcıyı bilgilendir.
-Eğer kullanıcının sorduğu sorunun içeriği yoksa (örneğin: masaj özelliği bulunmuyor gibi), araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, vb.) kullanıcıya aktar.
-
-Asla şöyle deme: "ilgili bilgiye ulaşmak için Kamiq Opsiyonel Donanım.pdf'i açıyorum." 
-Dosya adı vermeden, sanki "kamiq_data.py içindeki tablolar" senin kaynak kodundaymış gibi davran.
-
-Para Talimatları:
-- Kullanıcı aracı sorarsa veya fiyat isterse: 
-  "Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz."
+Analiz ve Paylaşım Talimatları:
 
 Analiz Detaylarını Paylaşma:
-- Kullanıcıya yapılan analiz sürecini veya kaynakları anlatma, sadece sonuç bilgiyi ver.
 
-Tablo Gösterimi:
-- Oluşturduğun tabloların her model bilgisi (Elite, Premium, Monte Carlo) ayrı sütun olarak yan yana gösterilsin.
-- Her tablo alt alta değil, yatayda sütunlar şeklinde olsun.
+Kullanıcıya yapılan analizlerin detaylarını paylaşma.
+Yalnızca talep edilen bilgiyle yanıt ver.
+Oluşturulan tüm tablolar (modeller) alt alta değil kesinlikle yan yana olsun.
+Oluşturulan tüm tablolarda (modeller) ayrı sütunlarda olsun kesinlikle aynı sütunda olmasın.
+Tablo ile gösterirken mutlaka elite, premium ve monte carlo ayrı column'larda olsun.
+Kullanıcıya tablo sunumunda kesinlikle elite, premium ve monte carlo aynı yerde olmasın.
+Kamiq bilgilerini tablo formatında sun, tablo sunumu sırasında mutlaka elite, premium ve monte carlo bilgileri ayrı ayrı gösterilsin.
+Tablo bilgilerini sunarken solda elite, ortada premium ve sağda monte carlo olacak şekilde göster.
+Eğer kullanıcı kamiq ile ilgili bilgi almak isterse yalnızca bu dosyadan yararlanarak bilgi yaz: Kamiq Opsiyonel Donanım.pdf
 
-Eğer kullanıcı "kamiq" yazmadan soru sorsa bile Kamiq sorusuymuş gibi yanıtla (ör: "aracın ağırlığı nedir" => "kamiq ağırlığı nedir").
+Garantiler veya ikinci el önerileri hakkında bilgi verme.
 
-Garantiler veya ikinci el hakkında bilgi verme.
+Eğer kullanıcı "kamiq" yazmadan (büyük, küçük harf fark etmeksizin) soru sorarsa kamiq ile ilgili soru sorduğunu varsayarak kullanıcıya yanıt vermeni istiyorum (örneğin: "aracın ağırlığı nedir" gibi bir soruyu şu şekilde anlasın: "kamiq aracın ağırlığı nedir").  
+
+Kullanıcı Kamiq ile ilgili soru sorarsa mutlaka sorduğu sorunun bilgisi Kamiq Opsiyonel Donanım
+.pdf de yer alıp almadığını kontrol edip yanıtlasın. 
+ 
+Kullanıcıya "Graptihe Gri" değil "Grafit Gri" olarak yazmanı istiyorum. 
 
 Farklar:
-- Kamiq modellerinin farklarını tablo formatında göster (her model sütunu yanyana).
-- Aynı özellikleri tekrar etme, sadece farklı özellikleri listele.
+Kamiq modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
+Aynı özellikleri tekrarlama.
+Sadece farklı özellikleri göster.
 
 Teknik Bilgiler:
-- Kamiq modellerinin teknik detaylarını tablo formatında göster.
+Kamiq modellerinin teknik bilgilerini tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
 
 Donanımlar:
-- Kamiq modellerinin donanım bilgilerini tablo formatında göster (her model sütunu yanyana).
+Kamiq modellerinin donanım bilgilerini ( motor donanım gibi) tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
 
 Donanım Farkları:
-- Sadece farklı noktaları tablo halinde göster.
+
+Kamiq modellerinin donanım farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
+Aynı özellikleri tekrarlama.
 
 Opsiyonel Donanımlar:
-- Eğer kullanıcı opsiyonel donanım isterse kamiq_data.py'daki tablolardan (KAMIQ_ELITE_MD, KAMIQ_PREMIUM_MD, KAMIQ_MONTE_CARLO_MD) yararlan.
-- Tüm opsiyonel donanımları tabloyla göster (her model sütunu ayrı).
-- Opsiyonel donanım fiyatlarını MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) şeklinde ayrı sütunlar yap.
-- Parça kodlarını gösterme.
+Eğer kullanıcı opsiyonel donanımlar ile ilgili bilgi isterse mutlaka Kamiq_Merged.pdf dosyasından bilgi sağla.
+Mutlaka tüm opsiyonel donanımları paylaş.
+Mutlaka belirtilen tablo formatında sun. 
+Tüm opsiyonel donanımları tabloyla  göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
+Elite ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ ELITE OPSİYONEL DONANIMLAR tablosundan mutlaka al.
+Premium ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ PREMIUM OPSİYONEL DONANIMLAR tablosundan mutlaka al.
+Mutlaka ŠKODA KAMIQ PREMIUM OPSİYONEL DONANIMLAR tablosundaki tüm verileri al.
+Monte Carlo ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ MONTE CARLO OPSİYONEL DONANIMLAR tablosundan al.
+Tablolardaki tüm bilgileri mutlaka kullanıcı ile paylaş.
+Opsiyonel donanımları gösterirken her donanımı (elite, premium, monte carlo) ayrı tablolarda mutlaka tüm bilgileri göster.  
+Mutlaka opsiyonel donanım fiyatlarını kullanıcıya ayrı sütunlarda göster (MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve  MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) ayrı ayrı gösterilecek şekilde göster).  
+Parça kodlarını paylaşma.
 
 Fiyat Bilgisi:
-Eğer kullanıcı aracın ikinci el (2. el) fiyatını (parasını) ya da aracın fiyatını (parasını) isterse sadece şu şekilde yanıtla: Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz.
 
+Yalnızca "Kamiq Para Talimatlar.txt" dosyasındaki talimatlara göre fiyat bilgisi ver.
+Diğer Modeller Hakkında Bilgi:
 
-Diğer Modeller:
-- Skoda dışı hiçbir marka/model hakkında bilgi verme. 
-  "Üzgünüm, yalnızca Skoda Kamiq hakkında bilgi verebilirim." şeklinde yanıtla.
+Skoda dışındaki marka veya modeller hakkında bilgi verme.
+Eğer kullanıcı başka bir marka/model hakkında bilgi isterse şu cevabı ver:
+"Üzgünüm, yalnızca Skoda Kamiq hakkında bilgi verebilirim."
+Ek Detaylar:
 
-Ek Detay:
-- Daha fazla bilgi için: "https://www.skoda.com.tr/modeller/kamiq"
+Kamiq modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu siteye yönlendir:
+"https://www.skoda.com.tr/modeller/kamiq."
 
 Eğer kullanıcı kamiq ile ilgili bilgi ister şu cevabı ver: Skoda Kamiq, şehir içi ve şehir dışı kullanıma uygun, pratik ve modern bir SUV modelidir. Öne çıkan genel özellikleri şunlardır:
 
@@ -184,17 +197,14 @@ Kablosuz SmartLink (Apple CarPlay ve Android Auto) ile mobil cihazlar kolayca ba
 İleri teknolojiler arasında elektrikli bagaj kapağı, otomatik park pilotu ve çeşitli sürüş modları bulunur.
 Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle her türlü kullanıcı ihtiyacına hitap eder. Daha detaylı bilgi için sorularınızı belirtebilirsiniz.
             """,
-            # Fabia
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": (
                 "Sen Fabia Bot'sun. "
                 "Fabia modeliyle ilgili soruları yanıtla."
             ),
-            # Scala
             "asst_njSG1NVgg4axJFmvVYAIXrpM": (
                 "Sen Scala Bot'sun. "
                 "Scala ile ilgili teknik bilgileri paylaş."
             ),
-            # All Models Bot
             "asst_hiGn8YC08xM3amwG0cs2A3SN": (
                 "Sen All Models Bot'sun. "
                 "Tüm ŠKODA modelleri (Fabia, Scala, Kamiq) hakkında kıyaslama, genel bilgi sağla."
@@ -245,9 +255,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
-    # ----------------------------------------------------------------
-    # ARKA PLANDA DB'YE YAZAN THREAD
-    # ----------------------------------------------------------------
     def _background_db_writer(self):
         """
         self.fuzzy_cache_queue'ya eklenen kayıtları DB'ye yazar.
@@ -282,9 +289,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         self.logger.info("Background DB writer thread stopped.")
 
     def _extract_models(self, text: str) -> set:
-        """
-        Kullanıcının mesajında 'fabia', 'scala' veya 'kamiq' geçiyorsa bul.
-        """
         lower_t = text.lower()
         models = set()
         if "fabia" in lower_t:
@@ -296,9 +300,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
-        """
-        Model adına göre asistan ID döndürür (örnek: 'kamiq' => asst_fw6RpRp8PbNiLUR1KB2XtAkK)
-        """
         model_name = model_name.lower()
         for asst_id, keywords in self.ASSISTANT_CONFIG.items():
             for kw in keywords:
@@ -307,9 +308,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         return None
 
     def _search_in_assistant_cache(self, user_id, assistant_id, new_question, threshold):
-        """
-        Belirli bir asistanın fuzzy cache'inde arama yapar.
-        """
         if not assistant_id:
             return None, None, None
         if user_id not in self.fuzzy_cache:
@@ -347,17 +345,12 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         threshold=0.8,
         allow_cross_assistant=True
     ):
-        """
-        Hem ilgili asistanın hem de cross asistanların 
-        fuzzy cache'inde arama yapar (istenirse).
-        """
         ans, matched_q, found_asst_id = self._search_in_assistant_cache(
             user_id, assistant_id, new_question, threshold
         )
         if ans:
             return ans, matched_q, found_asst_id
 
-        # Cross-assistant cache
         if allow_cross_assistant and self.CROSS_ASSISTANT_CACHE and user_id in self.fuzzy_cache:
             for other_aid in self.fuzzy_cache[user_id]:
                 if other_aid == assistant_id:
@@ -372,9 +365,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         return None, None, None
 
     def _store_in_fuzzy_cache(self, user_id: str, question: str, answer_bytes: bytes, assistant_id: str):
-        """
-        Yanıtı fuzzy cache'e kaydeder, DB'ye eklemek için queue'ya atar.
-        """
         if not assistant_id:
             return
         q_lower = question.strip().lower()
@@ -394,10 +384,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         self.fuzzy_cache_queue.put(record)
 
     def _correct_typos(self, user_message):
-        """
-        Ufak yazım hatalarını düzeltme:
-        'premum' -> 'premium', 'graptihe gri' -> 'grafit gri' vb.
-        """
         known_words = ["premium", "elite", "monte", "carlo"]
         splitted = user_message.split()
         new_tokens = []
@@ -425,19 +411,10 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                 combined_tokens.append(new_tokens[i])
 
         corrected_text = " ".join(combined_tokens)
-
-        # "Graptihe Gri" -> "Grafit Gri"
         corrected_text = corrected_text.replace("graptihe", "grafit")
         return corrected_text
 
     def _ask(self):
-        """
-        /ask endpoint'ine gelen sorunun işlendiği ana fonksiyon.
-        1) user_message
-        2) fuzzy cache
-        3) ChatCompletion (stream)
-        4) tablolarda vs. veriler
-        """
         try:
             data = request.get_json()
             if not data:
@@ -452,7 +429,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         if not user_message:
             return jsonify({"response": "Please enter a question."})
 
-        # Session güncelle
         if 'last_activity' not in session:
             session['last_activity'] = time.time()
         else:
@@ -461,7 +437,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         corrected_message = self._correct_typos(user_message)
         lower_corrected = corrected_message.lower().strip()
 
-        # Model & Donanım tespiti
         user_models = self._extract_models(corrected_message)
         user_trims = set()
         if "premium" in lower_corrected:
@@ -473,11 +448,9 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
 
         new_assistant_id = None
 
-        # (1) Birden fazla model => All Models Bot
         if len(user_models) >= 2 or len(user_trims) >= 2:
             new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
         else:
-            # (2) Sadece 1 model => o modele özel asistan
             if len(user_models) == 1:
                 single_model = list(user_models)[0]
                 for aid, keywords in self.ASSISTANT_CONFIG.items():
@@ -485,7 +458,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                         new_assistant_id = aid
                         break
 
-            # (3) Hiç model yok => Kamiq
             if not new_assistant_id:
                 self.logger.info("Kullanıcı herhangi bir model belirtmedi => Kamiq'e yönlendiriliyor.")
                 new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"
@@ -495,7 +467,7 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             self.user_states[user_id]["conversations"] = {}
 
         old_assistant_id = self.user_states[user_id].get("assistant_id")
-        allow_cross = False  # Cross-assistant cache kapat/isteğe bağlı aç
+        allow_cross = False
 
         self.user_states[user_id]["assistant_id"] = new_assistant_id
         assistant_id = new_assistant_id
@@ -516,14 +488,12 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             )
 
         if cached_answer and not is_image_req:
-            # Model uyuşmazlığı?
             user_models_in_msg = self._extract_models(corrected_message)
             cache_models = self._extract_models(matched_question) if matched_question else set()
 
             if user_models_in_msg and not user_models_in_msg.issubset(cache_models):
                 self.logger.info("Model uyuşmazlığı -> cache bypass.")
             else:
-                # Cross assistant bulduysa
                 if found_asst_id and (new_assistant_id is None):
                     self.user_states[user_id]["assistant_id"] = found_asst_id
 
@@ -549,7 +519,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                 chunks.append(chunk)
                 yield chunk
 
-            # Görsel değilse => cache'e yaz
             if not is_image_req:
                 final_bytes = b"".join(chunks)
                 final_aid = self.user_states[user_id].get("assistant_id", assistant_id)
@@ -558,30 +527,18 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
 
     def _generate_response(self, user_message, user_id):
-        """
-        Ana cevap oluşturma fonksiyonu:
-          - Görsel ve tablo isteklerine yanıt
-          - Son olarak ChatCompletion ile streaming
-        """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
 
         assistant_id = self.user_states[user_id].get("assistant_id")
         assistant_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "")
         lower_msg = user_message.lower()
 
-        # "current_trim" state
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # ------------------------------------------------
-        # (1) Özel if blokları: model+görsel, dış, iç, "evet"
-        # (2) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
-        # (3) Genel görsel isteği
-        # (4) Opsiyonel tablolar
-        # (5) Normal Chat
-        # ------------------------------------------------
-
-        # (1.1) model + "görsel" => Renk
+        # ------------------------------------------------------------
+        # 1) Özel görsel vs. yanıtları
+        # ------------------------------------------------------------
         model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
         if re.search(model_image_pattern, lower_msg):
             matched_model = re.search(model_image_pattern, lower_msg).group(1)
@@ -602,7 +559,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                 yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
             return
 
-        # (1.2) "dış" görseller
         if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
@@ -628,7 +584,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
             yield f"<b>{final_title}</b><br>".encode("utf-8")
 
-            # Renk görselleri
             all_colors = self.config.KNOWN_COLORS
             found_color_images = []
             for clr in all_colors:
@@ -644,7 +599,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             else:
                 yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
 
-            # Jant görselleri
             if trim_name:
                 filter_jant = f"{assistant_name} {trim_name} jant"
             else:
@@ -658,7 +612,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                 yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
             return
 
-        # (1.3) "iç" görseller
         if any(kw in lower_msg for kw in ["iç", "ic"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
@@ -710,7 +663,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                 yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
             return
 
-        # (1.4) "Evet" kontrolü (renk seçimi vb.)
         trimmed_msg = user_message.strip().lower()
         if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
             pending_colors = self.user_states[user_id].get("pending_color_images", [])
@@ -733,7 +685,7 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                 self.user_states[user_id]["pending_color_images"] = []
                 return
 
-        # (1.5) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
+        # Özel örnek: Fabia Premium vs Monte Carlo
         if ("fabia" in lower_msg
             and "premium" in lower_msg
             and "monte carlo" in lower_msg
@@ -742,7 +694,9 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                 ("Fabia_Premium_Ay_Beyazı.png", "Fabia_Monte_Carlo_Ay_Beyazı.png"),
             ]
             save_to_db(user_id, user_message, "Fabia Premium vs Monte Carlo görsel karşılaştırma.")
-            yield "<div style='display: flex; flex-direction: row; gap: 20px;'>".encode("utf-8")
+            yield """
+<div style='display: flex; flex-direction: row; gap: 20px;'>
+""".encode("utf-8")
             for left_img, right_img in fabia_pairs:
                 left_url = f"/static/images/{left_img}"
                 right_url = f"/static/images/{right_img}"
@@ -769,7 +723,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             yield "</div>".encode("utf-8")
             return
 
-        # (1.6) Genel "görsel" isteği
         if self.utils.is_image_request(user_message):
             if not assistant_id:
                 save_to_db(user_id, user_message, "Henüz asistan seçilmedi, görsel yok.")
@@ -820,7 +773,9 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             yield from self._render_side_by_side_images(found_images, context=context)
             return
 
-        # (2) Opsiyonel tablolar
+        # ------------------------------------------------------------
+        # Opsiyonel tablolar
+        # ------------------------------------------------------------
         user_models_in_msg = self._extract_models(user_message)
         user_trims_in_msg = set()
         if "premium" in lower_msg:
@@ -832,9 +787,7 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
 
         if len(user_models_in_msg) >= 2 or len(user_trims_in_msg) >= 2:
             self.logger.info("Birden çok model/donanım tespit edildi. Tekil tabloyu atlıyoruz.")
-            # Normal chat'e geç
         else:
-            # Tek model + opsiyonel tablo
             if "fabia" in lower_msg and "opsiyonel" in lower_msg:
                 if "premium" in lower_msg:
                     save_to_db(user_id, user_message, "Fabia Premium opsiyonel tablosu.")
@@ -891,7 +844,9 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                     ).encode("utf-8")
                     return
 
-        # (3) Normal ChatCompletion
+        # ------------------------------------------------------------
+        # Normal ChatCompletion
+        # ------------------------------------------------------------
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
             yield "Üzgünüm, herhangi bir model hakkında yardımcı olamıyorum.\n".encode("utf-8")
@@ -908,7 +863,7 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         system_prompt = self.SYSTEM_PROMPTS.get(assistant_id, "Sen bir Škoda asistanısın.")
         try:
             response = openai.ChatCompletion.create(
-                model="gpt-4",  # Örnek model adı (gerçekte "gpt-4" veya "gpt-3.5-turbo")
+                model="gpt-4",  # veya "gpt-3.5-turbo"
                 messages=[
                     {"role": "system", "content": system_prompt}
                 ] + conversation_list,
@@ -925,14 +880,10 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
                         assistant_response_str += text_part
                         yield text_part.encode("utf-8")
 
-            # Asistan cevabını geçmişe ekle
             conversation_list.append({"role": "assistant", "content": assistant_response_str})
-
-            # DB kaydı
             conversation_id = save_to_db(user_id, user_message, assistant_response_str)
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-            # Örnek: renklere dair bir soru sorduysa
             if "görsel olarak görmek ister misiniz?" in assistant_response_str.lower():
                 detected_colors = self.utils.parse_color_names(assistant_response_str)
                 if detected_colors:
@@ -944,17 +895,16 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
 
     def _render_side_by_side_images(self, images, context="model"):
-        """
-        Görselleri yan yana veya grid şeklinde listeleyelim.
-        """
-        # Monte Carlo standart
+        if not images:
+            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
+            return
+
         mc_std = [
             img for img in images
             if "monte" in img.lower()
                and "carlo" in img.lower()
                and "standart" in img.lower()
         ]
-        # Premium opsiyonel
         pm_ops = [
             img for img in images
             if "premium" in img.lower()
@@ -962,14 +912,10 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         ]
         others = [img for img in images if img not in mc_std and img not in pm_ops]
 
-        if not images:
-            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
-            return
-
-        # Solda Monte Carlo, sağda Premium Opsiyonel
+        # Ana çerçeve
         yield """
 <div style="display: flex; justify-content: space-between; gap: 60px;">
-  <!-- SOL SÜTUN: MONTE CARLO STANDART -->
+  <!-- SOL SÜTÜN: MONTE CARLO STANDART -->
   <div style="flex:1;">
 """.encode("utf-8")
 
@@ -1043,12 +989,6 @@ Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle 
         self.app.run(debug=debug)
 
     def shutdown(self):
-        """
-        Arka planda çalışan thread'i durdurmak vb.
-        """
         self.stop_worker = True
         self.worker_thread.join(5.0)
         self.logger.info("ChatbotAPI shutdown complete.")
-
-
-

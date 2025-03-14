@@ -1,9 +1,9 @@
 // ----------------------------------------------------
-// script.js (Tablolu cevap + özel parçalama yaklaşımı)
-// + Benzersiz user_id üretme (Local Storage)
+// script.js (Gerçek zamanlı stream + tablo işleme)
+// + Local Storage user_id
 // + Görsel popup fonksiyonu
-// + Sadece son baloncukta "Beğen" butonu
-// + Beğen butonuna tıklayınca /like POST isteği
+// + Son baloncukta "Beğen" butonu
+// + "Beğen" POST isteği
 // ----------------------------------------------------
 
 // 1) Tarayıcıda kalıcı (localStorage) benzersiz kullanıcı ID oluşturma
@@ -32,6 +32,7 @@ function showPopupImage(imgUrl) {
   $("#popupImage").attr("src", imgUrl);
 }
 
+// Belirli özel pattern'leri yakalamak için örnek fonksiyon
 function extractTextContentBlock(fullText) {
   const regex = /\[TextContentBlock\(.*?value=(['"])([\s\S]*?)\1.*?\)\]/;
   const match = regex.exec(fullText);
@@ -43,7 +44,6 @@ function extractTextContentBlock(fullText) {
 
 // Basit bir Markdown tablo -> HTML dönüşüm örneği
 function markdownTableToHTML(mdTable) {
-  // Kendi tablo işleme mantığınızı koruyabilirsiniz.
   const lines = mdTable.trim().split("\n").map(line => line.trim());
   if (lines.length < 2) {
     return `<p>${mdTable}</p>`;
@@ -85,6 +85,7 @@ function splitNonTableTextIntoBubbles(fullText) {
   const trimmedText = fullText.trim();
   const lines = trimmedText.split(/\r?\n/);
 
+  // Örnek ayrıştırma mantığı:
   let firstColonIndex = -1;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].trim().match(/:$/)) {
@@ -311,17 +312,27 @@ $(document).ready(function () {
       .then(stream => {
         const reader = stream.getReader();
         const decoder = new TextDecoder("utf-8");
-        let botMessage = "";
+        let partialText = "";
 
         function readChunk() {
           return reader.read().then(({ done, value }) => {
             if (done) {
-              // Tüm chunk'lar tamamlandı
-              processBotMessage(botMessage, uniqueId);
+              // AKIŞ TAMAMLANDI
+              // 1) "yazıyor" placeholder'ını temizle
+              $(`#botMessageContent-${uniqueId}`).html("");
+              // 2) Tam metni tablo vb. işleme sok
+              processBotMessage(partialText, uniqueId);
               return;
             }
+            // AKIŞ DEVAM EDİYOR
             const chunkText = decoder.decode(value, { stream: true });
-            botMessage += chunkText;
+            partialText += chunkText;
+
+            // Gelen parçayı ekranda göster
+            $(`#botMessageContent-${uniqueId}`).html(
+              partialText.replace(/\n/g, "<br>")
+            );
+
             $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
             return readChunk();
           });
@@ -333,9 +344,12 @@ $(document).ready(function () {
         $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
       });
 
-    // 9 dakika sonra bildirim çubuğu gösterme
+    // 9 dakika sonra bildirim çubuğu gösterme (örnek)
     setTimeout(() => {
-      document.getElementById('notificationBar').style.display = 'block';
+      const barEl = document.getElementById('notificationBar');
+      if (barEl) {
+        barEl.style.display = 'block';
+      }
     }, 9 * 60 * 1000);
   });
 });
@@ -348,8 +362,7 @@ $(document).on("click", ".like-button", function(event) {
     // Beğeniyi geri alma örneği (opsiyonel)
     $btn.removeClass("clicked");
     $btn.text("Beğen");
-
-    // İsterseniz DB'de 0 yapmak için /unlike vb. ekleyebilirsiniz.
+    // Geri almayı DB'ye kaydetmek istersen /unlike vs. gönderebilirsin.
   } else {
     // İlk kez beğen
     $btn.addClass("clicked");
