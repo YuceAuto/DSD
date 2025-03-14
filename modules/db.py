@@ -25,7 +25,16 @@ def create_tables():
             answer NVARCHAR(MAX) NOT NULL,
             customer_answer INT DEFAULT 0,
             timestamp DATETIME DEFAULT GETDATE()
-        )
+        );
+        
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='cache_faq' AND xtype='U')
+        CREATE TABLE cache_faq (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            user_id NVARCHAR(255),
+            question NVARCHAR(MAX),
+            answer NVARCHAR(MAX),
+            created_at DATETIME DEFAULT GETDATE()
+        );
     ''')
     conn.commit()
     conn.close()
@@ -43,23 +52,19 @@ def save_to_db(user_id, question, answer, customer_answer=0):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # OUTPUT Inserted.id ile eklenen satırın kimlik (ID) değerini geri alıyoruz
     cursor.execute('''
         INSERT INTO conversations (user_id, question, answer, customer_answer)
         OUTPUT Inserted.id
         VALUES (?, ?, ?, ?)
     ''', (user_id, question, answer, customer_answer))
 
-    new_id = cursor.fetchone()[0]  # Eklenen satırın ID'si
+    new_id = cursor.fetchone()[0]
     conn.commit()
     conn.close()
 
     return new_id
 
 def update_customer_answer(conversation_id, value):
-    """
-    Mevcut kaydın customer_answer değerini günceller.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''

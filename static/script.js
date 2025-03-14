@@ -41,7 +41,9 @@ function extractTextContentBlock(fullText) {
   return null;
 }
 
+// Basit bir Markdown tablo -> HTML dönüşüm örneği
 function markdownTableToHTML(mdTable) {
+  // Kendi tablo işleme mantığınızı koruyabilirsiniz.
   const lines = mdTable.trim().split("\n").map(line => line.trim());
   if (lines.length < 2) {
     return `<p>${mdTable}</p>`;
@@ -78,6 +80,7 @@ function markdownTableToHTML(mdTable) {
   return html;
 }
 
+// Metni, tablolar vs. yoksa normal şekilde parçalara bölmek
 function splitNonTableTextIntoBubbles(fullText) {
   const trimmedText = fullText.trim();
   const lines = trimmedText.split(/\r?\n/);
@@ -146,6 +149,10 @@ function splitNonTableTextIntoBubbles(fullText) {
   return resultBubbles;
 }
 
+/**
+ * Bot mesajını işleyip, tablo varsa tabloyu HTML'e çevirip,
+ * yoksa normal text olarak birden fazla baloncuk üreterek ekrana basar.
+ */
 function processBotMessage(fullText, uniqueId) {
   // Bot'tan gelen ham text'i normalleştir
   let normalizedText = fullText
@@ -158,7 +165,7 @@ function processBotMessage(fullText, uniqueId) {
   const matchConv = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
   if (matchConv) {
     conversationId = matchConv[1];
-    // Metinden bu satırı çıkaralım ki baloncukta görünmesin
+    // metinden çıkaralım ki baloncukta görünmesin
     normalizedText = normalizedText.replace(matchConv[0], "");
   }
 
@@ -172,7 +179,7 @@ function processBotMessage(fullText, uniqueId) {
   let lastIndex = 0;
   let match;
 
-  // Tablo öncesi ve sonrası metni bölme
+  // Tabloları yakala ve parçala
   while ((match = tableRegexGlobal.exec(textToCheck)) !== null) {
     const tableMarkdown = match[1];
     const textBefore = textToCheck.substring(lastIndex, match.index).trim();
@@ -197,7 +204,7 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // Bot "typing" placeholder'ını kaldır
+  // Bot "typing" placeholder'ını (id=botMessageContent-uniqueId) kaldıralım
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
   // Her bubble'ı ayrı mesaj balonu yaparak ekrana bas
@@ -209,6 +216,7 @@ function processBotMessage(fullText, uniqueId) {
     if (bubble.type === "table") {
       bubbleContent = markdownTableToHTML(bubble.content);
     } else {
+      // normal text
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
@@ -225,7 +233,6 @@ function processBotMessage(fullText, uniqueId) {
       `;
     }
 
-    // BOT MESAJ BALONU
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
         <img src="static/images/fotograf.png"
@@ -270,7 +277,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
-    // Botun "yazıyor" şeklindeki placeholder'ı
+    // Botun "yazıyor" placeholder'ı
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
@@ -286,6 +293,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
+    // /ask endpointine POST (stream)
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -337,16 +345,11 @@ $(document).on("click", ".like-button", function(event) {
   event.preventDefault();
   const $btn = $(this);
   if ($btn.hasClass("clicked")) {
-    // Beğeniyi geri alma örneği (isteğe bağlı)
+    // Beğeniyi geri alma örneği (opsiyonel)
     $btn.removeClass("clicked");
     $btn.text("Beğen");
 
-    const convId = $btn.data("conversation-id");
-    if (convId) {
-      // İsterseniz DB'de 0 yapmak için /like ile farklı parametre yollayabilirsiniz.
-      // Örnek: /unlike endpointi vb.
-      // Bu kod opsiyonel
-    }
+    // İsterseniz DB'de 0 yapmak için /unlike vb. ekleyebilirsiniz.
   } else {
     // İlk kez beğen
     $btn.addClass("clicked");

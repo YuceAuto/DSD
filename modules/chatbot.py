@@ -1,3 +1,4 @@
+
 import os
 import time
 import logging
@@ -53,8 +54,8 @@ class ChatbotAPI:
         # MSSQL tabloyu oluşturma
         create_tables()
 
+        # OpenAI API Anahtarı
         openai.api_key = os.getenv("OPENAI_API_KEY")
-        self.client = openai
 
         self.config = Config()
         self.utils = Utils()
@@ -74,21 +75,133 @@ class ChatbotAPI:
         # Kullanıcı bazlı state
         self.user_states = {}
 
-        # ----- Fuzzy Cache ve Queue -----
+        # Fuzzy cache (soru-cevap benzerlik mekanizması)
         self.fuzzy_cache = {}
         self.fuzzy_cache_queue = queue.Queue()
 
+        # Arka planda DB'ye yazacak thread
         self.stop_worker = False
         self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
         self.worker_thread.start()
 
-        # Önbellekteki cevabın geçerli kalma süresi (1 saat)
+        # Önbellek geçerlilik süresi (1 saat = 3600 sn)
         self.CACHE_EXPIRY_SECONDS = 3600
 
-        # Cross-assistant cache devrede
+        # Cross-assistant cache (örn. Fabia -> Scala cachesinden faydalanma)
         self.CROSS_ASSISTANT_CACHE = True
 
-        # Flask route tanımları
+        # =====================================================
+        # GÜNCELLENMİŞ SYSTEM PROMPTLAR (PDF yerine kamiq_data.py)
+        # =====================================================
+        self.SYSTEM_PROMPTS = {
+            "asst_fw6RpRp8PbNiLUR1KB2XtAkK": """
+Sen bir yardımcı asistansın.
+- Kullanıcıya Skoda Kamiq modelleriyle ilgili bilgi ver.
+- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
+- Tutarlı ol, önceki mesajları unutma.
+- Samimi ve anlaşılır bir dille konuş.
+- Tüm cevapların detaylı (Markdown tablo ile göster) ve anlaşılır olsun.
+
+Eğer bu tabloda bulunan özellikler modelde varsa (örneğin: Elite'de S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum (SKODA KAMIQ MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle)).
+
+Eğer Kamiq Premium'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
+Eğer Kamiq Elite'de standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
+Eğer Kamiq Monte Carlo'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
+
+Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. 
+Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. 
+Eğer kullanıcı sorduğun soruları olumlu yanıt verirse (yani görmek isterse) detaya gir.
+
+Kullanıcının sorduğu sorunun içeriği belgelerde (kamiq_data.py dosyasındaki tablolar) mevcutsa kullanıcıyı bilgilendir.
+Eğer kullanıcının sorduğu sorunun içeriği yoksa (örneğin: masaj özelliği bulunmuyor gibi), araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, vb.) kullanıcıya aktar.
+
+Asla şöyle deme: "ilgili bilgiye ulaşmak için Kamiq Opsiyonel Donanım.pdf'i açıyorum." 
+Dosya adı vermeden, sanki "kamiq_data.py içindeki tablolar" senin kaynak kodundaymış gibi davran.
+
+Para Talimatları:
+- Kullanıcı aracı sorarsa veya fiyat isterse: 
+  "Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz."
+
+Analiz Detaylarını Paylaşma:
+- Kullanıcıya yapılan analiz sürecini veya kaynakları anlatma, sadece sonuç bilgiyi ver.
+
+Tablo Gösterimi:
+- Oluşturduğun tabloların her model bilgisi (Elite, Premium, Monte Carlo) ayrı sütun olarak yan yana gösterilsin.
+- Her tablo alt alta değil, yatayda sütunlar şeklinde olsun.
+
+Eğer kullanıcı "kamiq" yazmadan soru sorsa bile Kamiq sorusuymuş gibi yanıtla (ör: "aracın ağırlığı nedir" => "kamiq ağırlığı nedir").
+
+Garantiler veya ikinci el hakkında bilgi verme.
+
+Farklar:
+- Kamiq modellerinin farklarını tablo formatında göster (her model sütunu yanyana).
+- Aynı özellikleri tekrar etme, sadece farklı özellikleri listele.
+
+Teknik Bilgiler:
+- Kamiq modellerinin teknik detaylarını tablo formatında göster.
+
+Donanımlar:
+- Kamiq modellerinin donanım bilgilerini tablo formatında göster (her model sütunu yanyana).
+
+Donanım Farkları:
+- Sadece farklı noktaları tablo halinde göster.
+
+Opsiyonel Donanımlar:
+- Eğer kullanıcı opsiyonel donanım isterse kamiq_data.py'daki tablolardan (KAMIQ_ELITE_MD, KAMIQ_PREMIUM_MD, KAMIQ_MONTE_CARLO_MD) yararlan.
+- Tüm opsiyonel donanımları tabloyla göster (her model sütunu ayrı).
+- Opsiyonel donanım fiyatlarını MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) şeklinde ayrı sütunlar yap.
+- Parça kodlarını gösterme.
+
+Fiyat Bilgisi:
+Eğer kullanıcı aracın ikinci el (2. el) fiyatını (parasını) ya da aracın fiyatını (parasını) isterse sadece şu şekilde yanıtla: Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz.
+
+
+Diğer Modeller:
+- Skoda dışı hiçbir marka/model hakkında bilgi verme. 
+  "Üzgünüm, yalnızca Skoda Kamiq hakkında bilgi verebilirim." şeklinde yanıtla.
+
+Ek Detay:
+- Daha fazla bilgi için: "https://www.skoda.com.tr/modeller/kamiq"
+
+Eğer kullanıcı kamiq ile ilgili bilgi ister şu cevabı ver: Skoda Kamiq, şehir içi ve şehir dışı kullanıma uygun, pratik ve modern bir SUV modelidir. Öne çıkan genel özellikleri şunlardır:
+
+Genel Özellikler
+Boyutlar: Kompakt tasarımıyla şehir içinde kolay manevra sağlar. Uzunluğu 4.241 mm, genişliği 1.793 mm ve yüksekliği 1.562 mm'dir.
+Bagaj Hacmi: 400 litre bagaj kapasitesine sahiptir ve arka koltuklar yatırıldığında bu kapasite 1.395 litreye kadar çıkabilir.
+Motor Seçenekleri:
+1.0 TSI, 115 PS gücünde, 3 silindirli motor.
+1.5 TSI, 150 PS gücünde, 4 silindirli motor.
+Her iki motor da 7 ileri DSG otomatik şanzımanla sunulmaktadır.
+Yakıt Tüketimi: WLTP standartlarına göre birleşik yakıt tüketimi 5.6 - 6.1 litre/100 km aralığındadır.
+Güvenlik: Standart olarak şerit takip sistemi, ön bölge frenleme asistanı, çoklu çarpışma freni ve sürücü yorgunluk tespit sistemi gibi ileri seviye güvenlik özellikleri sunulmaktadır.
+Donanım Seviyeleri
+Elite: Temel güvenlik ve konfor özelliklerini içerir. Bi-LED ön farlar, manuel klima ve 8" dijital gösterge paneli gibi standart donanımlara sahiptir.
+Premium: Çift bölgeli otomatik klima, geri görüş kamerası, kablosuz şarj ünitesi ve 10.25" dijital gösterge paneli gibi daha ileri özelliklerle donatılmıştır.
+Monte Carlo: Spor tasarım detayları ve en üst düzey donanımları sunar. Full LED Matrix ön farlar, spor direksiyon simidi ve panoramik cam tavan gibi özellikleri içerir.
+Konfor ve Teknoloji
+Kablosuz SmartLink (Apple CarPlay ve Android Auto) ile mobil cihazlar kolayca bağlanabilir.
+8.25" dokunmatik multimedya sistemi tüm donanımlarda standarttır.
+İleri teknolojiler arasında elektrikli bagaj kapağı, otomatik park pilotu ve çeşitli sürüş modları bulunur.
+Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle her türlü kullanıcı ihtiyacına hitap eder. Daha detaylı bilgi için sorularınızı belirtebilirsiniz.
+            """,
+            # Fabia
+            "asst_yeDl2aiHy0uoGGjHRmr2dlYB": (
+                "Sen Fabia Bot'sun. "
+                "Fabia modeliyle ilgili soruları yanıtla."
+            ),
+            # Scala
+            "asst_njSG1NVgg4axJFmvVYAIXrpM": (
+                "Sen Scala Bot'sun. "
+                "Scala ile ilgili teknik bilgileri paylaş."
+            ),
+            # All Models Bot
+            "asst_hiGn8YC08xM3amwG0cs2A3SN": (
+                "Sen All Models Bot'sun. "
+                "Tüm ŠKODA modelleri (Fabia, Scala, Kamiq) hakkında kıyaslama, genel bilgi sağla."
+            )
+        }
+        # =====================================================
+
         self._define_routes()
 
     def _setup_logger(self):
@@ -104,6 +217,7 @@ class ChatbotAPI:
     def _define_routes(self):
         @self.app.route("/", methods=["GET"])
         def home():
+            # Oturuma ait "last_activity" bilgisini sıfırla
             session.pop('last_activity', None)
             return render_template("index.html")
 
@@ -119,7 +233,6 @@ class ChatbotAPI:
                     return jsonify({"active": False})
             return jsonify({"active": True})
 
-        # YENİ EKLENDİ: "Beğen" butonuna tıklayınca DB güncelleyen endpoint
         @self.app.route("/like", methods=["POST"])
         def like_endpoint():
             data = request.get_json()
@@ -136,7 +249,9 @@ class ChatbotAPI:
     # ARKA PLANDA DB'YE YAZAN THREAD
     # ----------------------------------------------------------------
     def _background_db_writer(self):
-        """Queue'ya eklenen cache kayıtlarını DB'ye yazar."""
+        """
+        self.fuzzy_cache_queue'ya eklenen kayıtları DB'ye yazar.
+        """
         self.logger.info("Background DB writer thread started.")
         while not self.stop_worker:
             try:
@@ -166,46 +281,9 @@ class ChatbotAPI:
 
         self.logger.info("Background DB writer thread stopped.")
 
-    def _load_cache_from_db(self):
-        """
-        (Opsiyonel) DB'den son X kaydı çekip self.fuzzy_cache'e doldurabilirsiniz.
-        """
-        self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        sql = """
-        SELECT TOP 1000 user_id, question, answer
-        FROM cache_faq
-        ORDER BY id DESC
-        """
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-        conn.close()
-
-        for row in rows:
-            user_id = row[0]
-            q_lower = row[1]
-            ans_txt = row[2]
-            ans_bytes = ans_txt.encode("utf-8")
-            assistant_id = "default"
-
-            if user_id not in self.fuzzy_cache:
-                self.fuzzy_cache[user_id] = {}
-            if assistant_id not in self.fuzzy_cache[user_id]:
-                self.fuzzy_cache[user_id][assistant_id] = []
-
-            self.fuzzy_cache[user_id][assistant_id].append({
-                "question": q_lower,
-                "answer_bytes": ans_bytes,
-                "timestamp": time.time()
-            })
-
-        self.logger.info("[_load_cache_from_db] Tamamlandı.")
-
     def _extract_models(self, text: str) -> set:
         """
-        Kullanıcı mesajındaki 'fabia', 'scala', 'kamiq' kelimelerini yakalar.
+        Kullanıcının mesajında 'fabia', 'scala' veya 'kamiq' geçiyorsa bul.
         """
         lower_t = text.lower()
         models = set()
@@ -218,6 +296,9 @@ class ChatbotAPI:
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
+        """
+        Model adına göre asistan ID döndürür (örnek: 'kamiq' => asst_fw6RpRp8PbNiLUR1KB2XtAkK)
+        """
         model_name = model_name.lower()
         for asst_id, keywords in self.ASSISTANT_CONFIG.items():
             for kw in keywords:
@@ -226,6 +307,9 @@ class ChatbotAPI:
         return None
 
     def _search_in_assistant_cache(self, user_id, assistant_id, new_question, threshold):
+        """
+        Belirli bir asistanın fuzzy cache'inde arama yapar.
+        """
         if not assistant_id:
             return None, None, None
         if user_id not in self.fuzzy_cache:
@@ -263,13 +347,17 @@ class ChatbotAPI:
         threshold=0.8,
         allow_cross_assistant=True
     ):
+        """
+        Hem ilgili asistanın hem de cross asistanların 
+        fuzzy cache'inde arama yapar (istenirse).
+        """
         ans, matched_q, found_asst_id = self._search_in_assistant_cache(
             user_id, assistant_id, new_question, threshold
         )
         if ans:
             return ans, matched_q, found_asst_id
 
-        # Cross assistant cache
+        # Cross-assistant cache
         if allow_cross_assistant and self.CROSS_ASSISTANT_CACHE and user_id in self.fuzzy_cache:
             for other_aid in self.fuzzy_cache[user_id]:
                 if other_aid == assistant_id:
@@ -284,6 +372,9 @@ class ChatbotAPI:
         return None, None, None
 
     def _store_in_fuzzy_cache(self, user_id: str, question: str, answer_bytes: bytes, assistant_id: str):
+        """
+        Yanıtı fuzzy cache'e kaydeder, DB'ye eklemek için queue'ya atar.
+        """
         if not assistant_id:
             return
         q_lower = question.strip().lower()
@@ -302,128 +393,11 @@ class ChatbotAPI:
         record = (user_id, q_lower, answer_bytes, time.time())
         self.fuzzy_cache_queue.put(record)
 
-    def _ask(self):
-        """
-        Kullanıcıdan POST isteği ile gelen veriyi işleyerek yanıt oluşturur.
-        """
-        try:
-            data = request.get_json()
-            if not data:
-                return jsonify({"error": "Invalid JSON format."}), 400
-        except Exception as e:
-            self.logger.error(f"JSON parsing error: {str(e)}")
-            return jsonify({"error": "Invalid JSON format."}), 400
-
-        user_message = data.get("question", "")
-        user_id = data.get("user_id", "default_user")
-
-        if not user_message:
-            return jsonify({"response": "Please enter a question."})
-
-        # Session güncelleme
-        if 'last_activity' not in session:
-            session['last_activity'] = time.time()
-        else:
-            session['last_activity'] = time.time()
-
-        corrected_message = self._correct_typos(user_message)
-        lower_corrected = corrected_message.lower().strip()
-
-        # Kullanıcının mesajında kaç model/donanım var?
-        user_models = self._extract_models(corrected_message)
-        user_trims = set()
-        if "premium" in lower_corrected:
-            user_trims.add("premium")
-        if "monte carlo" in lower_corrected:
-            user_trims.add("monte carlo")
-        if "elite" in lower_corrected:
-            user_trims.add("elite")
-
-        new_assistant_id = None
-        # 2+ model veya 2+ donanım -> All Models Bot
-        if len(user_models) >= 2 or len(user_trims) >= 2:
-            new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
-
-        old_assistant_id = None
-        if user_id in self.user_states:
-            old_assistant_id = self.user_states[user_id].get("assistant_id")
-
-        # Eğer yukarıda 2+ modeli/donanımı yakalayamazsak, eski mantığa göre asistan seç
-        if not new_assistant_id:
-            for aid, keywords in self.ASSISTANT_CONFIG.items():
-                if any(k.lower() in lower_corrected for k in keywords):
-                    new_assistant_id = aid
-                    break
-
-        if user_id not in self.user_states:
-            self.user_states[user_id] = {}
-            self.user_states[user_id]["threads"] = {}
-
-        if new_assistant_id:
-            assistant_id = new_assistant_id
-            allow_cross = False
-        else:
-            assistant_id = old_assistant_id
-            allow_cross = False
-
-        self.user_states[user_id]["assistant_id"] = assistant_id
-
-        # Görsel isteği mi?
-        is_image_req = self.utils.is_image_request(user_message)
-
-        # Görsel isteklerinde cache kullanma
-        if is_image_req:
-            cached_answer, matched_question, found_asst_id = None, None, None
-        else:
-            cached_answer, matched_question, found_asst_id = self._find_fuzzy_cached_answer(
-                user_id,
-                corrected_message,
-                assistant_id,
-                threshold=0.8,
-                allow_cross_assistant=allow_cross
-            )
-
-        if cached_answer and not is_image_req:
-            # Model uyuşmazlığı kontrolü
-            user_models_in_msg = self._extract_models(corrected_message)
-            cache_models = self._extract_models(matched_question) if matched_question else set()
-
-            if user_models_in_msg and not user_models_in_msg.issubset(cache_models):
-                self.logger.info("Model uyuşmazlığı -> cache bypass.")
-            else:
-                if found_asst_id and (new_assistant_id is None):
-                    self.user_states[user_id]["assistant_id"] = found_asst_id
-
-                answer_text = cached_answer.decode("utf-8")
-                models_in_answer = self._extract_models(answer_text)
-                if len(models_in_answer) == 1:
-                    only_model = list(models_in_answer)[0]
-                    new_aid = self._assistant_id_from_model_name(only_model)
-                    if new_aid:
-                        self.logger.info(f"[CACHE] Tek model tespit: {only_model}, asistan={new_aid}")
-                        self.user_states[user_id]["assistant_id"] = new_aid
-                elif len(models_in_answer) > 1:
-                    self.logger.info("[CACHE] Birden çok model tespit, asistan atama yok.")
-
-                self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt.")
-                time.sleep(1)
-                return self.app.response_class(cached_answer, mimetype="text/plain")
-
-        def caching_generator():
-            chunks = []
-            for chunk in self._generate_response(corrected_message, user_id):
-                chunks.append(chunk)
-                yield chunk
-
-            # Görsel isteği değilse yanıtı cache'e yaz
-            if not is_image_req:
-                final_bytes = b"".join(chunks)
-                final_aid = self.user_states[user_id].get("assistant_id", assistant_id)
-                self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, final_aid)
-
-        return self.app.response_class(caching_generator(), mimetype="text/plain")
-
     def _correct_typos(self, user_message):
+        """
+        Ufak yazım hatalarını düzeltme:
+        'premum' -> 'premium', 'graptihe gri' -> 'grafit gri' vb.
+        """
         known_words = ["premium", "elite", "monte", "carlo"]
         splitted = user_message.split()
         new_tokens = []
@@ -441,6 +415,7 @@ class ChatbotAPI:
                 skip_next = False
                 continue
             if i < len(new_tokens) - 1:
+                # "monte carlo" birleştir
                 if new_tokens[i].lower() == "monte" and new_tokens[i+1].lower() == "carlo":
                     combined_tokens.append("monte carlo")
                     skip_next = True
@@ -448,123 +423,168 @@ class ChatbotAPI:
                     combined_tokens.append(new_tokens[i])
             else:
                 combined_tokens.append(new_tokens[i])
-        return " ".join(combined_tokens)
 
-    def _render_side_by_side_images(self, images, context="model"):
+        corrected_text = " ".join(combined_tokens)
+
+        # "Graptihe Gri" -> "Grafit Gri"
+        corrected_text = corrected_text.replace("graptihe", "grafit")
+        return corrected_text
+
+    def _ask(self):
         """
-        Basit örnek: Görselleri yatay veya grid şekilde sıralama.
+        /ask endpoint'ine gelen sorunun işlendiği ana fonksiyon.
+        1) user_message
+        2) fuzzy cache
+        3) ChatCompletion (stream)
+        4) tablolarda vs. veriler
         """
-        # Monte Carlo standart
-        mc_std = [
-            img for img in images
-            if "monte" in img.lower()
-               and "carlo" in img.lower()
-               and "standart" in img.lower()
-        ]
-        # Premium opsiyonel
-        pm_ops = [
-            img for img in images
-            if "premium" in img.lower()
-               and "opsiyonel" in img.lower()
-        ]
-        others = [img for img in images if img not in mc_std and img not in pm_ops]
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Invalid JSON format."}), 400
+        except Exception as e:
+            self.logger.error(f"JSON parsing error: {str(e)}")
+            return jsonify({"error": "Invalid JSON format."}), 400
 
-        if not images:
-            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
-            return
+        user_message = data.get("question", "")
+        user_id = data.get("user_id", "default_user")
 
-        # 1) Sol sütun (Monte Carlo)
-        yield """
-<div style="display: flex; justify-content: space-between; gap: 60px;">
-  <!-- SOL SÜTUN: MONTE CARLO STANDART -->
-  <div style="flex:1;">
-""".encode("utf-8")
+        if not user_message:
+            return jsonify({"response": "Please enter a question."})
 
-        if mc_std:
-            left_title = os.path.splitext(mc_std[0])[0].replace("_", " ")
-            yield f"<h3>{left_title}</h3>".encode("utf-8")
-
-            for img_file in mc_std:
-                img_url = f"/static/images/{img_file}"
-                base_name = os.path.splitext(img_file)[0].replace("_", " ")
-                block_html = f"""
-<div style="text-align: center; margin-bottom:20px;">
-  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
+        # Session güncelle
+        if 'last_activity' not in session:
+            session['last_activity'] = time.time()
         else:
-            yield "<h3>Monte Carlo Standart Görseli Yok</h3>".encode("utf-8")
+            session['last_activity'] = time.time()
 
-        yield "</div>".encode("utf-8")
+        corrected_message = self._correct_typos(user_message)
+        lower_corrected = corrected_message.lower().strip()
 
-        # 2) Sağ sütun (Premium opsiyonel)
-        yield """
-  <div style="flex:1;">
-""".encode("utf-8")
+        # Model & Donanım tespiti
+        user_models = self._extract_models(corrected_message)
+        user_trims = set()
+        if "premium" in lower_corrected:
+            user_trims.add("premium")
+        if "monte carlo" in lower_corrected:
+            user_trims.add("monte carlo")
+        if "elite" in lower_corrected:
+            user_trims.add("elite")
 
-        if pm_ops:
-            right_title = os.path.splitext(pm_ops[0])[0].replace("_", " ")
-            yield f"<h3>{right_title}</h3>".encode("utf-8")
+        new_assistant_id = None
 
-            for img_file in pm_ops:
-                img_url = f"/static/images/{img_file}"
-                base_name = os.path.splitext(img_file)[0].replace("_", " ")
-                block_html = f"""
-<div style="text-align: center; margin-bottom:20px;">
-  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
+        # (1) Birden fazla model => All Models Bot
+        if len(user_models) >= 2 or len(user_trims) >= 2:
+            new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
         else:
-            yield "<h3>Premium Opsiyonel Görseli Yok</h3>".encode("utf-8")
+            # (2) Sadece 1 model => o modele özel asistan
+            if len(user_models) == 1:
+                single_model = list(user_models)[0]
+                for aid, keywords in self.ASSISTANT_CONFIG.items():
+                    if single_model.lower() in [k.lower() for k in keywords]:
+                        new_assistant_id = aid
+                        break
 
-        yield """
-  </div> <!-- Sağ sütun kapanış -->
-</div> <!-- Ana flex kapanış -->
-""".encode("utf-8")
+            # (3) Hiç model yok => Kamiq
+            if not new_assistant_id:
+                self.logger.info("Kullanıcı herhangi bir model belirtmedi => Kamiq'e yönlendiriliyor.")
+                new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"
 
-        # 3) Kalan (others)
-        if others:
-            yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
-            yield '<div style="display: flex; flex-wrap: wrap; gap: 20px;">'.encode("utf-8")
-            for img_file in others:
-                img_url = f"/static/images/{img_file}"
-                base_name = os.path.splitext(img_file)[0].replace("_", " ")
-                block_html = f"""
-<div style="text-align: center; margin: 5px;">
-  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
-            yield "</div>".encode("utf-8")
+        if user_id not in self.user_states:
+            self.user_states[user_id] = {}
+            self.user_states[user_id]["conversations"] = {}
+
+        old_assistant_id = self.user_states[user_id].get("assistant_id")
+        allow_cross = False  # Cross-assistant cache kapat/isteğe bağlı aç
+
+        self.user_states[user_id]["assistant_id"] = new_assistant_id
+        assistant_id = new_assistant_id
+
+        # Görsel istek mi?
+        is_image_req = self.utils.is_image_request(corrected_message)
+
+        # Fuzzy cache kontrol
+        if is_image_req:
+            cached_answer, matched_question, found_asst_id = None, None, None
+        else:
+            cached_answer, matched_question, found_asst_id = self._find_fuzzy_cached_answer(
+                user_id,
+                corrected_message,
+                assistant_id,
+                threshold=0.8,
+                allow_cross_assistant=allow_cross
+            )
+
+        if cached_answer and not is_image_req:
+            # Model uyuşmazlığı?
+            user_models_in_msg = self._extract_models(corrected_message)
+            cache_models = self._extract_models(matched_question) if matched_question else set()
+
+            if user_models_in_msg and not user_models_in_msg.issubset(cache_models):
+                self.logger.info("Model uyuşmazlığı -> cache bypass.")
+            else:
+                # Cross assistant bulduysa
+                if found_asst_id and (new_assistant_id is None):
+                    self.user_states[user_id]["assistant_id"] = found_asst_id
+
+                answer_text = cached_answer.decode("utf-8")
+                models_in_answer = self._extract_models(answer_text)
+                if len(models_in_answer) == 1:
+                    only_model = list(models_in_answer)[0]
+                    new_aid = self._assistant_id_from_model_name(only_model)
+                    if new_aid:
+                        self.logger.info(f"[CACHE] Tek model tespit: {only_model}, asistan={new_aid}")
+                        self.user_states[user_id]["assistant_id"] = new_aid
+                elif len(models_in_answer) > 1:
+                    self.logger.info("[CACHE] Birden çok model tespit, asistan atama yok.")
+
+                self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt gönderiliyor.")
+                time.sleep(1)
+                return self.app.response_class(cached_answer, mimetype="text/plain")
+
+        # Aksi halde yeni yanıt oluştur
+        def caching_generator():
+            chunks = []
+            for chunk in self._generate_response(corrected_message, user_id):
+                chunks.append(chunk)
+                yield chunk
+
+            # Görsel değilse => cache'e yaz
+            if not is_image_req:
+                final_bytes = b"".join(chunks)
+                final_aid = self.user_states[user_id].get("assistant_id", assistant_id)
+                self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, final_aid)
+
+        return self.app.response_class(caching_generator(), mimetype="text/plain")
 
     def _generate_response(self, user_message, user_id):
+        """
+        Ana cevap oluşturma fonksiyonu:
+          - Görsel ve tablo isteklerine yanıt
+          - Son olarak ChatCompletion ile streaming
+        """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
 
-        assistant_id = self.user_states[user_id].get("assistant_id", None)
+        assistant_id = self.user_states[user_id].get("assistant_id")
         assistant_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "")
         lower_msg = user_message.lower()
 
+        # "current_trim" state
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # --------------------------------------------------------
-        # (1) Model + "görsel" -> renk (genel)
-        # --------------------------------------------------------
+        # ------------------------------------------------
+        # (1) Özel if blokları: model+görsel, dış, iç, "evet"
+        # (2) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
+        # (3) Genel görsel isteği
+        # (4) Opsiyonel tablolar
+        # (5) Normal Chat
+        # ------------------------------------------------
+
+        # (1.1) model + "görsel" => Renk
         model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
         if re.search(model_image_pattern, lower_msg):
             matched_model = re.search(model_image_pattern, lower_msg).group(1)
-
             all_colors = self.config.KNOWN_COLORS
             found_color_images = []
             for clr in all_colors:
@@ -582,9 +602,7 @@ class ChatbotAPI:
                 yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
             return
 
-        # --------------------------------------------------------
-        # (2) Dış görsel istekleri
-        # --------------------------------------------------------
+        # (1.2) "dış" görseller
         if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
@@ -640,9 +658,7 @@ class ChatbotAPI:
                 yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
             return
 
-        # --------------------------------------------------------
-        # (3) İç görsel istekleri
-        # --------------------------------------------------------
+        # (1.3) "iç" görseller
         if any(kw in lower_msg for kw in ["iç", "ic"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
@@ -694,9 +710,7 @@ class ChatbotAPI:
                 yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
             return
 
-        # --------------------------------------------------------
-        # (4) "Evet" kontrolü (renk seçimi vs.)
-        # --------------------------------------------------------
+        # (1.4) "Evet" kontrolü (renk seçimi vb.)
         trimmed_msg = user_message.strip().lower()
         if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
             pending_colors = self.user_states[user_id].get("pending_color_images", [])
@@ -719,9 +733,7 @@ class ChatbotAPI:
                 self.user_states[user_id]["pending_color_images"] = []
                 return
 
-        # --------------------------------------------------------
-        # (5) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
-        # --------------------------------------------------------
+        # (1.5) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
         if ("fabia" in lower_msg
             and "premium" in lower_msg
             and "monte carlo" in lower_msg
@@ -757,9 +769,7 @@ class ChatbotAPI:
             yield "</div>".encode("utf-8")
             return
 
-        # --------------------------------------------------------
-        # (6) Genel "görsel" isteği mi?
-        # --------------------------------------------------------
+        # (1.6) Genel "görsel" isteği
         if self.utils.is_image_request(user_message):
             if not assistant_id:
                 save_to_db(user_id, user_message, "Henüz asistan seçilmedi, görsel yok.")
@@ -810,9 +820,7 @@ class ChatbotAPI:
             yield from self._render_side_by_side_images(found_images, context=context)
             return
 
-        # --------------------------------------------------------
-        # (7) Opsiyonel tablolar
-        # --------------------------------------------------------
+        # (2) Opsiyonel tablolar
         user_models_in_msg = self._extract_models(user_message)
         user_trims_in_msg = set()
         if "premium" in lower_msg:
@@ -823,10 +831,10 @@ class ChatbotAPI:
             user_trims_in_msg.add("monte carlo")
 
         if len(user_models_in_msg) >= 2 or len(user_trims_in_msg) >= 2:
-            self.logger.info("Birden çok model veya donanım tespit edildi. Tekil tabloyu atlıyoruz.")
-            # Direkt #8'e geçsin.
+            self.logger.info("Birden çok model/donanım tespit edildi. Tekil tabloyu atlıyoruz.")
+            # Normal chat'e geç
         else:
-            # Tekil tablo (yalnızca 1 model + 1 donanım)
+            # Tek model + opsiyonel tablo
             if "fabia" in lower_msg and "opsiyonel" in lower_msg:
                 if "premium" in lower_msg:
                     save_to_db(user_id, user_message, "Fabia Premium opsiyonel tablosu.")
@@ -883,70 +891,50 @@ class ChatbotAPI:
                     ).encode("utf-8")
                     return
 
-        # --------------------------------------------------------
-        # (8) Normal Chat (OpenAI vb.)
-        # --------------------------------------------------------
+        # (3) Normal ChatCompletion
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
-            yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
+            yield "Üzgünüm, herhangi bir model hakkında yardımcı olamıyorum.\n".encode("utf-8")
             return
 
+        if "conversations" not in self.user_states[user_id]:
+            self.user_states[user_id]["conversations"] = {}
+        if assistant_id not in self.user_states[user_id]["conversations"]:
+            self.user_states[user_id]["conversations"][assistant_id] = []
+
+        conversation_list = self.user_states[user_id]["conversations"][assistant_id]
+        conversation_list.append({"role": "user", "content": user_message})
+
+        system_prompt = self.SYSTEM_PROMPTS.get(assistant_id, "Sen bir Škoda asistanısın.")
         try:
-            threads_dict = self.user_states[user_id].get("threads", {})
-            thread_id = threads_dict.get(assistant_id)
-
-            if not thread_id:
-                new_thread = self.client.beta.threads.create(
-                    messages=[{"role": "user", "content": user_message}]
-                )
-                thread_id = new_thread.id
-                threads_dict[assistant_id] = thread_id
-                self.user_states[user_id]["threads"] = threads_dict
-            else:
-                self.client.beta.threads.messages.create(
-                    thread_id=thread_id,
-                    role="user",
-                    content=user_message
-                )
-
-            run = self.client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=assistant_id
+            response = openai.ChatCompletion.create(
+                model="gpt-4",  # Örnek model adı (gerçekte "gpt-4" veya "gpt-3.5-turbo")
+                messages=[
+                    {"role": "system", "content": system_prompt}
+                ] + conversation_list,
+                temperature=0.7,
+                stream=True
             )
 
-            start_time = time.time()
-            timeout = 30
-            assistant_response = ""
+            assistant_response_str = ""
+            for chunk in response:
+                if "choices" in chunk and len(chunk["choices"]) > 0:
+                    delta = chunk["choices"][0]["delta"]
+                    if "content" in delta:
+                        text_part = delta["content"]
+                        assistant_response_str += text_part
+                        yield text_part.encode("utf-8")
 
-            while time.time() - start_time < timeout:
-                run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
-                if run.status == "completed":
-                    msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
-                    for msg in msg_response.data:
-                        if msg.role == "assistant":
-                            content = str(msg.content)
-                            content_md = self.markdown_processor.transform_text_to_markdown(content)
-                            assistant_response = content
-                            yield content_md.encode("utf-8")
-                    break
-                elif run.status == "failed":
-                    save_to_db(user_id, user_message, "Yanıt oluşturulamadı.")
-                    yield "Yanıt oluşturulamadı.\n".encode("utf-8")
-                    return
-                time.sleep(0.5)
+            # Asistan cevabını geçmişe ekle
+            conversation_list.append({"role": "assistant", "content": assistant_response_str})
 
-            if not assistant_response:
-                save_to_db(user_id, user_message, "Zaman aşımı.")
-                yield "Yanıt alma zaman aşımına uğradı.\n".encode("utf-8")
-                return
-
-            # YENİ: Eklenen satırın ID'sini alıp son satırda [CONVERSATION_ID=xxx] gönderiyoruz.
-            conversation_id = save_to_db(user_id, user_message, assistant_response)
+            # DB kaydı
+            conversation_id = save_to_db(user_id, user_message, assistant_response_str)
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-            # Renk ismi tespiti
-            if "görsel olarak görmek ister misiniz?" in assistant_response.lower():
-                detected_colors = self.utils.parse_color_names(assistant_response)
+            # Örnek: renklere dair bir soru sorduysa
+            if "görsel olarak görmek ister misiniz?" in assistant_response_str.lower():
+                detected_colors = self.utils.parse_color_names(assistant_response_str)
                 if detected_colors:
                     self.user_states[user_id]["pending_color_images"] = detected_colors
 
@@ -955,10 +943,112 @@ class ChatbotAPI:
             save_to_db(user_id, user_message, f"Hata: {str(e)}")
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
 
+    def _render_side_by_side_images(self, images, context="model"):
+        """
+        Görselleri yan yana veya grid şeklinde listeleyelim.
+        """
+        # Monte Carlo standart
+        mc_std = [
+            img for img in images
+            if "monte" in img.lower()
+               and "carlo" in img.lower()
+               and "standart" in img.lower()
+        ]
+        # Premium opsiyonel
+        pm_ops = [
+            img for img in images
+            if "premium" in img.lower()
+               and "opsiyonel" in img.lower()
+        ]
+        others = [img for img in images if img not in mc_std and img not in pm_ops]
+
+        if not images:
+            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
+            return
+
+        # Solda Monte Carlo, sağda Premium Opsiyonel
+        yield """
+<div style="display: flex; justify-content: space-between; gap: 60px;">
+  <!-- SOL SÜTUN: MONTE CARLO STANDART -->
+  <div style="flex:1;">
+""".encode("utf-8")
+
+        if mc_std:
+            left_title = os.path.splitext(mc_std[0])[0].replace("_", " ")
+            yield f"<h3>{left_title}</h3>".encode("utf-8")
+
+            for img_file in mc_std:
+                img_url = f"/static/images/{img_file}"
+                base_name = os.path.splitext(img_file)[0].replace("_", " ")
+                block_html = f"""
+<div style="text-align: center; margin-bottom:20px;">
+  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+  </a>
+</div>
+"""
+                yield block_html.encode("utf-8")
+        else:
+            yield "<h3>Monte Carlo Standart Görseli Yok</h3>".encode("utf-8")
+
+        yield "</div>".encode("utf-8")
+
+        yield """
+  <div style="flex:1;">
+""".encode("utf-8")
+
+        if pm_ops:
+            right_title = os.path.splitext(pm_ops[0])[0].replace("_", " ")
+            yield f"<h3>{right_title}</h3>".encode("utf-8")
+
+            for img_file in pm_ops:
+                img_url = f"/static/images/{img_file}"
+                base_name = os.path.splitext(img_file)[0].replace("_", " ")
+                block_html = f"""
+<div style="text-align: center; margin-bottom:20px;">
+  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+  </a>
+</div>
+"""
+                yield block_html.encode("utf-8")
+        else:
+            yield "<h3>Premium Opsiyonel Görseli Yok</h3>".encode("utf-8")
+
+        yield """
+  </div> <!-- Sağ sütun kapanış -->
+</div> <!-- Ana flex kapanış -->
+""".encode("utf-8")
+
+        if others:
+            yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
+            yield '<div style="display: flex; flex-wrap: wrap; gap: 20px;">'.encode("utf-8")
+            for img_file in others:
+                img_url = f"/static/images/{img_file}"
+                base_name = os.path.splitext(img_file)[0].replace("_", " ")
+                block_html = f"""
+<div style="text-align: center; margin: 5px;">
+  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+  </a>
+</div>
+"""
+                yield block_html.encode("utf-8")
+            yield "</div>".encode("utf-8")
+
     def run(self, debug=True):
         self.app.run(debug=debug)
 
     def shutdown(self):
+        """
+        Arka planda çalışan thread'i durdurmak vb.
+        """
         self.stop_worker = True
         self.worker_thread.join(5.0)
         self.logger.info("ChatbotAPI shutdown complete.")
+
+
+
