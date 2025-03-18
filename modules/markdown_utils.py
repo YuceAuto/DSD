@@ -9,7 +9,7 @@ class MarkdownProcessor:
             stripped_line = line.strip()
 
             # 2''3 -> 2"3 vb. düzeltme
-            stripped_line = re.sub(r"(\d)''(\d)", r'\1"\2', stripped_line)
+            stripped_line = re.sub(r"(\d)''(\d)", r'\1\"\2', stripped_line)
             stripped_line = stripped_line.replace("\\'", "'")
             # **bold** -> <b>...</b>
             stripped_line = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", stripped_line)

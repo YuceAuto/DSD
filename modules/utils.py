@@ -1,6 +1,6 @@
 import re
 import logging
-import difflib
+import difflib  # EKLENDİ: difflib.SequenceMatcher ile benzerlik hesaplanacak
 from modules.config import Config
 
 class Utils:
@@ -46,7 +46,17 @@ class Utils:
                 found.append(color)
         return found
 
+    #
+    # EKLENDİ: fuzzy_find fonksiyonu
+    #
     def fuzzy_find(self, user_word, candidate_list, threshold=0.7):
+        """
+        user_word: kullanıcıdan gelen kelime (ör: 'premum')
+        candidate_list: doğru kelimeler listesi (ör: ['premium','elite','monte','carlo'])
+        threshold: benzerlik eşiği (0.7 => %70)
+
+        Döner: candidate_list içinden en iyi eşleşen kelime veya None
+        """
         best_match = None
         best_ratio = 0.0
         for candidate in candidate_list:
@@ -57,7 +67,6 @@ class Utils:
         if best_ratio >= threshold:
             return best_match
         return None
-
 
     def get_priority_for_mc(self, filename: str) -> int:
         lower_f = filename.lower()

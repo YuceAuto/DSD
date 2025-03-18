@@ -1,3 +1,8 @@
+/* --------------------------------------------- */
+/* style.css */
+/* --------------------------------------------- */
+
+/* Body ve HTML - Tam ekran yüksekliği iptal, arka plan gradyan korunuyor */
 body, html {
   margin: 0;
   padding: 0;
@@ -6,26 +11,30 @@ body, html {
   background: linear-gradient(to right, #0E3A2F, #78FAAE);
 }
 
+/* container-fluid ve row: Tam yükseklik + flex iptal, sadece ortalama */
 .container-fluid {
   margin: 0 auto;
   padding: 0;
 }
 
 .row.justify-content-center.h-100 {
+  /* height: 100vh; flex: ... vs. kaldırıldı */
   display: flex;
   justify-content: center;
   align-items: center;
   margin: 20px auto;
 }
 
+/* Chat kutusu sabit boyut */
 .chat {
-  width: 1400px;
-  height: 800px;
+  width: 1400px;     /* Sabit genişlik (değiştirebilirsiniz) */
+  height: 1400px;     /* Sabit yükseklik (değiştirebilirsiniz) */
   display: flex;
   flex-direction: column;
   border-radius: 15px;
 }
 
+/* Kart, chat alanını tam doldurur */
 .card {
   flex: 1;
   display: flex;
@@ -35,6 +44,7 @@ body, html {
   background-color: #000000 !important;
 }
 
+/* Header (üst kısım) */
 .card-header.msg_head {
   display: flex;
   align-items: center;
@@ -44,17 +54,20 @@ body, html {
   border-bottom: 0 !important;
 }
 
+/* Footer (mesaj yazma alanı) */
 .card-footer {
   border-radius: 0 0 15px 15px !important;
   border-top: 0 !important;
   display: flex;
 }
 
+/* Mesajların listelendiği alan */
 .msg_card_body {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: auto; /* İçerik taşıyınca dikey scroll görünsün */
 }
 
+/* Kullanıcı / Bot görsel boyutları */
 .user_img {
   height: 70px;
   width: 70px;
@@ -81,6 +94,7 @@ body, html {
   border: 1.5px solid white;
 }
 
+/* Bot başlık bilgisi */
 .user_info {
   margin-top: auto;
   margin-bottom: auto;
@@ -95,6 +109,7 @@ body, html {
   color: rgba(255,255,255,0.6);
 }
 
+/* Mesaj yazma input */
 .type_msg {
   background-color: #394748 !important;
   border: 0 !important;
@@ -108,6 +123,7 @@ body, html {
   outline: 0px !important;
 }
 
+/* Gönderme butonu */
 .send_btn {
   background-color: #0E3A2F;
   border: 2px solid #0E3A2F;
@@ -125,6 +141,7 @@ body, html {
   border: 2px solid black;
 }
 
+/* Mesaj balonları */
 .msg_cotainer {
   margin-top: auto;
   margin-bottom: auto;
@@ -146,6 +163,7 @@ body, html {
   color: #000;
 }
 
+/* Mesaj saatleri */
 .msg_time {
   position: absolute;
   left: 0;
@@ -161,11 +179,13 @@ body, html {
   font-size: 10px;
 }
 
+/* Tablonun baloncuk rengiyle uyumlu olması için */
 .my-blue-table {
   background-color: rgb(255, 255, 255) !important;
   color: #000 !important;
 }
 
+/* Bildirim çubuğu stili */
 .notification-text {
   background-color: #dff0d8;
   color: #3c763d;
@@ -178,6 +198,7 @@ body, html {
   width: 100%;
 }
 
+/* Beğeni (like) butonu */
 .like-button {
   background-color: #0E3A2F;
   color: white;
@@ -196,12 +217,27 @@ body, html {
   cursor: default;
 }
 
-.modal-dialog.modal-lg {
+/* ================================= */
+/* POP-UP GÖRSELİ BÜYÜTME VE ARKA PLAN */
+/* ================================= */
+
+/* 1) Modal içindeki resmi büyütme (daha geniş göstermek için) */
+#popupImage {
   max-width: 800px;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
 }
+
+/* 2) Modal penceresini genişletmek için (opsiyonel) */
+.modal-dialog.modal-lg {
+  max-width: 800px; /* Varsayılan ~800px */
+}
+
+/* 3) Modal açıldığında arka planı siyah, ancak yarı şeffaf yapmak */
 .modal-backdrop.show {
   background-color: rgba(0, 0, 0, 0.7) !important; 
-  opacity: 1 !important;
-  backdrop-filter: none !important;
+  opacity: 1 !important;                           
+  backdrop-filter: none !important;                
   -webkit-backdrop-filter: none !important;
 }

@@ -50,11 +50,11 @@ class ChatbotAPI:
 
         self.logger = logger if logger else self._setup_logger()
 
-        # MSSQL tabloyu oluşturma
+        # MSSQL tabloyu oluşturma (conversations vs.)
         create_tables()
 
-        # OpenAI API Anahtarı
         openai.api_key = os.getenv("OPENAI_API_KEY")
+        self.client = openai
 
         self.config = Config()
         self.utils = Utils()
@@ -68,433 +68,24 @@ class ChatbotAPI:
         self.ASSISTANT_CONFIG = self.config.ASSISTANT_CONFIG
         self.ASSISTANT_NAME_MAP = self.config.ASSISTANT_NAME_MAP
 
-        # Session timeout (30 dakika)
-        self.SESSION_TIMEOUT = 30 * 60
-
         # Kullanıcı bazlı state
         self.user_states = {}
 
-        # Fuzzy cache (soru-cevap benzerlik mekanizması)
+        # Fuzzy Cache & Queue
         self.fuzzy_cache = {}
         self.fuzzy_cache_queue = queue.Queue()
 
-        # Arka planda DB'ye yazacak thread
         self.stop_worker = False
         self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
         self.worker_thread.start()
 
-        # Önbellek geçerlilik süresi (1 saat = 3600 sn)
-        self.CACHE_EXPIRY_SECONDS = 3600
+        # Önbellekteki cevabın geçerli kalma süresi (1 gün = 86400 sn)
+        self.CACHE_EXPIRY_SECONDS = 86400
 
-        # Cross-assistant cache (örn. Fabia -> Scala cachesinden faydalanma)
+        # Cross-assistant cache devrede
         self.CROSS_ASSISTANT_CACHE = True
 
-        # =====================================================
-        # GÜNCELLENMİŞ SYSTEM PROMPTLAR
-        # =====================================================
-        self.SYSTEM_PROMPTS = {
-            "asst_fw6RpRp8PbNiLUR1KB2XtAkK": """
-Sen bir yardımcı asistansın.
-- Kullanıcıya Skoda Kamiq modelleriyle ilgili bilgi ver.
-- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
-- Tutarlı ol, önceki mesajları unutma.
-- Samimi ve anlaşılır bir dille konuş.
-- Tüm cevapların detaylı (Markdown tablo ile göster) ve anlaşılır olsun.
-- Tüm teknik cevapları tablo ile göster.
-Eğer bu tabloda bulunan özellikler modelde varsa (örneğin: Elite'de S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum (SKODA KAMIQ MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle)).
-
-Eğer Kamiq Premium'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer Kamiq Elite'de standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer Kamiq Monte Carlo'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-
-Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. 
-Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. 
-Eğer kullanıcı sorduğun soruları olumlu yanıt verirse (yani görmek isterse) detaya gir.
-
-Kullanıcının sorduğu sorunun içeriği belgelerde (kamiq_data.py dosyasındaki tablolar) mevcutsa kullanıcıyı bilgilendir.
-Eğer kullanıcının sorduğu sorunun içeriği yoksa (örneğin: masaj özelliği bulunmuyor gibi), araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, vb.) kullanıcıya aktar.
-
-Asla şöyle deme: "ilgili bilgiye ulaşmak için Kamiq Opsiyonel Donanım.pdf'i açıyorum." 
-Dosya adı vermeden, sanki "kamiq_data.py içindeki tablolar" senin kaynak kodundaymış gibi davran.
-
-Para Talimatları:
-- Kullanıcı aracı sorarsa veya fiyat isterse: 
-  "Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz."
-
-Analiz Detaylarını Paylaşma:
-- Kullanıcıya yapılan analiz sürecini veya kaynakları anlatma, sadece sonuç bilgiyi ver.
-
-Tablo Gösterimi:
-- Oluşturduğun tabloların her model bilgisi (Elite, Premium, Monte Carlo) ayrı sütun olarak yan yana gösterilsin.
-- Her tablo alt alta değil, yatayda sütunlar şeklinde olsun.
-
-Eğer kullanıcı "kamiq" yazmadan soru sorsa bile Kamiq sorusuymuş gibi yanıtla (ör: "aracın ağırlığı nedir" => "kamiq ağırlığı nedir").
-
-Garantiler veya ikinci el hakkında bilgi verme.
-
-Farklar:
-- Kamiq modellerinin farklarını tablo formatında göster (her model sütunu yanyana).
-- Aynı özellikleri tekrar etme, sadece farklı özellikleri listele.
-
-Teknik Bilgiler:
-- Kamiq modellerinin teknik detaylarını tablo formatında göster.
-
-Donanımlar:
-- Kamiq modellerinin donanım bilgilerini tablo formatında göster (her model sütunu yanyana).
-
-Donanım Farkları:
-- Sadece farklı noktaları tablo halinde göster.
-
-Opsiyonel Donanımlar:
-- Eğer kullanıcı opsiyonel donanım isterse kamiq_data.py'daki tablolardan (KAMIQ_ELITE_MD, KAMIQ_PREMIUM_MD, KAMIQ_MONTE_CARLO_MD) yararlan.
-- Tüm opsiyonel donanımları tabloyla göster (her model sütunu ayrı).
-- Opsiyonel donanım fiyatlarını MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) şeklinde ayrı sütunlar yap.
-- Parça kodlarını gösterme.
-
-Fiyat Bilgisi:
-Eğer kullanıcı aracın ikinci el (2. el) fiyatını (parasını) ya da aracın fiyatını (parasını) isterse sadece şu şekilde yanıtla: Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz.
-
-
-Diğer Modeller:
-- Skoda dışı hiçbir marka/model hakkında bilgi verme. 
-  "Üzgünüm, yalnızca Skoda Kamiq hakkında bilgi verebilirim." şeklinde yanıtla.
-
-Ek Detay:
-- Daha fazla bilgi için: "https://www.skoda.com.tr/modeller/kamiq"
-
-Eğer kullanıcı kamiq ile ilgili bilgi ister şu cevabı ver: Skoda Kamiq, şehir içi ve şehir dışı kullanıma uygun, pratik ve modern bir SUV modelidir. Öne çıkan genel özellikleri şunlardır:
-
-Genel Özellikler
-Boyutlar: Kompakt tasarımıyla şehir içinde kolay manevra sağlar. Uzunluğu 4.241 mm, genişliği 1.793 mm ve yüksekliği 1.562 mm'dir.
-Bagaj Hacmi: 400 litre bagaj kapasitesine sahiptir ve arka koltuklar yatırıldığında bu kapasite 1.395 litreye kadar çıkabilir.
-Motor Seçenekleri:
-1.0 TSI, 115 PS gücünde, 3 silindirli motor.
-1.5 TSI, 150 PS gücünde, 4 silindirli motor.
-Her iki motor da 7 ileri DSG otomatik şanzımanla sunulmaktadır.
-Yakıt Tüketimi: WLTP standartlarına göre birleşik yakıt tüketimi 5.6 - 6.1 litre/100 km aralığındadır.
-Güvenlik: Standart olarak şerit takip sistemi, ön bölge frenleme asistanı, çoklu çarpışma freni ve sürücü yorgunluk tespit sistemi gibi ileri seviye güvenlik özellikleri sunulmaktadır.
-Donanım Seviyeleri
-Elite: Temel güvenlik ve konfor özelliklerini içerir. Bi-LED ön farlar, manuel klima ve 8" dijital gösterge paneli gibi standart donanımlara sahiptir.
-Premium: Çift bölgeli otomatik klima, geri görüş kamerası, kablosuz şarj ünitesi ve 10.25" dijital gösterge paneli gibi daha ileri özelliklerle donatılmıştır.
-Monte Carlo: Spor tasarım detayları ve en üst düzey donanımları sunar. Full LED Matrix ön farlar, spor direksiyon simidi ve panoramik cam tavan gibi özellikleri içerir.
-Konfor ve Teknoloji
-Kablosuz SmartLink (Apple CarPlay ve Android Auto) ile mobil cihazlar kolayca bağlanabilir.
-8.25" dokunmatik multimedya sistemi tüm donanımlarda standarttır.
-İleri teknolojiler arasında elektrikli bagaj kapağı, otomatik park pilotu ve çeşitli sürüş modları bulunur.
-Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle her türlü kullanıcı ihtiyacına hitap eder. Daha detaylı bilgi için sorularınızı belirtebilirsiniz.
-
-            """,
-            "asst_yeDl2aiHy0uoGGjHRmr2dlYB": """
-Sen bir yardımcı asistansın.
-- Kullanıcıya Skoda Fabia modelleriyle ilgili bilgi ver.
-- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
-- Tutarlı ol, önceki mesajları unutma.
-- Samimi ve anlaşılır bir dille konuş.
-- Tüm cevapların detaylı (Markdown tablo ile göster) ve anlaşılır olsun.
-- Tüm teknik cevapları tablo ile göster.
-Eğer bu tabloda bulunan özellikler modelde varsa (örneğin: Premium'da S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum (SKODA FABIA MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle)).
-
-Eğer Fabia Premium'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer Fabia Monte Carlo'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-
-Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. 
-Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. 
-Eğer kullanıcı sorduğun soruları olumlu yanıt verirse (yani görmek isterse) detaya gir.
-
-Kullanıcının sorduğu sorunun içeriği belgelerde (fabia_data.py dosyasındaki tablolar) mevcutsa kullanıcıyı bilgilendir.
-Eğer kullanıcının sorduğu sorunun içeriği yoksa (örneğin: masaj özelliği bulunmuyor gibi), araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, vb.) kullanıcıya aktar.
-
-Asla şöyle deme: "ilgili bilgiye ulaşmak için Fabia Opsiyonel Donanım.pdf'i açıyorum." 
-Dosya adı vermeden, sanki "fabia_data.py içindeki tablolar" senin kaynak kodundaymış gibi davran.
-
-Para Talimatları:
-- Kullanıcı aracı sorarsa veya fiyat isterse: 
-  "Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz."
-
-Analiz Detaylarını Paylaşma:
-- Kullanıcıya yapılan analiz sürecini veya kaynakları anlatma, sadece sonuç bilgiyi ver.
-
-Tablo Gösterimi:
-- Oluşturduğun tabloların her model bilgisi (Premium, Monte Carlo) ayrı sütun olarak yan yana gösterilsin.
-- Her tablo alt alta değil, yatayda sütunlar şeklinde olsun.
-
-Eğer kullanıcı "fabia" yazmadan soru sorsa bile Fabia sorusuymuş gibi yanıtla (ör: "aracın ağırlığı nedir" => "fabia ağırlığı nedir").
-
-Garantiler veya ikinci el hakkında bilgi verme.
-
-Farklar:
-- Fabia modellerinin farklarını tablo formatında göster (her model sütunu yanyana).
-- Aynı özellikleri tekrar etme, sadece farklı özellikleri listele.
-
-Teknik Bilgiler:
-- Fabia modellerinin teknik detaylarını tablo formatında göster.
-
-Donanımlar:
-- Fabia modellerinin donanım bilgilerini tablo formatında göster (her model sütunu yanyana).
-
-Donanım Farkları:
-- Sadece farklı noktaları tablo halinde göster.
-
-Opsiyonel Donanımlar:
-- Eğer kullanıcı opsiyonel donanım isterse fabia_data.py'daki tablolardan (FABIA_PREMIUM_MD, FABIA_MONTE_CARLO_MD) yararlan.
-- Tüm opsiyonel donanımları tabloyla göster (her model sütunu ayrı).
-- Opsiyonel donanım fiyatlarını MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) şeklinde ayrı sütunlar yap.
-- Parça kodlarını gösterme.
-
-Fiyat Bilgisi:
-Eğer kullanıcı aracın ikinci el (2. el) fiyatını (parasını) ya da aracın fiyatını (parasını) isterse sadece şu şekilde yanıtla: Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz.
-
-
-Diğer Modeller:
-- Skoda dışı hiçbir marka/model hakkında bilgi verme. 
-  "Üzgünüm, yalnızca Skoda Fabia hakkında bilgi verebilirim." şeklinde yanıtla.
-
-Ek Detay:
-- Daha fazla bilgi için: "https://www.skoda.com.tr/modeller/fabia"
-
-Eğer kullanıcı fabia ile ilgili bilgi ister şu cevabı ver: Tabi ki! Skoda Fabia, kompakt bir hatchback model olup şık tasarımı, gelişmiş güvenlik özellikleri ve yüksek teknolojili donanımlarıyla dikkat çeken bir araçtır. İşte Skoda Fabia'nın öne çıkan genel özellikleri:
-
-Güvenlik:
-- Sürücü ve ön yolcu hava yastıkları, yan ve perde hava yastıkları
-- Yaya algılama özellikli ön bölge frenleme asistanı
-- Şerit takip sistemi, yorgunluk tespit sistemi, çoklu çarpışma freni
-- Elektronik stabilite kontrol sistemi (ESC) ve yokuş kalkış desteği
-- Acil durum çağrı sistemi (E-Call)
-- ISOFIX çocuk koltuğu sabitleme özelliği
-
-Konfor ve Teknoloji:
-- Start & Stop sistemi ve anahtarsız giriş-çalıştırma (KESSY FULL)
-- Geri görüş kamerası ve park mesafe sensörleri (ön/arka)
-- 8.25" dokunmatik multimedya sistemi, kablosuz Apple CarPlay & Android Auto
-- Çift bölgeli tam otomatik klima ve arka havalandırma çıkışları
-- Dijital gösterge paneli (modeline göre 8" veya 10.25")
-
-Tasarım:
-- LED gündüz sürüş farları ve arka aydınlatma grubu
-- 16"-18" arasında değişen alüminyum alaşımlı jant seçenekleri
-- Siyah detaylarla zenginleştirilmiş Monte Carlo modeli ile sportif bir tasarım alternatifi
-
-Motor Seçenekleri:
-- 1.0 TSI (115 PS) ve 1.5 TSI (150 PS) turboşarjlı benzinli motor seçenekleri
-- 7 ileri otomatik DSG şanzıman
-- Düşük yakıt tüketimi ve emisyon değerleri (WLTP normlarına uygun)
-
-Bagaj Kapasitesi:
-- Standart 380 litre bagaj hacmi, arka koltuklar katlandığında 1.190 litreye kadar çıkabilir.
-
-Eğer daha fazla bilgi almak istediğiniz özel bir konu (örneğin, donanımlar, renk seçenekleri, motor özellikleri) varsa, size daha detaylı yardımcı olabilirim!
-            """,
-            "asst_njSG1NVgg4axJFmvVYAIXrpM": """
-Sen bir yardımcı asistansın.
-- Kullanıcıya Skoda Scala modelleriyle ilgili bilgi ver.
-- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
-- Tutarlı ol, önceki mesajları unutma.
-- Samimi ve anlaşılır bir dille konuş.
-- Tüm cevapların detaylı (Markdown tablo ile göster) ve anlaşılır olsun.
-- Tüm teknik cevapları tablo ile göster.
-Eğer bu tabloda bulunan özellikler modelde varsa (örneğin: Elite'de S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum (SKODA SCALA MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle)).
-
-Eğer Scala Premium'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer Scala Elite'de standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer Scala Monte Carlo'da standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-
-Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. 
-Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. 
-Eğer kullanıcı sorduğun soruları olumlu yanıt verirse (yani görmek isterse) detaya gir.
-
-Kullanıcının sorduğu sorunun içeriği belgelerde (scala_data.py dosyasındaki tablolar) mevcutsa kullanıcıyı bilgilendir.
-Eğer kullanıcının sorduğu sorunun içeriği yoksa (örneğin: masaj özelliği bulunmuyor gibi), araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, vb.) kullanıcıya aktar.
-
-Asla şöyle deme: "ilgili bilgiye ulaşmak için Scala Opsiyonel Donanım.pdf'i açıyorum." 
-Dosya adı vermeden, sanki "scala_data.py içindeki tablolar" senin kaynak kodundaymış gibi davran.
-
-Para Talimatları:
-- Kullanıcı aracı sorarsa veya fiyat isterse: 
-  "Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz."
-
-Analiz Detaylarını Paylaşma:
-- Kullanıcıya yapılan analiz sürecini veya kaynakları anlatma, sadece sonuç bilgiyi ver.
-
-Tablo Gösterimi:
-- Oluşturduğun tabloların her model bilgisi (Elite, Premium, Monte Carlo) ayrı sütun olarak yan yana gösterilsin.
-- Her tablo alt alta değil, yatayda sütunlar şeklinde olsun.
-
-Eğer kullanıcı "scala" yazmadan soru sorsa bile Scala sorusuymuş gibi yanıtla (ör: "aracın ağırlığı nedir" => "scala ağırlığı nedir").
-
-Garantiler veya ikinci el hakkında bilgi verme.
-
-Farklar:
-- Scala modellerinin farklarını tablo formatında göster (her model sütunu yanyana).
-- Aynı özellikleri tekrar etme, sadece farklı özellikleri listele.
-
-Teknik Bilgiler:
-- Scala modellerinin teknik detaylarını tablo formatında göster.
-
-Donanımlar:
-- Scala modellerinin donanım bilgilerini tablo formatında göster (her model sütunu yanyana).
-
-Donanım Farkları:
-- Sadece farklı noktaları tablo halinde göster.
-
-Opsiyonel Donanımlar:
-- Eğer kullanıcı opsiyonel donanım isterse scala_data.py'daki tablolardan (SCALA_ELITE_MD, SCALA_PREMIUM_MD, SCALA_MONTE_CARLO_MD) yararlan.
-- Tüm opsiyonel donanımları tabloyla göster (her model sütunu ayrı).
-- Opsiyonel donanım fiyatlarını MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) şeklinde ayrı sütunlar yap.
-- Parça kodlarını gösterme.
-
-Fiyat Bilgisi:
-Eğer kullanıcı aracın ikinci el (2. el) fiyatını (parasını) ya da aracın fiyatını (parasını) isterse sadece şu şekilde yanıtla: Skoda'ya ait güncel fiyatlar için https://www.skoda.com.tr/ web sitemizi ziyaret edebilirsiniz.
-
-
-Diğer Modeller:
-- Skoda dışı hiçbir marka/model hakkında bilgi verme. 
-  "Üzgünüm, yalnızca Skoda Scala hakkında bilgi verebilirim." şeklinde yanıtla.
-
-Ek Detay:
-- Daha fazla bilgi için: "https://www.skoda.com.tr/modeller/scala"
-
-Eğer kullanıcı scala ile ilgili bilgi ister şu cevabı ver: Skoda Scala, modern tasarımı, geniş iç mekanı ve zengin donanım özellikleriyle dikkat çeken bir kompakt hatchback modelidir. İşte Scala ile ilgili genel bilgiler:
-
-Motor Seçenekleri
-1.0 TSI: 115 PS güç ve 200 Nm tork sunar. 0-100 km/sa hızlanma 10.1 saniyedir. Ortalama yakıt tüketimi 5.4–5.8 lt/100 km'dir.
-1.5 TSI: 150 PS güç ve 250 Nm tork sunar. 0-100 km/sa hızlanma 8.2 saniyedir. Ortalama yakıt tüketimi 5.6–6.1 lt/100 km'dir.
-Her iki motor seçeneği de 7 ileri DSG otomatik şanzımanla birlikte sunulur.
-Boyutlar
-Uzunluk: 4,362 mm
-Genişlik: 1,793 mm
-Yükseklik: 1,493 mm
-Aks Mesafesi: 2,636 mm
-Bagaj Hacmi: 467 litre (arka koltuklar yatırıldığında 1,410 litreye çıkar)
-Donanım Seviyeleri
-Elite: Temel donanım seviyesidir. LED gündüz sürüş farları, 8.25" multimedya sistemi ve 8" dijital gösterge paneli gibi özelliklerle gelir.
-Premium: Ekstra konfor ve teknoloji sunar. Köşe dönüş özellikli LED sis farları, geri görüş kamerası, kablosuz şarj ünitesi ve çift bölgeli otomatik klima gibi özellikler eklenmiştir.
-Monte Carlo: Spor tasarım detaylarıyla öne çıkar. Full LED Matrix far grubu, 10.25" dijital gösterge paneli, panoramik cam tavan ve Monte Carlo logolu spor direksiyon simidi gibi özellikler sunar.
-Güvenlik Özellikleri
-Standart olarak sürücü ve yolcu hava yastıkları, şerit takip sistemi, yorgunluk tespit sistemi, çoklu çarpışma freni, elektronik stabilite kontrol sistemi ve acil durum çağrı sistemi (E-Call) bulunur.
-ISOFIX çocuk koltuğu bağlantı noktaları tüm donanım seviyelerinde mevcuttur.
-Konfor ve Teknoloji
-Kablosuz SmartLink (Apple CarPlay & Android Auto)
-Yüksek kaliteli multimedya sistemleri
-Opsiyonel olarak panoramik cam tavan ve elektrikli bagaj kapağı
-Eğer daha fazla detay veya belirli bir model seviyesi hakkında bilgi almak isterseniz, lütfen belirtin!
-            """,
-            "asst_hiGn8YC08xM3amwG0cs2A3SN": """
-Sen bir yardımcı asistansın.  
-- Kullanıcıya Skoda (Fabia, Scala, Kamiq) modelleriyle ilgili detaylı ve anlaşılır bilgi ver. 
-- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver. 
-- Tutarlı ol, önceki mesajları unutma.  
-- Samimi ve anlaşılır bir dille konuş.
-- Tüm cevapların detaylı (Markdown tablo ile göster) ve anlaşılır olsun.
-Eğer bu tablolarda bulunan özellikler model de varsa (örneğin: Monte Carlo'da S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum, tablolar: SKODA KAMIQ MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle), ŠKODA FABIA MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle), ŠKODA SCALA MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle).
-
-Eğer modelin donanımında (örnek: "Fabia Premium", "Fabia Monte Carlo") standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer modelin donanımında (örnek: "Scala Elite", "Scala Premium", "Scala Monte Carlo") standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer modelin donanımında (örnek: "Kamiq Elite", "Kamiq Premium", "Kamiq Monte Carlo") standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. Eğer kullanıcı sorduğun soruları olumlu yanıt (yani görmek isterse) yanıtı almasını sağla.
-Kullanıcının sorduğu sorunun içeriği belgelerde mevcutsa kullanıcıyı bilgilendir. 
-Eğer kullanıcının sorduğu sorunun içeriği belgelerde yoksa (örneğin: masaj özelliğinin olmaması) bu araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, karbon salınımını, çevreye zararı...) kullanıcıya bildir.
-Kullanıcıya asla bu şekilde bilgiler verme: "ilgili bilgiye ulaşmak için "Kamiq Opsiyonel Donanım.pdf" dosyasını kontrol ediyorum. Bir saniye lütfen." 
-Sadece kullanıcıya cevabı ilet.
-
-Analiz ve Paylaşım Talimatları:
-
-Analiz Detaylarını Paylaşma:
-
-Kullanıcıya yapılan analizlerin detaylarını paylaşma.
-Yalnızca talep edilen bilgiyle yanıt ver.
-Oluşturulan tüm tablolar (modeller) alt alta değil kesinlikle yan yana olsun.
-Oluşturulan tüm tablolarda (modeller) ayrı sütunlarda olsun kesinlikle aynı sütunda olmasın.
-Tablo ile gösterirken mutlaka elite, premium ve monte carlo ayrı column'larda olsun.
-Kullanıcıya tablo sunumunda kesinlikle elite, premium ve monte carlo aynı yerde olmasın.
-Fabia, Elite, Kamiq bilgilerini tablo formatında sun, tablo sunumu sırasında mutlaka elite, premium ve monte carlo bilgileri ayrı ayrı gösterilsin.
-Tablo bilgilerini sunarken solda elite, ortada premium ve sağda monte carlo olacak şekilde göster.
-Eğer kullanıcı fabia ile ilgili bilgi almak isterse yalnızca bu dosyadan yararlanarak bilgi yaz: fabia_data.py
-Eğer kullanıcı scala ile ilgili bilgi almak isterse yalnızca bu dosyadan yararlanarak bilgi yaz: scala_data.py
-Eğer kullanıcı kamiq ile ilgili bilgi almak isterse yalnızca bu dosyadan yararlanarak bilgi yaz: kamiq_data.py
-
-
-Garantiler veya ikinci el önerileri hakkında bilgi verme.
-
-Kullanıcı Fabia ile ilgili soru sorarsa mutlaka sorduğu sorunun bilgisi fabia_data.py da yer alıp almadığını kontrol edip yanıtlasın. 
-Kullanıcı Scala ile ilgili soru sorarsa mutlaka sorduğu sorunun bilgisi scala_data.py da yer alıp almadığını kontrol edip yanıtlasın. 
-Kullanıcı Kamiq ile ilgili soru sorarsa mutlaka sorduğu sorunun bilgisi kamiq_data.py da yer alıp almadığını kontrol edip yanıtlasın. 
- 
-Kullanıcıya "Graptihe Gri" değil "Grafit Gri" olarak yazmanı istiyorum. 
-
-Donanım Farkları:
-Fabia modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster.
-Scala modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster.
-Kamiq modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster.
-
-Model Farkları:
-
-Fabia-Scala modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Fabia-Kamiq modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Scala-Kamiq modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Teknik Bilgiler:
-Fabia, Scala, Kamiq modellerinin teknik bilgilerini tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Donanımlar:
-Fabia, Scala, Kamiq modellerinin donanım bilgilerini ( motor donanım gibi) tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Opsiyonel Donanımlar:
-Eğer kullanıcı opsiyonel donanımlar ile ilgili bilgi isterse mutlaka all_data.py dosyasından bilgi sağla.
-Mutlaka tüm opsiyonel donanımları paylaş.
-Mutlaka belirtilen tablo formatında sun. 
-Tüm opsiyonel donanımları tabloyla  göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Fabia Premium ile ilgili tüm opsiyonel donanımları ŠKODA FABIA PREMIUM OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Mutlaka ŠKODA FABIA PREMIUM OPSİYONEL DONANIMLAR tablosundaki tüm verileri al.
-Fabia Monte Carlo ile ilgili tüm opsiyonel donanımları ŠKODA FABIA MONTE CARLO OPSİYONEL DONANIMLAR tablosundan al.
-Scala Elite ile ilgili tüm opsiyonel donanımları ŠKODA SCALA ELITE OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Scala Premium ile ilgili tüm opsiyonel donanımları ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Mutlaka ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR tablosundaki tüm verileri al.
-Scala Monte Carlo ile ilgili tüm opsiyonel donanımları ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR tablosundan al.
-Kamiq Elite ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ ELITE OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Kamiq Premium ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ PREMIUM OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Mutlaka ŠKODA KAMIQ PREMIUM OPSİYONEL DONANIMLAR tablosundaki tüm verileri al.
-Kamiq Monte Carlo ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ MONTE CARLO OPSİYONEL DONANIMLAR tablosundan al.
-Tablolardaki tüm bilgileri mutlaka kullanıcı ile paylaş.
-Opsiyonel donanımları gösterirken her donanımı (elite, premium, monte carlo) ayrı tablolarda mutlaka tüm bilgileri göster.  
-Mutlaka opsiyonel donanım fiyatlarını kullanıcıya ayrı sütunlarda göster (MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve  MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) ayrı ayrı gösterilecek şekilde göster).  
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-Parça kodlarını paylaşma.
-
-Fiyat Bilgisi:
-
-Yalnızca "Skoda Para Talimatlar.txt" dosyasındaki talimatlara göre fiyat bilgisi ver.
-Diğer Modeller Hakkında Bilgi:
-
-Skoda dışındaki marka veya modeller hakkında bilgi verme.
-Eğer kullanıcı başka bir marka/model hakkında bilgi isterse şu cevabı ver:
-"Üzgünüm, yalnızca Skoda modelleri hakkında bilgi verebilirim."
-Ek Detaylar:
-
-Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu siteye yönlendir:
-"https://www.skoda.com.tr/."
-            """
-        }
-        # =====================================================
-
+        # Flask route tanımları
         self._define_routes()
 
     def _setup_logger(self):
@@ -510,7 +101,6 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
     def _define_routes(self):
         @self.app.route("/", methods=["GET"])
         def home():
-            # Oturuma ait "last_activity" bilgisini sıfırla
             session.pop('last_activity', None)
             return render_template("index.html")
 
@@ -522,10 +112,10 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         def check_session():
             if 'last_activity' in session:
                 now = time.time()
-                if now - session['last_activity'] > self.SESSION_TIMEOUT:
-                    return jsonify({"active": False})
+                # Opsiyonel session timeout kontrolü yapılabilir
             return jsonify({"active": True})
 
+        # Beğen butonuna tıklanıldığında DB güncelleyen endpoint
         @self.app.route("/like", methods=["POST"])
         def like_endpoint():
             data = request.get_json()
@@ -538,10 +128,11 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+    # ----------------------------------------------------------------
+    # ARKA PLANDA DB'YE YAZAN THREAD
+    # ----------------------------------------------------------------
     def _background_db_writer(self):
-        """
-        self.fuzzy_cache_queue'ya eklenen kayıtları DB'ye yazar.
-        """
+        """Queue'ya eklenen cache kayıtlarını DB'ye yazar."""
         self.logger.info("Background DB writer thread started.")
         while not self.stop_worker:
             try:
@@ -571,7 +162,47 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
 
         self.logger.info("Background DB writer thread stopped.")
 
+    def _load_cache_from_db(self):
+        """
+        (Opsiyonel) DB'den son X kaydı çekip self.fuzzy_cache'e doldurabilirsiniz.
+        """
+        self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        sql = """
+        SELECT TOP 1000 user_id, question, answer
+        FROM cache_faq
+        ORDER BY id DESC
+        """
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+        conn.close()
+
+        for row in rows:
+            user_id = row[0]
+            q_lower = row[1]
+            ans_txt = row[2]
+            ans_bytes = ans_txt.encode("utf-8")
+            assistant_id = "default"
+
+            if user_id not in self.fuzzy_cache:
+                self.fuzzy_cache[user_id] = {}
+            if assistant_id not in self.fuzzy_cache[user_id]:
+                self.fuzzy_cache[user_id][assistant_id] = []
+
+            self.fuzzy_cache[user_id][assistant_id].append({
+                "question": q_lower,
+                "answer_bytes": ans_bytes,
+                "timestamp": time.time()
+            })
+
+        self.logger.info("[_load_cache_from_db] Tamamlandı.")
+
     def _extract_models(self, text: str) -> set:
+        """
+        Kullanıcı mesajındaki 'fabia', 'scala', 'kamiq' kelimelerini yakalar.
+        """
         lower_t = text.lower()
         models = set()
         if "fabia" in lower_t:
@@ -583,6 +214,9 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
+        """
+        'fabia' -> asst_yeDl2aiHy0uoGGjHRmr2dlYB vb.
+        """
         model_name = model_name.lower()
         for asst_id, keywords in self.ASSISTANT_CONFIG.items():
             for kw in keywords:
@@ -628,12 +262,16 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         threshold=0.8,
         allow_cross_assistant=True
     ):
+        """
+        Fuzzy cache araması.
+        """
         ans, matched_q, found_asst_id = self._search_in_assistant_cache(
             user_id, assistant_id, new_question, threshold
         )
         if ans:
             return ans, matched_q, found_asst_id
 
+        # Cross assistant cache (isteğe bağlı)
         if allow_cross_assistant and self.CROSS_ASSISTANT_CACHE and user_id in self.fuzzy_cache:
             for other_aid in self.fuzzy_cache[user_id]:
                 if other_aid == assistant_id:
@@ -648,6 +286,9 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         return None, None, None
 
     def _store_in_fuzzy_cache(self, user_id: str, question: str, answer_bytes: bytes, assistant_id: str):
+        """
+        Yeni bir Soru-Cevabı bellek içi ve DB queue'suna kaydeder.
+        """
         if not assistant_id:
             return
         q_lower = question.strip().lower()
@@ -666,38 +307,10 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         record = (user_id, q_lower, answer_bytes, time.time())
         self.fuzzy_cache_queue.put(record)
 
-    def _correct_typos(self, user_message):
-        known_words = ["premium", "elite", "monte", "carlo"]
-        splitted = user_message.split()
-        new_tokens = []
-        for token in splitted:
-            best = self.utils.fuzzy_find(token, known_words, threshold=0.7)
-            if best:
-                new_tokens.append(best)
-            else:
-                new_tokens.append(token)
-
-        combined_tokens = []
-        skip_next = False
-        for i in range(len(new_tokens)):
-            if skip_next:
-                skip_next = False
-                continue
-            if i < len(new_tokens) - 1:
-                # "monte carlo" birleştir
-                if new_tokens[i].lower() == "monte" and new_tokens[i+1].lower() == "carlo":
-                    combined_tokens.append("monte carlo")
-                    skip_next = True
-                else:
-                    combined_tokens.append(new_tokens[i])
-            else:
-                combined_tokens.append(new_tokens[i])
-
-        corrected_text = " ".join(combined_tokens)
-        corrected_text = corrected_text.replace("graptihe", "grafit")
-        return corrected_text
-
     def _ask(self):
+        """
+        Kullanıcıdan gelen message (POST /ask) -> Chat yanıtı stream.
+        """
         try:
             data = request.get_json()
             if not data:
@@ -712,15 +325,24 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         if not user_message:
             return jsonify({"response": "Please enter a question."})
 
-        # Session last_activity güncelle
+        # Session zaman damgası (opsiyonel)
         if 'last_activity' not in session:
             session['last_activity'] = time.time()
         else:
             session['last_activity'] = time.time()
 
         corrected_message = self._correct_typos(user_message)
+
+        # Kelime sayısına göre threshold
+        word_count = len(corrected_message.strip().split())
+        if word_count < 5:
+            local_threshold = 1.0   # 5 kelime altı -> %100
+        else:
+            local_threshold = 0.8
+
         lower_corrected = corrected_message.lower().strip()
 
+        # Model / Donanım yakalama
         user_models = self._extract_models(corrected_message)
         user_trims = set()
         if "premium" in lower_corrected:
@@ -730,50 +352,39 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         if "elite" in lower_corrected:
             user_trims.add("elite")
 
-        # Eski asistan (model) bilgisini alalım
+        # Asistan seçimi (çoklu model -> all models bot)
+        new_assistant_id = None
+        if len(user_models) >= 2 or len(user_trims) >= 2:
+            new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
+
+        old_assistant_id = None
+        if user_id in self.user_states:
+            old_assistant_id = self.user_states[user_id].get("assistant_id")
+
+        if not new_assistant_id:
+            # Tek model -> config'te o modele ait assistant
+            for aid, keywords in self.ASSISTANT_CONFIG.items():
+                if any(k.lower() in lower_corrected for k in keywords):
+                    new_assistant_id = aid
+                    break
+
         if user_id not in self.user_states:
             self.user_states[user_id] = {}
-            self.user_states[user_id]["conversations"] = {}
+            self.user_states[user_id]["threads"] = {}
 
-        old_assistant_id = self.user_states[user_id].get("assistant_id")
-        new_assistant_id = None
-
-        # 1) Kullanıcı birden çok model mi yazmış?
-        if len(user_models) >= 2 or len(user_trims) >= 2:
-            # Birden çok model saptandı => "asst_hiGn8YC08xM3amwG0cs2A3SN" (Hepsi)
-            new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
+        if new_assistant_id:
+            assistant_id = new_assistant_id
+            allow_cross = False
         else:
-            # 2) Tek model mi, hiç model yok mu?
-            if len(user_models) == 0:
-                # Kullanıcı yeni model girmemiş
-                if old_assistant_id:
-                    # Eski modele devam
-                    new_assistant_id = old_assistant_id
-                    self.logger.info(f"Kullanıcı model belirtmedi, önceki modele devam: {old_assistant_id}")
-                else:
-                    # Daha önce yoksa default Kamiq
-                    new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"
-                    self.logger.info("Kullanıcı model belirtmedi ve eski model yok, Kamiq'e yönlendiriliyor.")
-            else:
-                # len(user_models) == 1
-                single_model = list(user_models)[0]  # "fabia" / "scala" / "kamiq"
-                for aid, keywords in self.ASSISTANT_CONFIG.items():
-                    if single_model.lower() in [k.lower() for k in keywords]:
-                        new_assistant_id = aid
-                        break
+            assistant_id = old_assistant_id
+            allow_cross = False
 
-                if not new_assistant_id:
-                    # Yine bulamazsak varsayılan Kamiq
-                    new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"
-                    self.logger.info("Kullanıcı model söyledi ama tabloda bulamadım, Kamiq'e yönlendiriliyor.")
+        self.user_states[user_id]["assistant_id"] = assistant_id
 
-        self.user_states[user_id]["assistant_id"] = new_assistant_id
-        assistant_id = new_assistant_id
+        # Görsel isteği mi?
+        is_image_req = self.utils.is_image_request(user_message)
 
-        # Görsel istek mi?
-        is_image_req = self.utils.is_image_request(corrected_message)
-
-        # Fuzzy cache kontrol
+        # Görsel isteklerinde cache kullanma
         if is_image_req:
             cached_answer, matched_question, found_asst_id = None, None, None
         else:
@@ -781,11 +392,12 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 user_id,
                 corrected_message,
                 assistant_id,
-                threshold=0.8,
-                allow_cross_assistant=False  # Cross-assistant = False isterseniz True yapın
+                threshold=local_threshold,
+                allow_cross_assistant=allow_cross
             )
 
         if cached_answer and not is_image_req:
+            # Model çakışması varsa skip
             user_models_in_msg = self._extract_models(corrected_message)
             cache_models = self._extract_models(matched_question) if matched_question else set()
 
@@ -806,11 +418,10 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 elif len(models_in_answer) > 1:
                     self.logger.info("[CACHE] Birden çok model tespit, asistan atama yok.")
 
-                self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt gönderiliyor.")
+                self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt.")
                 time.sleep(1)
                 return self.app.response_class(cached_answer, mimetype="text/plain")
 
-        # Aksi halde yeni yanıt oluştur
         def caching_generator():
             chunks = []
             for chunk in self._generate_response(corrected_message, user_id):
@@ -824,22 +435,56 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
 
+    def _correct_typos(self, user_message):
+        """
+        Bazı kelimelerde ufak yazım hataları -> fuzzy düzeltme.
+        """
+        known_words = ["premium", "elite", "monte", "carlo"]
+        splitted = user_message.split()
+        new_tokens = []
+        for token in splitted:
+            best = self.utils.fuzzy_find(token, known_words, threshold=0.7)
+            if best:
+                new_tokens.append(best)
+            else:
+                new_tokens.append(token)
+
+        combined_tokens = []
+        skip_next = False
+        for i in range(len(new_tokens)):
+            if skip_next:
+                skip_next = False
+                continue
+            if i < len(new_tokens) - 1:
+                if new_tokens[i].lower() == "monte" and new_tokens[i+1].lower() == "carlo":
+                    combined_tokens.append("monte carlo")
+                    skip_next = True
+                else:
+                    combined_tokens.append(new_tokens[i])
+            else:
+                combined_tokens.append(new_tokens[i])
+        return " ".join(combined_tokens)
+
     def _generate_response(self, user_message, user_id):
+        """
+        Asıl iş mantığı - satır satır yield edilerek frontend'e iletiliyor.
+        """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
 
-        assistant_id = self.user_states[user_id].get("assistant_id")
+        assistant_id = self.user_states[user_id].get("assistant_id", None)
         assistant_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "")
         lower_msg = user_message.lower()
 
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # ------------------------------------------------------------
-        # 1) Özel görsel vs. yanıtları
-        # ------------------------------------------------------------
+        # --------------------------------------------------------
+        # 1) Model + "görsel" -> renk
+        # --------------------------------------------------------
         model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
         if re.search(model_image_pattern, lower_msg):
             matched_model = re.search(model_image_pattern, lower_msg).group(1)
+
             all_colors = self.config.KNOWN_COLORS
             found_color_images = []
             for clr in all_colors:
@@ -857,6 +502,9 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
             return
 
+        # --------------------------------------------------------
+        # 2) Dış görsel istekleri
+        # --------------------------------------------------------
         if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
@@ -882,6 +530,7 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
             yield f"<b>{final_title}</b><br>".encode("utf-8")
 
+            # Renk görselleri
             all_colors = self.config.KNOWN_COLORS
             found_color_images = []
             for clr in all_colors:
@@ -897,6 +546,7 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             else:
                 yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
 
+            # Jant görselleri
             if trim_name:
                 filter_jant = f"{assistant_name} {trim_name} jant"
             else:
@@ -910,6 +560,9 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
             return
 
+        # --------------------------------------------------------
+        # 3) İç görsel istekleri
+        # --------------------------------------------------------
         if any(kw in lower_msg for kw in ["iç", "ic"]):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
@@ -961,6 +614,9 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
             return
 
+        # --------------------------------------------------------
+        # 4) "Evet" kontrolü (örnek: renk seçimi)
+        # --------------------------------------------------------
         trimmed_msg = user_message.strip().lower()
         if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
             pending_colors = self.user_states[user_id].get("pending_color_images", [])
@@ -983,7 +639,9 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 self.user_states[user_id]["pending_color_images"] = []
                 return
 
-        # Özel örnek: Fabia Premium vs Monte Carlo
+        # --------------------------------------------------------
+        # 5) Özel karşılaştırma (Fabia Premium vs Monte Carlo)
+        # --------------------------------------------------------
         if ("fabia" in lower_msg
             and "premium" in lower_msg
             and "monte carlo" in lower_msg
@@ -992,9 +650,7 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 ("Fabia_Premium_Ay_Beyazı.png", "Fabia_Monte_Carlo_Ay_Beyazı.png"),
             ]
             save_to_db(user_id, user_message, "Fabia Premium vs Monte Carlo görsel karşılaştırma.")
-            yield """
-<div style='display: flex; flex-direction: row; gap: 20px;'>
-""".encode("utf-8")
+            yield "<div style='display: flex; flex-direction: row; gap: 20px;'>".encode("utf-8")
             for left_img, right_img in fabia_pairs:
                 left_url = f"/static/images/{left_img}"
                 right_url = f"/static/images/{right_img}"
@@ -1021,6 +677,9 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             yield "</div>".encode("utf-8")
             return
 
+        # --------------------------------------------------------
+        # 6) Genel "görsel" isteği mi?
+        # --------------------------------------------------------
         if self.utils.is_image_request(user_message):
             if not assistant_id:
                 save_to_db(user_id, user_message, "Henüz asistan seçilmedi, görsel yok.")
@@ -1071,119 +730,123 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             yield from self._render_side_by_side_images(found_images, context=context)
             return
 
-        # ------------------------------------------------------------
-        # Opsiyonel tablolar
-        # ------------------------------------------------------------
+        # --------------------------------------------------------
+        # 7) OPSİYONEL DONANIMLAR (Iki aşamalı)
+        # --------------------------------------------------------
         user_models_in_msg = self._extract_models(user_message)
         user_trims_in_msg = set()
         if "premium" in lower_msg:
             user_trims_in_msg.add("premium")
-        if "elite" in lower_msg:
-            user_trims_in_msg.add("elite")
         if "monte carlo" in lower_msg:
             user_trims_in_msg.add("monte carlo")
+        if "elite" in lower_msg:
+            user_trims_in_msg.add("elite")
 
+        # Önceki stepte opsiyonel model tutuluyor mu?
+        pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
+
+        # 7A) Bu mesajda opsiyonel + tek model
+        if "opsiyonel" in lower_msg and len(user_models_in_msg) == 1:
+            found_model = list(user_models_in_msg)[0]
+            self.user_states[user_id]["pending_opsiyonel_model"] = found_model
+
+            # Donanım da var mı?
+            if len(user_trims_in_msg) == 1:
+                found_trim = list(user_trims_in_msg)[0]
+                save_to_db(user_id, user_message, f"{found_model.title()} {found_trim.title()} opsiyonel tablosu.")
+                yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
+                return
+            else:
+                yield (
+                    f"{found_model.title()} modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
+                    "(Premium / Monte Carlo / Elite?)\n"
+                ).encode("utf-8")
+                return
+
+        # 7B) Eğer önceki adımda model set edildi ve şimdi donanım varsa
+        if pending_ops_model:
+            if user_trims_in_msg:
+                if len(user_trims_in_msg) == 1:
+                    found_trim = list(user_trims_in_msg)[0]
+                    save_to_db(user_id, user_message, f"{pending_ops_model.title()} {found_trim.title()} opsiyonel tablosu.")
+                    yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
+                    return
+                else:
+                    yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Örn: Premium / Monte Carlo / Elite)\n".encode("utf-8")
+                    return
+            else:
+                yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo / Elite)\n".encode("utf-8")
+                return
+
+        # 7C) Birden çok model / donanım tespitini atlıyoruz (All Models vs.)
         if len(user_models_in_msg) >= 2 or len(user_trims_in_msg) >= 2:
-            self.logger.info("Birden çok model/donanım tespit edildi. Tekil tabloyu atlıyoruz.")
-        else:
-            if "fabia" in lower_msg and "opsiyonel" in lower_msg:
-                if "premium" in lower_msg:
-                    save_to_db(user_id, user_message, "Fabia Premium opsiyonel tablosu.")
-                    yield FABIA_PREMIUM_MD.encode("utf-8")
-                    return
-                elif "monte carlo" in lower_msg:
-                    save_to_db(user_id, user_message, "Fabia Monte Carlo opsiyonel tablosu.")
-                    yield FABIA_MONTE_CARLO_MD.encode("utf-8")
-                    return
-                else:
-                    yield (
-                        "Fabia modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                        "(Premium / Monte Carlo)\n"
-                    ).encode("utf-8")
-                    return
+            self.logger.info("Birden çok model veya donanım tespit edildi, tablo direkt basılmıyor.")
 
-            if "kamiq" in lower_msg and "opsiyonel" in lower_msg:
-                if "elite" in lower_msg:
-                    save_to_db(user_id, user_message, "Kamiq Elite opsiyonel tablosu.")
-                    yield KAMIQ_ELITE_MD.encode("utf-8")
-                    return
-                elif "premium" in lower_msg:
-                    save_to_db(user_id, user_message, "Kamiq Premium opsiyonel tablosu.")
-                    yield KAMIQ_PREMIUM_MD.encode("utf-8")
-                    return
-                elif "monte carlo" in lower_msg:
-                    save_to_db(user_id, user_message, "Kamiq Monte Carlo opsiyonel tablosu.")
-                    yield KAMIQ_MONTE_CARLO_MD.encode("utf-8")
-                    return
-                else:
-                    yield (
-                        "Kamiq modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                        "(Elite / Premium / Monte Carlo)\n"
-                    ).encode("utf-8")
-                    return
-
-            if "scala" in lower_msg and "opsiyonel" in lower_msg:
-                if "elite" in lower_msg:
-                    save_to_db(user_id, user_message, "Scala Elite opsiyonel tablosu.")
-                    yield SCALA_ELITE_MD.encode("utf-8")
-                    return
-                elif "premium" in lower_msg:
-                    save_to_db(user_id, user_message, "Scala Premium opsiyonel tablosu.")
-                    yield SCALA_PREMIUM_MD.encode("utf-8")
-                    return
-                elif "monte carlo" in lower_msg:
-                    save_to_db(user_id, user_message, "Scala Monte Carlo opsiyonel tablosu.")
-                    yield SCALA_MONTE_CARLO_MD.encode("utf-8")
-                    return
-                else:
-                    yield (
-                        "Scala modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                        "(Elite / Premium / Monte Carlo)\n"
-                    ).encode("utf-8")
-                    return
-
-        # ------------------------------------------------------------
-        # Normal ChatCompletion (OpenAI)
-        # ------------------------------------------------------------
+        # --------------------------------------------------------
+        # 8) Normal Chat (OpenAI vb.)
+        # --------------------------------------------------------
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
-            yield "Üzgünüm, herhangi bir model hakkında yardımcı olamıyorum.\n".encode("utf-8")
+            yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
             return
 
-        if "conversations" not in self.user_states[user_id]:
-            self.user_states[user_id]["conversations"] = {}
-        if assistant_id not in self.user_states[user_id]["conversations"]:
-            self.user_states[user_id]["conversations"][assistant_id] = []
-
-        conversation_list = self.user_states[user_id]["conversations"][assistant_id]
-        conversation_list.append({"role": "user", "content": user_message})
-
-        system_prompt = self.SYSTEM_PROMPTS.get(assistant_id, "Sen bir Škoda asistanısın.")
         try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4",  # veya "gpt-3.5-turbo"
-                messages=[
-                    {"role": "system", "content": system_prompt}
-                ] + conversation_list,
-                temperature=0.7,
-                stream=True
+            threads_dict = self.user_states[user_id].get("threads", {})
+            thread_id = threads_dict.get(assistant_id)
+
+            if not thread_id:
+                # Yeni diyalog başlat
+                new_thread = self.client.beta.threads.create(
+                    messages=[{"role": "user", "content": user_message}]
+                )
+                thread_id = new_thread.id
+                threads_dict[assistant_id] = thread_id
+                self.user_states[user_id]["threads"] = threads_dict
+            else:
+                # Mevcut diyaloğa mesaj ekle
+                self.client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=user_message
+                )
+
+            run = self.client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=assistant_id
             )
 
-            assistant_response_str = ""
-            for chunk in response:
-                if "choices" in chunk and len(chunk["choices"]) > 0:
-                    delta = chunk["choices"][0]["delta"]
-                    if "content" in delta:
-                        text_part = delta["content"]
-                        assistant_response_str += text_part
-                        yield text_part.encode("utf-8")
+            start_time = time.time()
+            timeout = 30
+            assistant_response = ""
 
-            conversation_list.append({"role": "assistant", "content": assistant_response_str})
-            conversation_id = save_to_db(user_id, user_message, assistant_response_str)
+            while time.time() - start_time < timeout:
+                run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
+                if run.status == "completed":
+                    msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
+                    for msg in msg_response.data:
+                        if msg.role == "assistant":
+                            content = str(msg.content)
+                            content_md = self.markdown_processor.transform_text_to_markdown(content)
+                            assistant_response = content
+                            yield content_md.encode("utf-8")
+                    break
+                elif run.status == "failed":
+                    save_to_db(user_id, user_message, "Yanıt oluşturulamadı.")
+                    yield "Yanıt oluşturulamadı.\n".encode("utf-8")
+                    return
+                time.sleep(0.5)
+
+            if not assistant_response:
+                save_to_db(user_id, user_message, "Zaman aşımı.")
+                yield "Yanıt alma zaman aşımına uğradı.\n".encode("utf-8")
+                return
+
+            conversation_id = save_to_db(user_id, user_message, assistant_response)
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-            if "görsel olarak görmek ister misiniz?" in assistant_response_str.lower():
-                detected_colors = self.utils.parse_color_names(assistant_response_str)
+            # Renk ismi tespiti
+            if "görsel olarak görmek ister misiniz?" in assistant_response.lower():
+                detected_colors = self.utils.parse_color_names(assistant_response)
                 if detected_colors:
                     self.user_states[user_id]["pending_color_images"] = detected_colors
 
@@ -1193,16 +856,17 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
 
     def _render_side_by_side_images(self, images, context="model"):
-        if not images:
-            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
-            return
-
+        """
+        Basit örnek: Görselleri yatay veya grid şeklinde sıralama.
+        """
+        # Monte Carlo standart
         mc_std = [
             img for img in images
             if "monte" in img.lower()
                and "carlo" in img.lower()
                and "standart" in img.lower()
         ]
+        # Premium opsiyonel
         pm_ops = [
             img for img in images
             if "premium" in img.lower()
@@ -1210,10 +874,13 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         ]
         others = [img for img in images if img not in mc_std and img not in pm_ops]
 
-        # Ana çerçeve
+        if not images:
+            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
+            return
+
+        # 1) Sol sütun (Monte Carlo)
         yield """
 <div style="display: flex; justify-content: space-between; gap: 60px;">
-  <!-- SOL SÜTÜN: MONTE CARLO STANDART -->
   <div style="flex:1;">
 """.encode("utf-8")
 
@@ -1238,6 +905,7 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
 
         yield "</div>".encode("utf-8")
 
+        # 2) Sağ sütun (Premium opsiyonel)
         yield """
   <div style="flex:1;">
 """.encode("utf-8")
@@ -1262,10 +930,11 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             yield "<h3>Premium Opsiyonel Görseli Yok</h3>".encode("utf-8")
 
         yield """
-  </div> <!-- Sağ sütun kapanış -->
-</div> <!-- Ana flex kapanış -->
+  </div>
+</div>
 """.encode("utf-8")
 
+        # 3) Kalan diğer görseller
         if others:
             yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
             yield '<div style="display: flex; flex-wrap: wrap; gap: 20px;">'.encode("utf-8")
@@ -1282,6 +951,44 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
 """
                 yield block_html.encode("utf-8")
             yield "</div>".encode("utf-8")
+
+    def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
+        """
+        Hangi model + trim için hangi tabloyu döndürelim?
+        """
+        if model_name == "fabia":
+            if "premium" in trim_name:
+                yield FABIA_PREMIUM_MD.encode("utf-8")
+            elif "monte" in trim_name:
+                yield FABIA_MONTE_CARLO_MD.encode("utf-8")
+            else:
+                yield "Fabia için geçerli donanımlar: Premium / Monte Carlo\n".encode("utf-8")
+
+        elif model_name == "scala":
+            if "premium" in trim_name:
+                yield SCALA_PREMIUM_MD.encode("utf-8")
+            elif "monte" in trim_name:
+                yield SCALA_MONTE_CARLO_MD.encode("utf-8")
+            elif "elite" in trim_name:
+                yield SCALA_ELITE_MD.encode("utf-8")
+            else:
+                yield "Scala için geçerli donanımlar: Premium / Monte Carlo / Elite\n".encode("utf-8")
+
+        elif model_name == "kamiq":
+            if "elite" in trim_name:
+                yield KAMIQ_ELITE_MD.encode("utf-8")
+            elif "premium" in trim_name:
+                yield KAMIQ_PREMIUM_MD.encode("utf-8")
+            elif "monte" in trim_name:
+                yield KAMIQ_MONTE_CARLO_MD.encode("utf-8")
+            else:
+                yield "Kamiq için geçerli donanımlar: Elite / Premium / Monte Carlo\n".encode("utf-8")
+
+        else:
+            yield f"'{model_name}' modeli için opsiyonel tablo bulunamadı.\n".encode("utf-8")
+
+        # State sıfırlama (bir sonrakinde tekrar sorsun diye)
+        self.user_states[user_id]["pending_opsiyonel_model"] = None
 
     def run(self, debug=True):
         self.app.run(debug=debug)
