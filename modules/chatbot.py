@@ -352,8 +352,10 @@ class ChatbotAPI:
         if "elite" in lower_corrected:
             user_trims.add("elite")
 
-        # Asistan seçimi (çoklu model -> all models bot)
+        # Asistan seçimi
         new_assistant_id = None
+
+        # Çoklu model -> "all models" asistan
         if len(user_models) >= 2 or len(user_trims) >= 2:
             new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
 
@@ -731,7 +733,7 @@ class ChatbotAPI:
             return
 
         # --------------------------------------------------------
-        # 7) OPSİYONEL DONANIMLAR (Iki aşamalı)
+        # 7) OPSİYONEL DONANIMLAR
         # --------------------------------------------------------
         user_models_in_msg = self._extract_models(user_message)
         user_trims_in_msg = set()
@@ -742,7 +744,6 @@ class ChatbotAPI:
         if "elite" in lower_msg:
             user_trims_in_msg.add("elite")
 
-        # Önceki stepte opsiyonel model tutuluyor mu?
         pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
 
         # 7A) Bu mesajda opsiyonel + tek model
@@ -757,10 +758,17 @@ class ChatbotAPI:
                 yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                 return
             else:
-                yield (
-                    f"{found_model.title()} modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                    "(Premium / Monte Carlo / Elite?)\n"
-                ).encode("utf-8")
+                # -- DEĞİŞİKLİK: Fabia için Elite'i göstermeyin --
+                if found_model.lower() == "fabia":
+                    yield (
+                        f"{found_model.title()} modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
+                        "(Premium / Monte Carlo)\n"
+                    ).encode("utf-8")
+                else:
+                    yield (
+                        f"{found_model.title()} modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
+                        "(Elite / Premium / Monte Carlo?)\n"
+                    ).encode("utf-8")
                 return
 
         # 7B) Eğer önceki adımda model set edildi ve şimdi donanım varsa
@@ -772,13 +780,21 @@ class ChatbotAPI:
                     yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
                     return
                 else:
-                    yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Örn: Premium / Monte Carlo / Elite)\n".encode("utf-8")
+                    # -- DEĞİŞİKLİK: Eğer pending_ops_model fabia ise "Elite" yazma --
+                    if pending_ops_model.lower() == "fabia":
+                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Örn: Premium / Monte Carlo)\n".encode("utf-8")
+                    else:
+                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Örn: Elite / Premium / Monte Carlo)\n".encode("utf-8")
                     return
             else:
-                yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo / Elite)\n".encode("utf-8")
+                # -- DEĞİŞİKLİK: Eğer pending_ops_model fabia ise "Elite" yazma --
+                if pending_ops_model.lower() == "fabia":
+                    yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
+                else:
+                    yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
                 return
 
-        # 7C) Birden çok model / donanım tespitini atlıyoruz (All Models vs.)
+        # 7C) Birden çok model / donanım istenmiş olabilir -> atla
         if len(user_models_in_msg) >= 2 or len(user_trims_in_msg) >= 2:
             self.logger.info("Birden çok model veya donanım tespit edildi, tablo direkt basılmıyor.")
 
@@ -955,39 +971,87 @@ class ChatbotAPI:
     def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
         """
         Hangi model + trim için hangi tabloyu döndürelim?
+        Tabloyu döndürdükten sonra, diğer donanımları da gösterip istemediğine dair link sunalım.
         """
+        table_yielded = False
+
+        # --- 1) İlgili tabloyu gösterelim ---
         if model_name == "fabia":
             if "premium" in trim_name:
                 yield FABIA_PREMIUM_MD.encode("utf-8")
+                table_yielded = True
             elif "monte" in trim_name:
                 yield FABIA_MONTE_CARLO_MD.encode("utf-8")
+                table_yielded = True
             else:
                 yield "Fabia için geçerli donanımlar: Premium / Monte Carlo\n".encode("utf-8")
 
         elif model_name == "scala":
             if "premium" in trim_name:
                 yield SCALA_PREMIUM_MD.encode("utf-8")
+                table_yielded = True
             elif "monte" in trim_name:
                 yield SCALA_MONTE_CARLO_MD.encode("utf-8")
+                table_yielded = True
             elif "elite" in trim_name:
                 yield SCALA_ELITE_MD.encode("utf-8")
+                table_yielded = True
             else:
                 yield "Scala için geçerli donanımlar: Premium / Monte Carlo / Elite\n".encode("utf-8")
 
         elif model_name == "kamiq":
             if "elite" in trim_name:
                 yield KAMIQ_ELITE_MD.encode("utf-8")
+                table_yielded = True
             elif "premium" in trim_name:
                 yield KAMIQ_PREMIUM_MD.encode("utf-8")
+                table_yielded = True
             elif "monte" in trim_name:
                 yield KAMIQ_MONTE_CARLO_MD.encode("utf-8")
+                table_yielded = True
             else:
                 yield "Kamiq için geçerli donanımlar: Elite / Premium / Monte Carlo\n".encode("utf-8")
 
         else:
             yield f"'{model_name}' modeli için opsiyonel tablo bulunamadı.\n".encode("utf-8")
 
-        # State sıfırlama (bir sonrakinde tekrar sorsun diye)
+        # --- 2) Tablo gösterildiyse, diğer donanımları önerelim ---
+        if table_yielded:
+            # Model bazında hangi donanımlar var?
+            if model_name == "fabia":
+                all_trims = ["premium", "monte carlo"]
+            elif model_name == "scala":
+                all_trims = ["elite", "premium", "monte carlo"]
+            elif model_name == "kamiq":
+                all_trims = ["elite", "premium", "monte carlo"]
+            else:
+                all_trims = []
+
+            # Şu anda gösterdiğimiz donanımı listeden çıkaralım
+            normalized_current = trim_name.lower().strip()
+            other_trims = [t for t in all_trims if t not in normalized_current]
+
+            # Eğer gerçekten diğer donanımlar varsa, onlarla ilgili linkleri ver
+            if other_trims:
+                html_snippet = """
+<br><br>
+<div style="margin-top:10px;">
+  <b>Diğer donanımlarımıza ait opsiyonel donanımları görmek için donanıma tıklamanız yeterli:</b>
+  <ul>
+"""
+                for ot in other_trims:
+                    # Örnek komut: "scala elite opsiyonel"
+                    command_text = f"{model_name} {ot} opsiyonel"
+                    display_text = ot.title()
+                    html_snippet += f"""    <li>
+      <a href="#" onclick="sendMessage('{command_text}'); return false;">{display_text}</a>
+    </li>
+"""
+
+                html_snippet += "  </ul>\n</div>\n"
+                yield html_snippet.encode("utf-8")
+
+        # State sıfırlama
         self.user_states[user_id]["pending_opsiyonel_model"] = None
 
     def run(self, debug=True):

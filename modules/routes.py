@@ -34,4 +34,3 @@ class Routes:
             except Exception as e:
                 logger.error(f"Error in /feedback: {str(e)}")
                 return jsonify({"error": "An error occurred."}), 500
-

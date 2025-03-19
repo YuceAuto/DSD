@@ -325,7 +325,6 @@ $(document).ready(function () {
         $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
       });
 
-    
   });
 });
 
@@ -368,3 +367,17 @@ $(document).on("click", ".like-button", function(event) {
     }
   }
 });
+
+/**
+ * ==============================
+ *  EKLENEN SENDMESSAGE FONKSİYONU
+ * ==============================
+ */
+function sendMessage(textToSend) {
+  // 1) Metni sohbet giriş kutusuna yerleştir
+  const inputField = $("#text");
+  inputField.val(textToSend);
+
+  // 2) Normal submit yaparak, sanki kullanıcı yazmış gibi /ask endpoint’ine gönder
+  $("#messageArea").submit();
+}

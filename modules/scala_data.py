@@ -4,40 +4,40 @@
 # anahtar kelimelerinde yakalayıp direkt bu string'leri döndürür.
 
 SCALA_ELITE_MD = """\
-| Parça Kodu | ŠKODA SCALA ELITE OPSİYONEL DONANIMLAR                                                           | MY 2024 Yetkili Satıcı Net Satış Fiyatı (TL) | MY 2024 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) |
-|------------|---------------------------------------------------------------------------------------------------|----------------------------------------------|--------------------------------------------------------------|
-| Exc        | Exclusive Renkler                                                                                | 13,889                                       | 30,000                                                       |
-| Met        | Metalik Renkler                                                                                  | 9,259                                        | 20,000                                                       |
-| P11        | Akıllı Çözümler Paketi (Bagaj bölmesindeki sabitleme montaj aparatı, vs...)                      | 11,574                                       | 25,000                                                       |
-| PJ7        | 16" Montado Aero Siyah Zeminli Alüminyum Alaşımlı Jantlar                                       | 9,259                                        | 20,000                                                       |
-| PJG        | 17" Kajam Aero Kapaklı Alüminyum Alaşım Jantlar                                                 | 13,889                                       | 30,000                                                       |
-| PJP        | 17" Stratos Alüminyum Alaşım Jantlar                                                            | 11,574                                       | 25,000                                                       |
-| WIC        | Kış Paketi (Isıtmalı Ön Koltuklar & Seviye Sensörlü 3 Litrelik Cam Suyu Deposu)                  | 16,204                                       | 35,000                                                       |
-| WIH        | Konfor Paketi (Otomatik Kararan İç Dikiz Aynası & Otomatik Katlanabilen Yan Aynalar & ... )      | 25,463                                       | 55,000                                                       |
+| Parça Kodu | ŠKODA SCALA ELITE OPSİYONEL DONANIMLAR                                                         | Yetkili Satıcı Net Satış Fiyatı (TL)         | Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) |
+|------------|------------------------------------------------------------------------------------------------|----------------------------------------------|--------------------------------------------------------------|
+| Exc        | Exclusive Renkler                                                                              | 13,889                                       | 30,000                                                       |
+| Met        | Metalik Renkler                                                                                | 9,259                                        | 20,000                                                       |
+| P11        | Akıllı Çözümler Paketi (Bagaj bölmesindeki sabitleme montaj aparatı, vs...)                    | 11,574                                       | 25,000                                                       |
+| PJ7        | 16" Montado Aero Siyah Zeminli Alüminyum Alaşımlı Jantlar                                      | 9,259                                        | 20,000                                                       |
+| PJG        | 17" Kajam Aero Kapaklı Alüminyum Alaşım Jantlar                                                | 13,889                                       | 30,000                                                       |
+| PJP        | 17" Stratos Alüminyum Alaşım Jantlar                                                           | 11,574                                       | 25,000                                                       |
+| WIC        | Kış Paketi (Isıtmalı Ön Koltuklar & Seviye Sensörlü 3 Litrelik Cam Suyu Deposu)                | 16,204                                       | 35,000                                                       |
+| WIH        | Konfor Paketi (Otomatik Kararan İç Dikiz Aynası & Otomatik Katlanabilen Yan Aynalar & ... )    | 25,463                                       | 55,000                                                       |
 """
 
 SCALA_PREMIUM_MD = """\
-| Parça Kodu | ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR                                                         | MY 2024 Yetkili Satıcı Net Satış Fiyatı (TL) | MY 2024 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) |
-|------------|-------------------------------------------------------------------------------------------------|----------------------------------------------|--------------------------------------------------------------|
+| Parça Kodu | ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR                                                       | Yetkili Satıcı Net Satış Fiyatı (TL)         | Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) |
+|------------|------------------------------------------------------------------------------------------------|----------------------------------------------|--------------------------------------------------------------|
 | Exc        | Exclusive Renkler                                                                              | 13,889                                       | 30,000                                                       |
 | Met        | Metalik Renkler                                                                                | 9,259                                        | 20,000                                                       |
 | P13        | Akıllı Çözümler Paketi (... )                                                                  | 11,574                                       | 25,000                                                       |
 | PIA        | Sürüş Asistan Paketi (Akıllı Adaptif Hız Sabitleyici & Şeritte Tutma Asistanı)                 | 27,778                                       | 60,000                                                       |
 | PJ7        | 16" Montado Siyah Zeminli Aero Kapaklı Alüminyum Alaşımlı Jantlar                              | 9,259                                        | 20,000                                                       |
-| PJG        | 17" Kajam Aero Gümüş Zeminli Alüminyum Alaşım Jantlar                                         | 13,889                                       | 30,000                                                       |
+| PJG        | 17" Kajam Aero Gümüş Zeminli Alüminyum Alaşım Jantlar                                          | 13,889                                       | 30,000                                                       |
 | PJN        | 18" Fornax Alüminyum Alaşım Jantlar                                                            | 11,574                                       | 25,000                                                       |
 | PLG        | 2 kollu, ısıtmalı, deri direksiyon simidi (F1 şanzıman ile)                                    | 3,472                                        | 7,500                                                        |
 | WI2        | Kış Paketi Exclusive (Isıtmalı Ön Koltuklar & Seviye Sensörlü 3 Litrelik Cam Suyu Deposu)      | 16,204                                       | 35,000                                                       |
 | WIN        | Teknoloji Plus Paketi (Elektrikli Bagaj Kapağı & Sanal Pedal & 10.25" Dijital Gösterge Paneli) | 16,204                                       | 35,000                                                       |
 | WIV        | Panoramik Cam Tavan                                                                            | 32,407                                       | 70,000                                                       |
 | WIX        | Sürücü Diz Hava Yastığı & Arka Yan Hava Yastıkları                                             | 16,204                                       | 35,000                                                       |
-| WV7        | Suite Black Paketi (Süet/Alcantara Döşeme & ... )                                             | 46,296                                       | 100,000                                                      |
-| WY1        | FULL LED Matrix Ön Far Grubu                                                                    | 30,093                                       | 65,000                                                       |
+| WV7        | Suite Black Paketi (Süet/Alcantara Döşeme & ... )                                              | 46,296                                       | 100,000                                                      |
+| WY1        | FULL LED Matrix Ön Far Grubu                                                                   | 30,093                                       | 65,000                                                       |
 """
 
 SCALA_MONTE_CARLO_MD = """\
-| Parça Kodu | ŠKODA SCALA MONTE CARLO OPSİYONEL DONANIMLAR                                                     | MY 2024 Yetkili Satıcı Net Satış Fiyatı (TL) | MY 2024 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) |
-|------------|-------------------------------------------------------------------------------------------------|----------------------------------------------|--------------------------------------------------------------|
+| Parça Kodu | ŠKODA SCALA MONTE CARLO OPSİYONEL DONANIMLAR                                                   | Yetkili Satıcı Net Satış Fiyatı (TL)         | Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) |
+|------------|------------------------------------------------------------------------------------------------|----------------------------------------------|--------------------------------------------------------------|
 | Exc        | Exclusive Renkler                                                                              | 13,889                                       | 30,000                                                       |
 | Met        | Metalik Renkler                                                                                | 9,259                                        | 20,000                                                       |
 | P13        | Akıllı Çözümler Paketi (... )                                                                  | 9,259                                        | 20,000                                                       |
