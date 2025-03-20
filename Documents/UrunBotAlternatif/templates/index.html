@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DSD2</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/fotograf.png') }}">
+
+  <!-- Bootstrap -->
+  <link rel="stylesheet"
+        href="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css">
+  <link rel="stylesheet"
+        href="https://use.fontawesome.com/releases/v5.5.0/css/all.css"
+        integrity="sha384-B4dIHKNBt8Bc12p+WXckhzcICo0wtJAoU8YZTY5qE0Id1GSseTk6S+L3BlXeVIU"
+        crossorigin="anonymous">
+
+  <!-- style.css -->
+  <link rel="stylesheet"
+        type="text/css"
+        href="{{ url_for('static', filename='style.css')}}" />
+</head>
+
+<body>
+  <div class="container-fluid h-100">
+    <div class="row justify-content-center h-100">
+      <div class="chat">
+        <div class="card">
+          <div class="card-header msg_head">
+            <div class="d-flex bd-highlight">
+              <div class="img_cont">
+                <img src="{{ url_for('static', filename='images/fotograf.png') }}"
+                     class="rounded-circle user_img"
+                     alt="bot image">
+                <span class="online_icon"></span>
+              </div>
+              <div class="user_info">
+                <span>DSD2</span>
+                <p>Yüce Auto A.Ş.</p>
+              </div>
+            </div>
+          </div>
+          <div id="messageFormeight" class="card-body msg_card_body">
+            <!-- Mesajlar burada -->
+          </div>
+
+          <div class="card-footer">
+            <form id="messageArea" class="input-group">
+              <input type="text"
+                     id="text"
+                     name="msg"
+                     placeholder="Taleplerinizi bekliyorum..."
+                     autocomplete="off"
+                     class="form-control type_msg" />
+              <div class="input-group-append">
+                <button type="submit" class="input-group-text send_btn">
+                  <i class="fas fa-location-arrow"></i>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div><!-- .card -->
+      </div><!-- .chat -->
+    </div><!-- .row -->
+  </div><!-- .container-fluid -->
+
+  <!-- Modal Görsel Büyütme -->
+  <div class="modal fade" id="imageModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+      <div class="modal-content" style="background: none; border: none;">
+        <div class="modal-body text-center" style="position: relative;">
+          <button type="button"
+                  class="close"
+                  data-dismiss="modal"
+                  aria-label="Close"
+                  style="position: absolute; right: 15px; top: 15px; color: #fff; opacity: 1;">
+            <span aria-hidden="true">&times;</span>
+          </button>
+          <img id="popupImage"
+               src=""
+               alt="Büyük Görsel"
+               style="max-width: 100%; height: auto; border-radius: 8px;" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- jQuery / Bootstrap JS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
+
+  <!-- script.js -->
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

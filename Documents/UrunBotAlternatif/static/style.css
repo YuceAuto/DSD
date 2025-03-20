@@ -1,0 +1,207 @@
+body, html {
+    margin: 0;
+    padding: 0;
+    background: #6F797A;
+    background: -webkit-linear-gradient(to right, #0E3A2F, #78FAAE);
+    background: linear-gradient(to right, #0E3A2F, #78FAAE);
+  }
+  
+  .container-fluid {
+    margin: 0 auto;
+    padding: 0;
+  }
+  
+  .row.justify-content-center.h-100 {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 20px auto;
+  }
+  
+  .chat {
+    width: 1400px;
+    height: 1500px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 15px;
+  }
+  
+  .card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border-radius: 15px !important;
+    background-color: #000000 !important;
+  }
+  
+  .card-header.msg_head {
+    display: flex;
+    align-items: center;
+    background-color: #000;
+    color: #FFFFFF;
+    border-radius: 15px 15px 0 0 !important;
+    border-bottom: 0 !important;
+  }
+  
+  .card-footer {
+    border-radius: 0 0 15px 15px !important;
+    border-top: 0 !important;
+    display: flex;
+  }
+  
+  .msg_card_body {
+    flex: 1;
+    overflow-y: auto;
+  }
+  
+  .user_img {
+    height: 70px;
+    width: 70px;
+    border: 1.5px solid #f5f6fa;
+  }
+  .user_img_msg {
+    height: 40px;
+    width: 40px;
+    border: 1.5px solid #f5f6fa;
+  }
+  .img_cont {
+    position: relative;
+    height: 70px;
+    width: 70px;
+  }
+  .online_icon {
+    position: absolute;
+    height: 15px;
+    width: 15px;
+    background-color: #4cd137;
+    border-radius: 50%;
+    bottom: 0.2em;
+    right: 0.4em;
+    border: 1.5px solid white;
+  }
+  
+  .user_info {
+    margin-top: auto;
+    margin-bottom: auto;
+    margin-left: 15px;
+  }
+  .user_info span {
+    font-size: 20px;
+    color: white;
+  }
+  .user_info p {
+    font-size: 10px;
+    color: rgba(255,255,255,0.6);
+  }
+  
+  .type_msg {
+    background-color: #394748 !important;
+    border: 0 !important;
+    color: #78FAAE !important;
+    height: 60px !important;
+    overflow-y: auto;
+    padding-right: 0;
+  }
+  .type_msg:focus {
+    box-shadow: none !important;
+    outline: 0px !important;
+  }
+  
+  .send_btn {
+    background-color: #0E3A2F;
+    border: 2px solid #0E3A2F;
+    color: white;
+    cursor: pointer;
+    width: 60px;
+    height: 60px;
+    border-radius: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border 0.3s;
+  }
+  .send_btn:active {
+    border: 2px solid black;
+  }
+  
+  .msg_cotainer {
+    margin-top: auto;
+    margin-bottom: auto;
+    margin-left: 10px;
+    border-radius: 25px;
+    background-color: rgb(255, 255, 255);
+    padding: 10px;
+    position: relative;
+    color: #000;
+  }
+  .msg_cotainer_send {
+    margin-top: auto;
+    margin-bottom: auto;
+    margin-right: 10px;
+    border-radius: 25px;
+    background-color: #58cc71;
+    padding: 10px;
+    position: relative;
+    color: #000;
+  }
+  
+  .msg_time {
+    position: absolute;
+    left: 0;
+    bottom: -15px;
+    color: rgba(255,255,255,0.5);
+    font-size: 10px;
+  }
+  .msg_time_send {
+    position: absolute;
+    right: 0;
+    bottom: -15px;
+    color: rgba(255,255,255,0.5);
+    font-size: 10px;
+  }
+  
+  .my-blue-table {
+    background-color: rgb(255, 255, 255) !important;
+    color: #000 !important;
+  }
+  
+  .notification-text {
+    background-color: #dff0d8;
+    color: #3c763d;
+    height: 30px;
+    line-height: 30px;
+    text-align: center;
+    font-family: Arial, sans-serif;
+    font-size: 16px;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+    width: 100%;
+  }
+  
+  .like-button {
+    background-color: #0E3A2F;
+    color: white;
+    border: 1px solid #0E3A2F;
+    border-radius: 4px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 14px;
+    margin-left: 6px;
+  }
+  .like-button:hover {
+    background-color: #078862;
+  }
+  .like-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  
+  .modal-dialog.modal-lg {
+    max-width: 800px;
+  }
+  .modal-backdrop.show {
+    background-color: rgba(0, 0, 0, 0.7) !important; 
+    opacity: 1 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
