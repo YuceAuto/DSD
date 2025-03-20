@@ -507,65 +507,74 @@ class ChatbotAPI:
         # --------------------------------------------------------
         # 2) Dış görsel istekleri
         # --------------------------------------------------------
-        if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
-            if not assistant_id or not assistant_name:
-                save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
-                yield "Hangi modelin dış görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
+        # Burada "dış" + görsel isteklerini kontrol etmek istiyorsanız is_image_request ile birleştirebilirsiniz.
+        if any(kw in lower_msg for kw in ["dış ", " dış", "dıs", "dis", "diş"]):
+            if self.utils.is_image_request(user_message):
+                if not assistant_id or not assistant_name:
+                    save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
+                    yield "Hangi modelin dış görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
+                    return
+
+                trim_name = self.user_states[user_id]["current_trim"]
+                if "premium" in lower_msg:
+                    trim_name = "premium"
+                elif "monte carlo" in lower_msg:
+                    trim_name = "monte carlo"
+                elif "elite" in lower_msg:
+                    trim_name = "elite"
+
+                self.user_states[user_id]["current_trim"] = trim_name
+
+                model_title = assistant_name.title()
+                if trim_name:
+                    final_title = f"{model_title} {trim_name.title()} Dış Görselleri"
+                else:
+                    final_title = f"{model_title} Dış Görselleri"
+
+                save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
+                yield f"<b>{final_title}</b><br>".encode("utf-8")
+
+                # Renk görselleri
+                all_colors = self.config.KNOWN_COLORS
+                found_color_images = []
+                for clr in all_colors:
+                    filter_str = f"{assistant_name} {clr}"
+                    results = self.image_manager.filter_images_multi_keywords(filter_str)
+                    found_color_images.extend(results)
+
+                unique_color_images = list(set(found_color_images))
+                if unique_color_images:
+                    yield "<h4>Renk Görselleri</h4>".encode("utf-8")
+                    yield from self._render_side_by_side_images(unique_color_images, context="color")
+                    yield "<br>".encode("utf-8")
+                else:
+                    yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
+
+                # Jant görselleri
+                if trim_name:
+                    filter_jant = f"{assistant_name} {trim_name} jant"
+                else:
+                    filter_jant = f"{assistant_name} jant"
+
+                jant_images = self.image_manager.filter_images_multi_keywords(filter_jant)
+                if jant_images:
+                    yield "<h4>Jant Görselleri (Standart + Opsiyonel)</h4>".encode("utf-8")
+                    yield from self._render_side_by_side_images(jant_images, context="jant")
+                else:
+                    yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
                 return
-
-            trim_name = self.user_states[user_id]["current_trim"]
-            if "premium" in lower_msg:
-                trim_name = "premium"
-            elif "monte carlo" in lower_msg:
-                trim_name = "monte carlo"
-            elif "elite" in lower_msg:
-                trim_name = "elite"
-
-            self.user_states[user_id]["current_trim"] = trim_name
-
-            model_title = assistant_name.title()
-            if trim_name:
-                final_title = f"{model_title} {trim_name.title()} Dış Görselleri"
             else:
-                final_title = f"{model_title} Dış Görselleri"
-
-            save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
-            yield f"<b>{final_title}</b><br>".encode("utf-8")
-
-            # Renk görselleri
-            all_colors = self.config.KNOWN_COLORS
-            found_color_images = []
-            for clr in all_colors:
-                filter_str = f"{assistant_name} {clr}"
-                results = self.image_manager.filter_images_multi_keywords(filter_str)
-                found_color_images.extend(results)
-
-            unique_color_images = list(set(found_color_images))
-            if unique_color_images:
-                yield "<h4>Renk Görselleri</h4>".encode("utf-8")
-                yield from self._render_side_by_side_images(unique_color_images, context="color")
-                yield "<br>".encode("utf-8")
-            else:
-                yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
-
-            # Jant görselleri
-            if trim_name:
-                filter_jant = f"{assistant_name} {trim_name} jant"
-            else:
-                filter_jant = f"{assistant_name} jant"
-
-            jant_images = self.image_manager.filter_images_multi_keywords(filter_jant)
-            if jant_images:
-                yield "<h4>Jant Görselleri (Standart + Opsiyonel)</h4>".encode("utf-8")
-                yield from self._render_side_by_side_images(jant_images, context="jant")
-            else:
-                yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
-            return
+                # Kullanıcı "dış" dedi ama görsel istemediyse
+                # Normal metin akışı ya da tablo akışı olabilir.
+                pass
 
         # --------------------------------------------------------
-        # 3) İç görsel istekleri
+        # 3) İç görsel istekleri (GÜNCELLENDİ)
         # --------------------------------------------------------
-        if any(kw in lower_msg for kw in ["iç", "ic"]):
+        # Artık iç görselleri sadece "iç" KELİME sınırında geçiyorsa
+        # ve aynı zamanda resim/görsel/fotoğraf isteniyorsa tetikleyelim
+        pattern_ic = r"\b(iç|ic)\b"
+        if re.search(pattern_ic, lower_msg) and self.utils.is_image_request(user_message):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
                 yield "Hangi modelin iç görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
@@ -615,6 +624,10 @@ class ChatbotAPI:
             if not any_image_found:
                 yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
             return
+        else:
+            # Eğer “iç” kelimesi geçse bile resim/görsel/fotoğraf istenmiyorsa 
+            # tablo/metin akışına devam edin
+            pass
 
         # --------------------------------------------------------
         # 4) "Evet" kontrolü (örnek: renk seçimi)
