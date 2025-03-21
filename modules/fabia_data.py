@@ -11,7 +11,7 @@ FABIA_PREMIUM_MD = """\
 | PJF        | 18" Libra Siyah Zeminli Alüminyum Alaşımlı Jantlar                                            | 23,148                                       | 50,000                                                       |
 | PLC        | F1 Şanzıman                                                                                   | 4,630                                        | 10,000                                                       |
 | PU2        | Şarj Paketi (5 adet USB-C Girişi + Kablosuz Şarj Ünitesi)                                     | 4,630                                        | 10,000                                                       |
-| PUF        | Sürüş Asistan Paketi Exclusive                                                                | 27,778                                       | 60,000                                                       |
+| PUF        | Sürüş Asistan Paketi Exclusive (Akıllı Adaptif Hız Sabitleyici & Şerit Değiştirme Asistanı & Şeritte Tutma Asistanı)                                                                | 27,778                                       | 60,000                                                       |
 | PUN        | Görüş Paketi (Uzun Far Asistanı & AFS Özellikli Full LED Ön Far Grubu)                        | 27,778                                       | 60,000                                                       |
 | WQ8        | Dynamic İç Döşeme Paketi                                                                      | 16,204                                       | 35,000                                                       |
 """
@@ -24,7 +24,7 @@ FABIA_MONTE_CARLO_MD = """\
 | PE4        | Sürücü Diz Hava Yastığı & Arka Yan Hava Yastıkları                                           | 16,204                                       | 35,000                                                       |
 | PJF        | 18" Libra Siyah Zeminli Alüminyum Alaşım Jantlar                                             | 11,574                                       | 25,000                                                       |
 | PLM        | 3 Kollu, Fonksiyonel, Isıtmalı Spor Deri Direksiyon Simidi (F1 Şanzıman ile)                 | 3,531                                        | 7,500                                                        |
-| PU3        | Sürüş Asistan Paketi Exclusive                                                               | 27,778                                       | 60,000                                                       |
+| PU3        | Sürüş Asistan Paketi Exclusive (Akıllı Adaptif Hız Sabitleyici & Şerit Değiştirme Asistanı & Şeritte Tutma Asistanı)                                                              | 27,778                                       | 60,000                                                       |
 | PUC        | Otomatik Park Pilotu                                                                         | 9,259                                        | 20,000                                                       |
-| PUH        | Kış Paketi Exclusive (Isıtmalı Ön Koltuklar & Seviye Sensörlü 3 Litrelik Cam Suyu Deposu)    | 20,833                                       | 45,000                                                       |
+| PUH        | Kış Paketi Exclusive (Isıtmalı Ön Koltuklar & Seviye Sensörlü 3 Litrelik Cam Suyu Deposu) (PLM - Isıtmalı Deri Direksiyon Simidi ile birlikte alınmalıdır.)    | 20,833                                       | 45,000                                                       |
 """
