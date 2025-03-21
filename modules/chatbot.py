@@ -8,6 +8,7 @@ import openai
 import difflib
 import queue
 import threading
+import random  # YENİ EKLENDİ
 
 from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
@@ -215,8 +216,6 @@ class ChatbotAPI:
     def _assistant_id_from_model_name(self, model_name: str):
         """
         Model adına göre asistan ID döndürür.
-        Örneğin 'fabia' -> asst_yeDl2aiHy0uoGGjHRmr2dlYB
-        (Sizin config'inize göre düzenlenebilir)
         """
         model_name = model_name.lower()
         for asst_id, keywords in self.ASSISTANT_CONFIG.items():
@@ -256,13 +255,7 @@ class ChatbotAPI:
 
         return None, None
 
-    def _find_fuzzy_cached_answer(
-        self,
-        user_id: str,
-        new_question: str,
-        assistant_id: str,
-        threshold=0.8
-    ):
+    def _find_fuzzy_cached_answer(self, user_id: str, new_question: str, assistant_id: str, threshold=0.8):
         """
         Fuzzy cache araması (tek asistan için).
         """
@@ -311,7 +304,7 @@ class ChatbotAPI:
         if not user_message:
             return jsonify({"response": "Please enter a question."})
 
-        # Session zaman damgası (opsiyonel)
+        # Session zaman damgası
         if 'last_activity' not in session:
             session['last_activity'] = time.time()
         else:
@@ -353,14 +346,24 @@ class ChatbotAPI:
             self.user_states[user_id] = {}
             self.user_states[user_id]["threads"] = {}
 
+        # YENİ EKLENEN KISIM: Asistan belirleme mantığı
         if new_assistant_id:
             assistant_id = new_assistant_id
         else:
             assistant_id = old_assistant_id
 
+        # EĞER HALA ASİSTAN BULUNAMADIYSA --> EN AZ MEŞGUL OLAN ASİSTANA RASTGELE YÖNLENDİR
+        if not assistant_id:
+            assistant_id = self._pick_least_busy_assistant()  # <-- En az meşgul asistan seç
+            if assistant_id:
+                self.logger.info(f"Kullanıcı için rastgele en az meşgul asistan atandı: {assistant_id}")
+            else:
+                # Hiç asistan tanımlı değilse fallback
+                save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
+                return self.app.response_class("Uygun bir asistan bulunamadı.\n", mimetype="text/plain")
+
         self.user_states[user_id]["assistant_id"] = assistant_id
 
-        # Görsel isteği mi?
         is_image_req = self.utils.is_image_request(user_message)
 
         # Görsel isteklerinde cache kullanma
@@ -407,6 +410,35 @@ class ChatbotAPI:
                 self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, final_aid)
 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
+
+    # YENİ: "En az meşgul asistan" seçme fonksiyonu
+    def _pick_least_busy_assistant(self) -> str:
+        """
+        Şu anki user_states'e göre her asistanın kaç adet aktif thread'e sahip olduğunu
+        sayar ve en düşük değere sahip asistan(lar) arasından rastgele birini döndürür.
+        """
+        # Eğer hiç asistan yoksa None döner
+        if not self.ASSISTANT_CONFIG:
+            return None
+
+        assistant_thread_counts = {}
+        for asst_id in self.ASSISTANT_CONFIG.keys():
+            count = 0
+            # Tüm kullanıcıların threadlerini sayıyoruz
+            for uid, state_dict in self.user_states.items():
+                threads = state_dict.get("threads", {})
+                if asst_id in threads:
+                    count += 1
+            assistant_thread_counts[asst_id] = count
+
+        min_count = min(assistant_thread_counts.values())  # en az meşguliyet sayısı
+        # Bu değere sahip asistanları filtrele
+        candidates = [aid for aid, c in assistant_thread_counts.items() if c == min_count]
+        if not candidates:
+            return None
+
+        # Rastgele bir asistan seç
+        return random.choice(candidates)
 
     def _correct_typos(self, user_message):
         """
@@ -632,42 +664,32 @@ class ChatbotAPI:
 
         pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
 
-        # Yeni eklenen fallback mantığı:
         if "opsiyonel" in lower_msg:
             found_model = None
-
-            # Eğer mesajda tam 1 model varsa doğrudan onu al
             if len(user_models_in_msg) == 1:
                 found_model = list(user_models_in_msg)[0]
-            # Hiç model adı geçmemiş ama asistan belli ise, oradaki model ismini fallback al
             elif len(user_models_in_msg) == 0 and assistant_id:
                 fallback_model = self.ASSISTANT_NAME_MAP.get(assistant_id, "").lower()
                 if fallback_model:
                     found_model = fallback_model
 
-            # Hâlâ bulunamadıysa kullanıcıya soralım
             if not found_model:
                 yield "Hangi modelin opsiyonel donanımlarını görmek istersiniz?".encode("utf-8")
                 return
             else:
-                # Model belirlendiyse state'e yaz
                 self.user_states[user_id]["pending_opsiyonel_model"] = found_model
-
-                # Kullanıcı trim belirttiyse (tek trim)
                 if len(user_trims_in_msg) == 1:
                     found_trim = list(user_trims_in_msg)[0]
                     save_to_db(user_id, user_message, f"{found_model.title()} {found_trim.title()} opsiyonel tablosu.")
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
-                    # Trim soralım
                     if found_model == "fabia":
                         yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
                     else:
                         yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
                     return
 
-        # 5B) Eğer önceki adımda model set edildi ve şimdi donanım varsa
         if pending_ops_model:
             if user_trims_in_msg:
                 if len(user_trims_in_msg) == 1:
@@ -769,7 +791,6 @@ class ChatbotAPI:
             yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
             return
 
-        # Gruplama örneği: Monte Carlo Standart / Premium Opsiyonel / Diğer
         mc_std = [
             img for img in images
             if "monte" in img.lower()
@@ -783,7 +804,6 @@ class ChatbotAPI:
         ]
         others = [img for img in images if img not in mc_std and img not in pm_ops]
 
-        # Solda Monte Carlo Standart
         yield """
 <div style="display: flex; justify-content: space-between; gap: 60px;">
   <div style="flex:1;">
@@ -810,7 +830,6 @@ class ChatbotAPI:
 
         yield "</div>".encode("utf-8")
 
-        # Sağda Premium Opsiyonel
         yield """
   <div style="flex:1;">
 """.encode("utf-8")
@@ -839,7 +858,6 @@ class ChatbotAPI:
 </div>
 """.encode("utf-8")
 
-        # Diğer görseller
         if others:
             yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
             yield '<div style="display: flex; flex-wrap: wrap; gap: 20px;">'.encode("utf-8")
@@ -863,7 +881,6 @@ class ChatbotAPI:
         """
         table_yielded = False
 
-        # --- 1) İlgili tabloyu göster ---
         if model_name == "fabia":
             if "premium" in trim_name:
                 yield FABIA_PREMIUM_MD.encode("utf-8")
@@ -902,7 +919,6 @@ class ChatbotAPI:
         else:
             yield f"'{model_name}' modeli için opsiyonel tablo bulunamadı.\n".encode("utf-8")
 
-        # --- 2) Tablo gösterildiyse, diğer donanımları öner ---
         if table_yielded:
             if model_name == "fabia":
                 all_trims = ["premium", "monte carlo"]
@@ -934,7 +950,6 @@ class ChatbotAPI:
                 html_snippet += "  </ul>\n</div>\n"
                 yield html_snippet.encode("utf-8")
 
-        # State sıfırla
         self.user_states[user_id]["pending_opsiyonel_model"] = None
 
     def run(self, debug=True):
