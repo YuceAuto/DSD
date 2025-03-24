@@ -2,7 +2,7 @@ import os
 import sys
 from flask import Flask
 from flask_cors import CORS
-from modules.chatbot import ChatbotAPI
+from modules.chat.chatbot import ChatbotAPI
 from modules.utils import Utils
 
 def create_app():

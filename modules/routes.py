@@ -1,5 +1,5 @@
 from flask import jsonify, request, render_template
-from modules.chatbot import ChatbotAPI
+from modules.chat.chatbot import ChatbotAPI
 from modules.utils import Utils
 
 
