@@ -28,7 +28,7 @@ body, html {
 /* Chat kutusu sabit boyut */
 .chat {
   width: 1400px;     /* Sabit genişlik (değiştirebilirsiniz) */
-  height: 1100px;     /* Sabit yükseklik (değiştirebilirsiniz) */
+  height: 1400px;     /* Sabit yükseklik (değiştirebilirsiniz) */
   display: flex;
   flex-direction: column;
   border-radius: 15px;
