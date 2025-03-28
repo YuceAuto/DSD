@@ -85,3 +85,4 @@ def send_email(subject, body, to_email):
     mail.To = to_email
     mail.Send()
     logging.info("[MAIL] Email sent successfully")
+
