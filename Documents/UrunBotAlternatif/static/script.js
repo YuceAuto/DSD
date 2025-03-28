@@ -1,8 +1,8 @@
 // ----------------------------------------------------
-// script.js (Tek seferde yanıt alacak şekilde düzenlendi)
+// script.js (Gerçek zamanlı "stream" yanıt almak için düzenlendi)
 // ----------------------------------------------------
 
-// 1) Tarayıcıda kalıcı user_id
+// 1) Kalıcı user_id sakla
 function getOrCreateUserId() {
   let existing = localStorage.getItem("skodaBotUserId");
   if (existing) {
@@ -24,7 +24,7 @@ function getOrCreateUserId() {
   return newId;
 }
 
-// 2) Modal büyük görsel
+// 2) Modal büyük görsel gösterme
 function showPopupImage(imgUrl) {
   $("#popupImage").attr("src", imgUrl);
 }
@@ -69,20 +69,22 @@ function markdownTableToHTML(mdTable) {
 
 // Metni tablo/normal parçalara bölme (basit)
 function splitNonTableTextIntoBubbles(fullText) {
-  return [ fullText ]; // Tek bubble da yapabilirsiniz
+  // İsterseniz daha akıllı bir parçalayıcı yapabilirsiniz.
+  // Burada sadece tek bir parça dönüyoruz.
+  return [ fullText ];
 }
 
-// Bot cevabını baloncuk olarak ekrana basma
+// Gelen bot mesajını baloncuklar olarak ekrana basma
 function processBotMessage(fullText, uniqueId) {
-  // "yazıyor" placeholder'ını kaldıralım
+  // "Yazıyor..." placeholder'ını kaldıralım
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
-  // Tabloları bul
+  // Tabloları bulmak için regex
   let normalizedText = fullText
     .replace(/\\n/g, "\n")
     .replace(/<br\s*\/?>/gi, "\n");
 
-  // CONVERSATION_ID yakala (opsiyonel)
+  // CONVERSATION_ID yakala
   let conversationId = null;
   const convMatch = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
   if (convMatch) {
@@ -90,7 +92,6 @@ function processBotMessage(fullText, uniqueId) {
     normalizedText = normalizedText.replace(convMatch[0], "");
   }
 
-  // Tablo regex
   const tableRegexGlobal = /(\|.*?\|\n\|.*?\|\n[\s\S]+?)(?=\n\n|$)/g;
   let newBubbles = [];
   let lastIndex = 0;
@@ -106,7 +107,7 @@ function processBotMessage(fullText, uniqueId) {
     newBubbles.push({ type: 'table', content: tableMarkdown });
     lastIndex = tableRegexGlobal.lastIndex;
   }
-  // Kalan metin
+  // Son kısım
   if (lastIndex < normalizedText.length) {
     const textAfter = normalizedText.substring(lastIndex).trim();
     if (textAfter) {
@@ -115,7 +116,7 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // Her bubble
+  // Her bubble ayrı balon olarak ekleyelim
   newBubbles.forEach((bubble, index) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -126,7 +127,7 @@ function processBotMessage(fullText, uniqueId) {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
-    // Beğen butonu (son bubble'da)
+    // Beğen butonunu sadece son bubble'a ekliyoruz (opsiyonel)
     const isLastBubble = (index === newBubbles.length - 1);
     let likeButtonHtml = "";
     if (isLastBubble && conversationId) {
@@ -157,6 +158,7 @@ function processBotMessage(fullText, uniqueId) {
 $(document).ready(function () {
   const localUserId = getOrCreateUserId();
 
+  // Form submit
   $("#messageArea").on("submit", function (e) {
     e.preventDefault();
     const inputField = $("#text");
@@ -165,7 +167,7 @@ $(document).ready(function () {
 
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // Kullanıcı balonu
+    // Kullanıcı mesaj balonu
     const userHtml = `
       <div class="d-flex justify-content-end mb-4">
         <div class="msg_cotainer_send">
@@ -180,7 +182,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
-    // Bot "typing" placeholder
+    // Bot "yazıyor" placeholder
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
@@ -196,7 +198,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
-    // /ask endpoint, tek seferde text
+    // Artık stream ile okuma:
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -205,22 +207,48 @@ $(document).ready(function () {
         user_id: localUserId
       })
     })
-      .then(response => {
-        if (!response.ok) {
-          throw new Error("Sunucu hatası: " + response.status);
-        }
-        return response.text(); // <-- parça parça yerine TEK SEFERDE text
-      })
-      .then(fullText => {
-        // "yazıyor" placeholder'ı sil, gelen cevabı işleyerek ekrana bas
-        processBotMessage(fullText, uniqueId);
-      })
-      .catch(err => {
-        console.error("Hata:", err);
-        $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
-      });
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Sunucu hatası: " + response.status);
+      }
+      return response.body; // <-- body: ReadableStream
+    })
+    .then(stream => {
+      // stream'i parça parça okuyacağız
+      const reader = stream.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let partialText = "";
 
-    // İsteğe bağlı: 9 dakika sonra bildirim
+      function readChunk() {
+        return reader.read().then(({ done, value }) => {
+          if (done) {
+            // Stream tamamlandı
+            // Tüm metni tablo vs. ayrıştırmak için processBotMessage'a gönderelim
+            processBotMessage(partialText, uniqueId);
+            return;
+          }
+          // Akış devam
+          const chunkStr = decoder.decode(value, { stream: true });
+          partialText += chunkStr;
+
+          // İsterseniz her chunk geldiğinde placeholder'a ekleyebilirsiniz:
+          // $("#botMessageContent-"+uniqueId).append(document.createTextNode(chunkStr));
+          // Veya alt satır:
+          document.getElementById(`botMessageContent-${uniqueId}`).textContent += chunkStr;
+
+          $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
+
+          return readChunk(); // döngü
+        });
+      }
+      return readChunk();
+    })
+    .catch(err => {
+      console.error("Hata:", err);
+      $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
+    });
+
+    // Oturum bildirimi örneği (9 dakika sonra)
     setTimeout(() => {
       const barEl = document.getElementById('notificationBar');
       if (barEl) {
@@ -234,11 +262,11 @@ $(document).ready(function () {
 $(document).on("click", ".like-button", function() {
   const $btn = $(this);
   if ($btn.hasClass("clicked")) {
-    // Geri alma
+    // Geri al
     $btn.removeClass("clicked");
     $btn.text("Beğen");
   } else {
-    // ilk defa
+    // ilk kez beğen
     $btn.addClass("clicked");
     $btn.text("Beğenildi");
     const convId = $btn.data("conversation-id");
