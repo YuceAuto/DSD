@@ -1,25 +1,22 @@
 // ----------------------------------------------------
-// script.js (Gerçek zamanlı stream + tablo işleme)
-// + Local Storage user_id
-// + Görsel popup fonksiyonu
-// + Son baloncukta "Beğen" butonu
-// + "Beğen" POST isteği
+// script.js (Tek seferde yanıt alacak şekilde düzenlendi)
 // ----------------------------------------------------
 
-// 1) Tarayıcıda kalıcı (localStorage) benzersiz kullanıcı ID oluşturma
+// 1) Tarayıcıda kalıcı user_id
 function getOrCreateUserId() {
   let existing = localStorage.getItem("skodaBotUserId");
   if (existing) {
     return existing;
   }
-  // Yeni bir UUID üret
+  // Yeni ID:
   let newId;
   if (window.crypto && crypto.randomUUID) {
     newId = crypto.randomUUID();
   } else {
+    // Fallback random
     newId = 'xxxx-4xxx-yxxx-xxxx'.replace(/[xy]/g, function (c) {
       let r = Math.random() * 16 | 0;
-      let v = c === 'x' ? r : (r & 0x3 | 0x8);
+      let v = (c === 'x') ? r : (r & 0x3 | 0x8);
       return v.toString(16);
     });
   }
@@ -27,22 +24,12 @@ function getOrCreateUserId() {
   return newId;
 }
 
-// 2) Görsele tıklanınca modal içinde açmayı sağlayan fonksiyon
+// 2) Modal büyük görsel
 function showPopupImage(imgUrl) {
   $("#popupImage").attr("src", imgUrl);
 }
 
-// Belirli özel pattern'leri yakalamak için örnek fonksiyon
-function extractTextContentBlock(fullText) {
-  const regex = /\[TextContentBlock\(.*?value=(['"])([\s\S]*?)\1.*?\)\]/;
-  const match = regex.exec(fullText);
-  if (match && match[2]) {
-    return match[2];
-  }
-  return null;
-}
-
-// Basit bir Markdown tablo -> HTML dönüşüm örneği
+// Basit tablo dönüştürme
 function markdownTableToHTML(mdTable) {
   const lines = mdTable.trim().split("\n").map(line => line.trim());
   if (lines.length < 2) {
@@ -80,99 +67,28 @@ function markdownTableToHTML(mdTable) {
   return html;
 }
 
-// Metni, tablolar vs. yoksa normal şekilde parçalara bölmek
+// Metni tablo/normal parçalara bölme (basit)
 function splitNonTableTextIntoBubbles(fullText) {
-  const trimmedText = fullText.trim();
-  const lines = trimmedText.split(/\r?\n/);
-
-  // Örnek ayrıştırma mantığı:
-  let firstColonIndex = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim().match(/:$/)) {
-      firstColonIndex = i;
-      break;
-    }
-  }
-
-  function findMoreInfoLineIndex(startIndex, arr) {
-    for (let i = startIndex; i < arr.length; i++) {
-      if (arr[i].toLowerCase().includes("daha fazla bilgi almak istediğiniz")) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  let resultBubbles = [];
-  if (firstColonIndex !== -1) {
-    const bubble1 = lines[firstColonIndex].trim();
-    resultBubbles.push(bubble1);
-
-    const restLines = lines.slice(firstColonIndex + 1);
-    const moreInfoIndex = findMoreInfoLineIndex(0, restLines);
-    if (moreInfoIndex !== -1) {
-      const bubble2 = restLines.slice(0, moreInfoIndex).join("\n").trim();
-      if (bubble2) {
-        resultBubbles.push(bubble2);
-      }
-      const bubble3 = restLines[moreInfoIndex].trim();
-      resultBubbles.push(bubble3);
-      if (moreInfoIndex + 1 < restLines.length) {
-        const bubble4 = restLines.slice(moreInfoIndex + 1).join("\n").trim();
-        if (bubble4) {
-          resultBubbles.push(bubble4);
-        }
-      }
-    } else {
-      const bubble2 = restLines.join("\n").trim();
-      if (bubble2) {
-        resultBubbles.push(bubble2);
-      }
-    }
-  } else {
-    const moreInfoIndex = findMoreInfoLineIndex(0, lines);
-    if (moreInfoIndex !== -1) {
-      const bubble1 = lines.slice(0, moreInfoIndex).join("\n").trim();
-      if (bubble1) {
-        resultBubbles.push(bubble1);
-      }
-      resultBubbles.push(lines[moreInfoIndex].trim());
-      if (moreInfoIndex + 1 < lines.length) {
-        const bubble3 = lines.slice(moreInfoIndex + 1).join("\n").trim();
-        if (bubble3) {
-          resultBubbles.push(bubble3);
-        }
-      }
-    } else {
-      resultBubbles.push(trimmedText);
-    }
-  }
-  return resultBubbles;
+  return [ fullText ]; // Tek bubble da yapabilirsiniz
 }
 
-/**
- * Bot mesajını işleyip, tablo varsa tabloyu HTML'e çevirip,
- * yoksa normal text olarak birden fazla baloncuk üreterek ekrana basar.
- */
+// Bot cevabını baloncuk olarak ekrana basma
 function processBotMessage(fullText, uniqueId) {
-  // Bot'tan gelen ham text'i normalleştir
+  // "yazıyor" placeholder'ını kaldıralım
+  $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
+
+  // Tabloları bul
   let normalizedText = fullText
     .replace(/\\n/g, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/[–—]/g, '-');
+    .replace(/<br\s*\/?>/gi, "\n");
 
-  // Özel pattern "[CONVERSATION_ID=xxx]" yakala
+  // CONVERSATION_ID yakala (opsiyonel)
   let conversationId = null;
-  const matchConv = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
-  if (matchConv) {
-    conversationId = matchConv[1];
-    // metinden çıkaralım ki baloncukta görünmesin
-    normalizedText = normalizedText.replace(matchConv[0], "");
+  const convMatch = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
+  if (convMatch) {
+    conversationId = convMatch[1];
+    normalizedText = normalizedText.replace(convMatch[0], "");
   }
-
-  // Bazı özel pattern'leri ayıklama (opsiyonel)
-  const extractedValue = extractTextContentBlock(normalizedText);
-  const textToCheck = extractedValue ? extractedValue : normalizedText;
 
   // Tablo regex
   const tableRegexGlobal = /(\|.*?\|\n\|.*?\|\n[\s\S]+?)(?=\n\n|$)/g;
@@ -180,55 +96,42 @@ function processBotMessage(fullText, uniqueId) {
   let lastIndex = 0;
   let match;
 
-  // Tabloları yakala ve parçala
-  while ((match = tableRegexGlobal.exec(textToCheck)) !== null) {
+  while ((match = tableRegexGlobal.exec(normalizedText)) !== null) {
     const tableMarkdown = match[1];
-    const textBefore = textToCheck.substring(lastIndex, match.index).trim();
+    const textBefore = normalizedText.substring(lastIndex, match.index).trim();
     if (textBefore) {
-      const splittedTextBubbles = splitNonTableTextIntoBubbles(textBefore);
-      splittedTextBubbles.forEach(subPart => {
-        newBubbles.push({ type: 'text', content: subPart });
-      });
+      let splitted = splitNonTableTextIntoBubbles(textBefore);
+      splitted.forEach(sub => newBubbles.push({ type: 'text', content: sub }));
     }
     newBubbles.push({ type: 'table', content: tableMarkdown });
     lastIndex = tableRegexGlobal.lastIndex;
   }
-
-  // Son tablodan sonraki metin
-  if (lastIndex < textToCheck.length) {
-    const textAfter = textToCheck.substring(lastIndex).trim();
+  // Kalan metin
+  if (lastIndex < normalizedText.length) {
+    const textAfter = normalizedText.substring(lastIndex).trim();
     if (textAfter) {
-      const splittedTextBubbles = splitNonTableTextIntoBubbles(textAfter);
-      splittedTextBubbles.forEach(subPart => {
-        newBubbles.push({ type: 'text', content: subPart });
-      });
+      let splitted = splitNonTableTextIntoBubbles(textAfter);
+      splitted.forEach(sub => newBubbles.push({ type: 'text', content: sub }));
     }
   }
 
-  // Bot "typing" placeholder'ını (id=botMessageContent-uniqueId) kaldıralım
-  $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
-
-  // Her bubble'ı ayrı mesaj balonu yaparak ekrana bas
+  // Her bubble
   newBubbles.forEach((bubble, index) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
     let bubbleContent = "";
     if (bubble.type === "table") {
       bubbleContent = markdownTableToHTML(bubble.content);
     } else {
-      // normal text
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
-    // Sadece son baloncukta "Beğen" butonu
+    // Beğen butonu (son bubble'da)
     const isLastBubble = (index === newBubbles.length - 1);
     let likeButtonHtml = "";
     if (isLastBubble && conversationId) {
       likeButtonHtml = `
-        <button class="like-button"
-                style="margin-top:6px;"
-                data-conversation-id="${conversationId}">
+        <button class="like-button" data-conversation-id="${conversationId}">
           Beğen
         </button>
       `;
@@ -246,7 +149,6 @@ function processBotMessage(fullText, uniqueId) {
         <span class="msg_time">${currentTime}</span>
       </div>
     `;
-
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
   });
@@ -263,7 +165,7 @@ $(document).ready(function () {
 
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // Kullanıcının mesaj balonu
+    // Kullanıcı balonu
     const userHtml = `
       <div class="d-flex justify-content-end mb-4">
         <div class="msg_cotainer_send">
@@ -278,7 +180,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
-    // Botun "yazıyor" placeholder'ı
+    // Bot "typing" placeholder
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
@@ -286,7 +188,7 @@ $(document).ready(function () {
              class="rounded-circle user_img_msg"
              alt="bot image">
         <div class="msg_cotainer">
-          <span id="botMessageContent-${uniqueId}"></span>
+          <span id="botMessageContent-${uniqueId}">Yazıyor...</span>
         </div>
         <span class="msg_time">${currentTime}</span>
       </div>
@@ -294,7 +196,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
-    // /ask endpointine POST (stream)
+    // /ask endpoint, tek seferde text
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -307,44 +209,18 @@ $(document).ready(function () {
         if (!response.ok) {
           throw new Error("Sunucu hatası: " + response.status);
         }
-        return response.body;
+        return response.text(); // <-- parça parça yerine TEK SEFERDE text
       })
-      .then(stream => {
-        const reader = stream.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let partialText = "";
-
-        function readChunk() {
-          return reader.read().then(({ done, value }) => {
-            if (done) {
-              // AKIŞ TAMAMLANDI
-              // 1) "yazıyor" placeholder'ını temizle
-              $(`#botMessageContent-${uniqueId}`).html("");
-              // 2) Tam metni tablo vb. işleme sok
-              processBotMessage(partialText, uniqueId);
-              return;
-            }
-            // AKIŞ DEVAM EDİYOR
-            const chunkText = decoder.decode(value, { stream: true });
-            partialText += chunkText;
-
-            // Gelen parçayı ekranda göster
-            $(`#botMessageContent-${uniqueId}`).html(
-              partialText.replace(/\n/g, "<br>")
-            );
-
-            $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
-            return readChunk();
-          });
-        }
-        return readChunk();
+      .then(fullText => {
+        // "yazıyor" placeholder'ı sil, gelen cevabı işleyerek ekrana bas
+        processBotMessage(fullText, uniqueId);
       })
       .catch(err => {
         console.error("Hata:", err);
         $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
       });
 
-    // 9 dakika sonra bildirim çubuğu gösterme (örnek)
+    // İsteğe bağlı: 9 dakika sonra bildirim
     setTimeout(() => {
       const barEl = document.getElementById('notificationBar');
       if (barEl) {
@@ -354,20 +230,17 @@ $(document).ready(function () {
   });
 });
 
-// "Beğen" butonuna tıklama olayı
-$(document).on("click", ".like-button", function(event) {
-  event.preventDefault();
+// "Beğen" butonu
+$(document).on("click", ".like-button", function() {
   const $btn = $(this);
   if ($btn.hasClass("clicked")) {
-    // Beğeniyi geri alma örneği (opsiyonel)
+    // Geri alma
     $btn.removeClass("clicked");
     $btn.text("Beğen");
-    // Geri almayı DB'ye kaydetmek istersen /unlike vs. gönderebilirsin.
   } else {
-    // İlk kez beğen
+    // ilk defa
     $btn.addClass("clicked");
     $btn.text("Beğenildi");
-
     const convId = $btn.data("conversation-id");
     if (convId) {
       fetch("/like", {
