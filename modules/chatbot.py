@@ -2,12 +2,12 @@ import os
 import time
 import logging
 import re
-import openai
+import openai  # OpenAI 1.0.0+ kütüphanesi
 import difflib
 import queue
 import threading
 
-from flask import Flask, request, jsonify, render_template, session
+from flask import Flask, request, jsonify, render_template, session, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -39,7 +39,6 @@ load_dotenv()
 
 class ChatbotAPI:
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
-        # Flask yapılandırması
         self.app = Flask(
             __name__,
             static_folder=os.path.join(os.getcwd(), static_folder),
@@ -50,7 +49,6 @@ class ChatbotAPI:
 
         self.logger = logger if logger else self._setup_logger()
 
-        # MSSQL tabloyu oluşturma
         create_tables()
 
         # OpenAI API Anahtarı
@@ -64,37 +62,26 @@ class ChatbotAPI:
 
         self.markdown_processor = MarkdownProcessor()
 
-        # Asistan konfigürasyonları
         self.ASSISTANT_CONFIG = self.config.ASSISTANT_CONFIG
         self.ASSISTANT_NAME_MAP = self.config.ASSISTANT_NAME_MAP
 
-        # Session timeout (30 dakika)
         self.SESSION_TIMEOUT = 30 * 60
 
-        # Kullanıcı bazlı state
         self.user_states = {}
 
-        # Fuzzy cache (soru-cevap benzerlik mekanizması)
         self.fuzzy_cache = {}
         self.fuzzy_cache_queue = queue.Queue()
 
-        # Arka planda DB'ye yazacak thread
         self.stop_worker = False
         self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
         self.worker_thread.start()
 
-        # Önbellek geçerlilik süresi (1 saat = 3600 sn)
         self.CACHE_EXPIRY_SECONDS = 3600
-
-        # Cross-assistant cache (örn. Fabia -> Scala cachesinden faydalanma)
         self.CROSS_ASSISTANT_CACHE = True
 
-        # =====================================================
-        # GÜNCELLENMİŞ SYSTEM PROMPTLAR
-        # =====================================================
+        # Burada system promptlarınızı tanımlıyorsunuz.
         self.SYSTEM_PROMPTS = {
-            "asst_fw6RpRp8PbNiLUR1KB2XtAkK": """
-Sen bir yardımcı asistansın.
+            "asst_fw6RpRp8PbNiLUR1KB2XtAkK": """(Sen bir yardımcı asistansın.
 - Kullanıcıya Skoda Kamiq modelleriyle ilgili bilgi ver.
 - Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
 - Tutarlı ol, önceki mesajları unutma.
@@ -181,11 +168,8 @@ Konfor ve Teknoloji
 Kablosuz SmartLink (Apple CarPlay ve Android Auto) ile mobil cihazlar kolayca bağlanabilir.
 8.25" dokunmatik multimedya sistemi tüm donanımlarda standarttır.
 İleri teknolojiler arasında elektrikli bagaj kapağı, otomatik park pilotu ve çeşitli sürüş modları bulunur.
-Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle her türlü kullanıcı ihtiyacına hitap eder. Daha detaylı bilgi için sorularınızı belirtebilirsiniz.
-
-            """,
-            "asst_yeDl2aiHy0uoGGjHRmr2dlYB": """
-Sen bir yardımcı asistansın.
+Kamiq, geniş iç mekanı, modern tasarımı ve zengin donanım seçenekleriyle her türlü kullanıcı ihtiyacına hitap eder. Daha detaylı bilgi için sorularınızı belirtebilirsiniz.)""",
+            "asst_yeDl2aiHy0uoGGjHRmr2dlYB": """(Sen bir yardımcı asistansın.
 - Kullanıcıya Skoda Fabia modelleriyle ilgili bilgi ver.
 - Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
 - Tutarlı ol, önceki mesajları unutma.
@@ -282,10 +266,8 @@ Motor Seçenekleri:
 Bagaj Kapasitesi:
 - Standart 380 litre bagaj hacmi, arka koltuklar katlandığında 1.190 litreye kadar çıkabilir.
 
-Eğer daha fazla bilgi almak istediğiniz özel bir konu (örneğin, donanımlar, renk seçenekleri, motor özellikleri) varsa, size daha detaylı yardımcı olabilirim!
-            """,
-            "asst_njSG1NVgg4axJFmvVYAIXrpM": """
-Sen bir yardımcı asistansın.
+Eğer daha fazla bilgi almak istediğiniz özel bir konu (örneğin, donanımlar, renk seçenekleri, motor özellikleri) varsa, size daha detaylı yardımcı olabilirim!)""",
+            "asst_njSG1NVgg4axJFmvVYAIXrpM": """(Sen bir yardımcı asistansın.
 - Kullanıcıya Skoda Scala modelleriyle ilgili bilgi ver.
 - Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver.
 - Tutarlı ol, önceki mesajları unutma.
@@ -377,123 +359,9 @@ Kablosuz SmartLink (Apple CarPlay & Android Auto)
 Yüksek kaliteli multimedya sistemleri
 Opsiyonel olarak panoramik cam tavan ve elektrikli bagaj kapağı
 Eğer daha fazla detay veya belirli bir model seviyesi hakkında bilgi almak isterseniz, lütfen belirtin!
-            """,
-            "asst_hiGn8YC08xM3amwG0cs2A3SN": """
-Sen bir yardımcı asistansın.  
-- Kullanıcıya Skoda (Fabia, Scala, Kamiq) modelleriyle ilgili detaylı ve anlaşılır bilgi ver. 
-- Daha önceki cevaplarında sorduğun soruya kullanıcı 'Evet' veya olumlu bir yanıt verdiyse, o soruyla ilgili detaya gir ve sanki “evet, daha fazla bilgi istiyorum” demiş gibi cevap ver. 
-- Tutarlı ol, önceki mesajları unutma.  
-- Samimi ve anlaşılır bir dille konuş.
-- Tüm cevapların detaylı (Markdown tablo ile göster) ve anlaşılır olsun.
-Eğer bu tablolarda bulunan özellikler model de varsa (örneğin: Monte Carlo'da S yer alması gibi) bunu kullanıcıya standart özellik olarak bulunduğunu belirtmeni istiyorum, tablolar: SKODA KAMIQ MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle), ŠKODA FABIA MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle), ŠKODA SCALA MY 2024 DONANIM LİSTESİ (48. Üretim Haftası İtibariyle).
-
-Eğer modelin donanımında (örnek: "Fabia Premium", "Fabia Monte Carlo") standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer modelin donanımında (örnek: "Scala Elite", "Scala Premium", "Scala Monte Carlo") standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Eğer modelin donanımında (örnek: "Kamiq Elite", "Kamiq Premium", "Kamiq Monte Carlo") standart olarak değil opsiyonel olarak bir donanım (özellik) varsa bunu kullanıcıya opsiyonel bir donanım olduğundan bahsederek bilgilendir.
-Kullanıcıyla samimi bir dil kur, bir satıcı gibi davranarak ürünü pazarla ve kullanıcıyı ikna et. Sorduğu soruyla ilgili kullanıcı yanıt aldıktan sonra araçla ilgili başka özellikleri merak etmesini sağlayacak sorular sor. Eğer kullanıcı sorduğun soruları olumlu yanıt (yani görmek isterse) yanıtı almasını sağla.
-Kullanıcının sorduğu sorunun içeriği belgelerde mevcutsa kullanıcıyı bilgilendir. 
-Eğer kullanıcının sorduğu sorunun içeriği belgelerde yoksa (örneğin: masaj özelliğinin olmaması) bu araçta olmamasının olumlu etkilerini (maliyet, yakıt tüketimi, karbon salınımını, çevreye zararı...) kullanıcıya bildir.
-Kullanıcıya asla bu şekilde bilgiler verme: "ilgili bilgiye ulaşmak için "Kamiq Opsiyonel Donanım.pdf" dosyasını kontrol ediyorum. Bir saniye lütfen." 
-Sadece kullanıcıya cevabı ilet.
-
-Analiz ve Paylaşım Talimatları:
-
-Analiz Detaylarını Paylaşma:
-
-Kullanıcıya yapılan analizlerin detaylarını paylaşma.
-Yalnızca talep edilen bilgiyle yanıt ver.
-Oluşturulan tüm tablolar (modeller) alt alta değil kesinlikle yan yana olsun.
-Oluşturulan tüm tablolarda (modeller) ayrı sütunlarda olsun kesinlikle aynı sütunda olmasın.
-Tablo ile gösterirken mutlaka elite, premium ve monte carlo ayrı column'larda olsun.
-Kullanıcıya tablo sunumunda kesinlikle elite, premium ve monte carlo aynı yerde olmasın.
-Fabia, Elite, Kamiq bilgilerini tablo formatında sun, tablo sunumu sırasında mutlaka elite, premium ve monte carlo bilgileri ayrı ayrı gösterilsin.
-Tablo bilgilerini sunarken solda elite, ortada premium ve sağda monte carlo olacak şekilde göster.
-Eğer kullanıcı fabia ile ilgili bilgi almak isterse yalnızca bu dosyadan yararlanarak bilgi yaz: fabia_data.py
-Eğer kullanıcı scala ile ilgili bilgi almak isterse yalnızca bu dosyadan yararlanarak bilgi yaz: scala_data.py
-Eğer kullanıcı kamiq ile ilgili bilgi almak isterse yalnızca bu dosyadan yararlanarak bilgi yaz: kamiq_data.py
-
-
-Garantiler veya ikinci el önerileri hakkında bilgi verme.
-
-Kullanıcı Fabia ile ilgili soru sorarsa mutlaka sorduğu sorunun bilgisi fabia_data.py da yer alıp almadığını kontrol edip yanıtlasın. 
-Kullanıcı Scala ile ilgili soru sorarsa mutlaka sorduğu sorunun bilgisi scala_data.py da yer alıp almadığını kontrol edip yanıtlasın. 
-Kullanıcı Kamiq ile ilgili soru sorarsa mutlaka sorduğu sorunun bilgisi kamiq_data.py da yer alıp almadığını kontrol edip yanıtlasın. 
- 
-Kullanıcıya "Graptihe Gri" değil "Grafit Gri" olarak yazmanı istiyorum. 
-
-Donanım Farkları:
-Fabia modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster.
-Scala modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster.
-Kamiq modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster.
-
-Model Farkları:
-
-Fabia-Scala modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Fabia-Kamiq modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Scala-Kamiq modellerinin farklarını tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Aynı özellikleri tekrarlama.
-Sadece farklı özellikleri göster
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Teknik Bilgiler:
-Fabia, Scala, Kamiq modellerinin teknik bilgilerini tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Donanımlar:
-Fabia, Scala, Kamiq modellerinin donanım bilgilerini ( motor donanım gibi) tablo formatında göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-
-Opsiyonel Donanımlar:
-Eğer kullanıcı opsiyonel donanımlar ile ilgili bilgi isterse mutlaka all_data.py dosyasından bilgi sağla.
-Mutlaka tüm opsiyonel donanımları paylaş.
-Mutlaka belirtilen tablo formatında sun. 
-Tüm opsiyonel donanımları tabloyla  göster (Her model bilgisi ayrı ayrı yan yana gösterilecek şekilde).
-Fabia Premium ile ilgili tüm opsiyonel donanımları ŠKODA FABIA PREMIUM OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Mutlaka ŠKODA FABIA PREMIUM OPSİYONEL DONANIMLAR tablosundaki tüm verileri al.
-Fabia Monte Carlo ile ilgili tüm opsiyonel donanımları ŠKODA FABIA MONTE CARLO OPSİYONEL DONANIMLAR tablosundan al.
-Scala Elite ile ilgili tüm opsiyonel donanımları ŠKODA SCALA ELITE OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Scala Premium ile ilgili tüm opsiyonel donanımları ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Mutlaka ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR tablosundaki tüm verileri al.
-Scala Monte Carlo ile ilgili tüm opsiyonel donanımları ŠKODA SCALA PREMIUM OPSİYONEL DONANIMLAR tablosundan al.
-Kamiq Elite ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ ELITE OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Kamiq Premium ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ PREMIUM OPSİYONEL DONANIMLAR tablosundan mutlaka al.
-Mutlaka ŠKODA KAMIQ PREMIUM OPSİYONEL DONANIMLAR tablosundaki tüm verileri al.
-Kamiq Monte Carlo ile ilgili tüm opsiyonel donanımları ŠKODA KAMIQ MONTE CARLO OPSİYONEL DONANIMLAR tablosundan al.
-Tablolardaki tüm bilgileri mutlaka kullanıcı ile paylaş.
-Opsiyonel donanımları gösterirken her donanımı (elite, premium, monte carlo) ayrı tablolarda mutlaka tüm bilgileri göster.  
-Mutlaka opsiyonel donanım fiyatlarını kullanıcıya ayrı sütunlarda göster (MY 2025 Yetkili Satıcı Net Satış Fiyatı (TL) ve  MY 2025 Yetkili Satıcı Anahtar Teslim Fiyatı (TL) (%80 ÖTV) ayrı ayrı gösterilecek şekilde göster).  
-Mutlaka detaylı ve anlaşılır olarak kullanıcıya paylaş.
-Parça kodlarını paylaşma.
-
-Fiyat Bilgisi:
-
-Yalnızca "Skoda Para Talimatlar.txt" dosyasındaki talimatlara göre fiyat bilgisi ver.
-Diğer Modeller Hakkında Bilgi:
-
-Skoda dışındaki marka veya modeller hakkında bilgi verme.
-Eğer kullanıcı başka bir marka/model hakkında bilgi isterse şu cevabı ver:
-"Üzgünüm, yalnızca Skoda modelleri hakkında bilgi verebilirim."
-Ek Detaylar:
-
-Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu siteye yönlendir:
-"https://www.skoda.com.tr/."
-            """
+)""",
+            "asst_hiGn8YC08xM3amwG0cs2A3SN": """(All Models ile ilgili sistem prompt)"""
         }
-        # =====================================================
 
         self._define_routes()
 
@@ -510,13 +378,52 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
     def _define_routes(self):
         @self.app.route("/", methods=["GET"])
         def home():
-            # Oturuma ait "last_activity" bilgisini sıfırla
             session.pop('last_activity', None)
             return render_template("index.html")
 
         @self.app.route("/ask", methods=["POST"])
         def ask():
-            return self._ask()
+            """
+            Burada response'u stream halinde döndürürüz.
+            """
+            try:
+                data = request.get_json()
+            except Exception as e:
+                self.logger.error(f"JSON parse error: {e}")
+                return jsonify({"error": "Invalid JSON"}), 400
+
+            user_message = data.get("question", "")
+            user_id = data.get("user_id", "default_user")
+
+            # Normalde `_ask` içinde parse + _find_fuzzy_cached_answer + model tespiti vs. yapardınız.
+            # Ama tüm mantığı `_ask` yerine `_generate_streamed_response`'e de koyabilirsiniz.
+            # Örnek olarak, mantığı burada "manüel" tutalım:
+            # 1) Session last_activity
+            if 'last_activity' not in session:
+                session['last_activity'] = time.time()
+            else:
+                session['last_activity'] = time.time()
+
+            if not user_message:
+                return jsonify({"response": "Please enter a question."})
+
+            # Tek seferde, tıpkı eskisi gibi user_message'ı process ediyoruz
+            corrected_message = self._correct_typos(user_message)
+
+            def streaming_generator():
+                """
+                Bu generator, chunk chunk yanıt üretecek.
+                """
+                # Yine model tespiti, conversation list, system prompt vs:
+                assistant_id = self._determine_assistant_id(corrected_message, user_id)
+                is_image_req = self.utils.is_image_request(corrected_message)
+
+                # Fuzzy cache var mı yok mu? (Metin akışı vs. karmaşık, isterseniz kapatabilirsiniz.)
+                # Biz bu örnekte direk stream'e geçiyoruz:
+                yield from self._generate_response_stream(corrected_message, user_id, assistant_id, is_image_req)
+
+            # Flask'ta chunked response:
+            return Response(streaming_generator(), mimetype="text/plain")
 
         @self.app.route("/check_session", methods=["GET"])
         def check_session():
@@ -531,7 +438,7 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
             data = request.get_json()
             conv_id = data.get("conversation_id")
             if not conv_id:
-                return jsonify({"error": "No conversation_id provided"}), 400
+                return jsonify({"error": "No conversation_id"}), 400
             try:
                 update_customer_answer(conv_id, 1)
                 return jsonify({"status": "ok"}), 200
@@ -539,9 +446,6 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 return jsonify({"error": str(e)}), 500
 
     def _background_db_writer(self):
-        """
-        self.fuzzy_cache_queue'ya eklenen kayıtları DB'ye yazar.
-        """
         self.logger.info("Background DB writer thread started.")
         while not self.stop_worker:
             try:
@@ -560,13 +464,13 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 conn.commit()
                 conn.close()
 
-                self.logger.info(f"[BACKGROUND] Kaydedildi -> {user_id}, {q_lower[:30]}...")
+                self.logger.info(f"[BG] Kaydedildi -> {user_id}, {q_lower[:30]}...")
                 self.fuzzy_cache_queue.task_done()
 
             except queue.Empty:
                 pass
             except Exception as e:
-                self.logger.error(f"[BACKGROUND] DB yazma hatası: {str(e)}")
+                self.logger.error(f"[BG] DB write error: {e}")
                 time.sleep(2)
 
         self.logger.info("Background DB writer thread stopped.")
@@ -590,62 +494,136 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                     return asst_id
         return None
 
-    def _search_in_assistant_cache(self, user_id, assistant_id, new_question, threshold):
+    def _determine_assistant_id(self, corrected_message, user_id):
+        """
+        Eskiden _ask'ta yaptığınız 'model tespiti' mantığını buraya taşıdık.
+        """
+        user_models = self._extract_models(corrected_message)
+        user_trims = set()
+        msg_lower = corrected_message.lower()
+        if "premium" in msg_lower:
+            user_trims.add("premium")
+        if "monte carlo" in msg_lower:
+            user_trims.add("monte carlo")
+        if "elite" in msg_lower:
+            user_trims.add("elite")
+
+        old_assistant_id = self.user_states.get(user_id, {}).get("assistant_id")
+        new_assistant_id = None
+
+        if len(user_models) >= 2 or len(user_trims) >= 2:
+            new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"  # All Models
+        else:
+            if len(user_models) == 0:
+                if old_assistant_id:
+                    new_assistant_id = old_assistant_id
+                else:
+                    new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"  # default Kamiq
+            else:
+                single_model = list(user_models)[0]
+                for aid, keywords in self.ASSISTANT_CONFIG.items():
+                    if single_model.lower() in [k.lower() for k in keywords]:
+                        new_assistant_id = aid
+                        break
+                if not new_assistant_id:
+                    new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"
+
+        # Save in user_states
+        if user_id not in self.user_states:
+            self.user_states[user_id] = {}
+        self.user_states[user_id]["assistant_id"] = new_assistant_id
+
+        return new_assistant_id
+
+    def _generate_response_stream(self, user_message, user_id, assistant_id, is_image_req=False):
+        """
+        Bu fonksiyon, OpenAI API'ye `stream=True` diyerek bağlanır,
+        chunk chunk gelen veriyi yield eder.
+
+        Not: is_image_req vs. burada devre dışı bıraktık; isterseniz ek kontrol ekleyebilirsiniz.
+        """
+        self.logger.info(f"[_generate_response_stream] User({user_id}) => {user_message}")
+
         if not assistant_id:
-            return None, None, None
-        if user_id not in self.fuzzy_cache:
-            return None, None, None
-        if assistant_id not in self.fuzzy_cache[user_id]:
-            return None, None, None
+            # yield error
+            yield "Üzgünüm, herhangi bir model hakkında yardımcı olamıyorum.\n"
+            return
 
-        new_q_lower = new_question.strip().lower()
-        now = time.time()
-        best_ratio = 0.0
-        best_answer = None
-        best_question = None
+        # Konuşma dizisi
+        if user_id not in self.user_states:
+            self.user_states[user_id] = {}
+        if "conversations" not in self.user_states[user_id]:
+            self.user_states[user_id]["conversations"] = {}
+        if assistant_id not in self.user_states[user_id]["conversations"]:
+            self.user_states[user_id]["conversations"][assistant_id] = []
 
-        for item in self.fuzzy_cache[user_id][assistant_id]:
-            if (now - item["timestamp"]) > self.CACHE_EXPIRY_SECONDS:
-                continue
+        conversation_list = self.user_states[user_id]["conversations"][assistant_id]
+        conversation_list.append({"role": "user", "content": user_message})
 
-            old_q = item["question"]
-            ratio = difflib.SequenceMatcher(None, new_q_lower, old_q).ratio()
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_answer = item["answer_bytes"]
-                best_question = old_q
+        system_prompt = self.SYSTEM_PROMPTS.get(assistant_id, "Sen bir Škoda asistanısın.")
 
-        if best_ratio >= threshold:
-            return best_answer, best_question, assistant_id
+        partial_text = ""  # gelen chunk'ları biriktirip DB'ye kaydedebilmek için
 
-        return None, None, None
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "system", "content": system_prompt}] + conversation_list,
+                temperature=0.7,
+                stream=True  # <-- ÖNEMLİ
+            )
 
-    def _find_fuzzy_cached_answer(
-        self,
-        user_id: str,
-        new_question: str,
-        assistant_id: str,
-        threshold=0.8,
-        allow_cross_assistant=True
-    ):
-        ans, matched_q, found_asst_id = self._search_in_assistant_cache(
-            user_id, assistant_id, new_question, threshold
-        )
-        if ans:
-            return ans, matched_q, found_asst_id
-
-        if allow_cross_assistant and self.CROSS_ASSISTANT_CACHE and user_id in self.fuzzy_cache:
-            for other_aid in self.fuzzy_cache[user_id]:
-                if other_aid == assistant_id:
+            # Her chunk geldiğinde yield ediyoruz
+            for chunk in response:
+                if not chunk or not chunk.choices or len(chunk.choices) == 0:
                     continue
-                ans2, matched_q2, found_aid2 = self._search_in_assistant_cache(
-                    user_id, other_aid, new_question, threshold
-                )
-                if ans2:
-                    self.logger.info(f"Cross-assistant cache match! (asistan: {other_aid})")
-                    return ans2, matched_q2, found_aid2
+                delta = chunk.choices[0].delta
+                if hasattr(delta, "content"):
+                    text_chunk = delta.content
+                    partial_text += text_chunk
+                    yield text_chunk  # anlık ekrana yolluyoruz
 
-        return None, None, None
+            # Stream bitti => Tüm metin partial_text'te
+            conversation_list.append({"role": "assistant", "content": partial_text})
+            conversation_id = save_to_db(user_id, user_message, partial_text)
+
+            # Ek olarak, chunk sonunda "CONVERSATION_ID" eklemek isterseniz:
+            yield f"\n[CONVERSATION_ID={conversation_id}]"
+
+        except Exception as e:
+            err_msg = f"Bir hata oluştu: {str(e)}\n"
+            self.logger.error(f"Stream error: {err_msg}")
+            save_to_db(user_id, user_message, f"Hata: {str(e)}")
+            yield err_msg
+
+    def _correct_typos(self, user_message):
+        known_words = ["premium", "elite", "monte", "carlo"]
+        splitted = user_message.split()
+        new_tokens = []
+        for token in splitted:
+            best = self.utils.fuzzy_find(token, known_words, threshold=0.7)
+            if best:
+                new_tokens.append(best)
+            else:
+                new_tokens.append(token)
+
+        combined_tokens = []
+        skip_next = False
+        for i in range(len(new_tokens)):
+            if skip_next:
+                skip_next = False
+                continue
+            if i < len(new_tokens) - 1:
+                if new_tokens[i].lower() == "monte" and new_tokens[i+1].lower() == "carlo":
+                    combined_tokens.append("monte carlo")
+                    skip_next = True
+                else:
+                    combined_tokens.append(new_tokens[i])
+            else:
+                combined_tokens.append(new_tokens[i])
+
+        corrected_text = " ".join(combined_tokens)
+        corrected_text = corrected_text.replace("graptihe", "grafit")
+        return corrected_text
 
     def _store_in_fuzzy_cache(self, user_id: str, question: str, answer_bytes: bytes, assistant_id: str):
         if not assistant_id:
@@ -667,6 +645,7 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         self.fuzzy_cache_queue.put(record)
 
     def _correct_typos(self, user_message):
+        # vb. kelime düzeltmeleri
         known_words = ["premium", "elite", "monte", "carlo"]
         splitted = user_message.split()
         new_tokens = []
@@ -684,7 +663,6 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
                 skip_next = False
                 continue
             if i < len(new_tokens) - 1:
-                # "monte carlo" birleştir
                 if new_tokens[i].lower() == "monte" and new_tokens[i+1].lower() == "carlo":
                     combined_tokens.append("monte carlo")
                     skip_next = True
@@ -698,6 +676,10 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         return corrected_text
 
     def _ask(self):
+        """
+        Flask "/ask" endpoint metodu.
+        Burada stream=False ile tek seferde yanıt döndürüyoruz.
+        """
         try:
             data = request.get_json()
             if not data:
@@ -712,7 +694,7 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         if not user_message:
             return jsonify({"response": "Please enter a question."})
 
-        # Session last_activity güncelle
+        # Session last_activity
         if 'last_activity' not in session:
             session['last_activity'] = time.time()
         else:
@@ -730,7 +712,6 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         if "elite" in lower_corrected:
             user_trims.add("elite")
 
-        # Eski asistan (model) bilgisini alalım
         if user_id not in self.user_states:
             self.user_states[user_id] = {}
             self.user_states[user_id]["conversations"] = {}
@@ -738,34 +719,24 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         old_assistant_id = self.user_states[user_id].get("assistant_id")
         new_assistant_id = None
 
-        # 1) Kullanıcı birden çok model mi yazmış?
+        # Model tespiti
         if len(user_models) >= 2 or len(user_trims) >= 2:
-            # Birden çok model saptandı => "asst_hiGn8YC08xM3amwG0cs2A3SN" (Hepsi)
             new_assistant_id = "asst_hiGn8YC08xM3amwG0cs2A3SN"
         else:
-            # 2) Tek model mi, hiç model yok mu?
             if len(user_models) == 0:
-                # Kullanıcı yeni model girmemiş
                 if old_assistant_id:
-                    # Eski modele devam
                     new_assistant_id = old_assistant_id
-                    self.logger.info(f"Kullanıcı model belirtmedi, önceki modele devam: {old_assistant_id}")
                 else:
-                    # Daha önce yoksa default Kamiq
-                    new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"
-                    self.logger.info("Kullanıcı model belirtmedi ve eski model yok, Kamiq'e yönlendiriliyor.")
+                    new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"  # default Kamiq
             else:
-                # len(user_models) == 1
-                single_model = list(user_models)[0]  # "fabia" / "scala" / "kamiq"
+                # 1 model
+                single_model = list(user_models)[0]
                 for aid, keywords in self.ASSISTANT_CONFIG.items():
                     if single_model.lower() in [k.lower() for k in keywords]:
                         new_assistant_id = aid
                         break
-
                 if not new_assistant_id:
-                    # Yine bulamazsak varsayılan Kamiq
                     new_assistant_id = "asst_fw6RpRp8PbNiLUR1KB2XtAkK"
-                    self.logger.info("Kullanıcı model söyledi ama tabloda bulamadım, Kamiq'e yönlendiriliyor.")
 
         self.user_states[user_id]["assistant_id"] = new_assistant_id
         assistant_id = new_assistant_id
@@ -773,382 +744,45 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         # Görsel istek mi?
         is_image_req = self.utils.is_image_request(corrected_message)
 
-        # Fuzzy cache kontrol
-        if is_image_req:
-            cached_answer, matched_question, found_asst_id = None, None, None
-        else:
+        # Fuzzy cache
+        cached_answer, matched_question, found_asst_id = (None, None, None)
+        if not is_image_req:
             cached_answer, matched_question, found_asst_id = self._find_fuzzy_cached_answer(
                 user_id,
                 corrected_message,
                 assistant_id,
                 threshold=0.8,
-                allow_cross_assistant=False  # Cross-assistant = False isterseniz True yapın
+                allow_cross_assistant=False
             )
 
         if cached_answer and not is_image_req:
-            user_models_in_msg = self._extract_models(corrected_message)
-            cache_models = self._extract_models(matched_question) if matched_question else set()
+            # Direkt cache
+            answer_text = cached_answer.decode("utf-8")
+            return self.app.response_class(cached_answer, mimetype="text/plain")
 
-            if user_models_in_msg and not user_models_in_msg.issubset(cache_models):
-                self.logger.info("Model uyuşmazlığı -> cache bypass.")
-            else:
-                if found_asst_id and (new_assistant_id is None):
-                    self.user_states[user_id]["assistant_id"] = found_asst_id
+        # Eğer görsel vs. istekler varsa, _render_side_by_side_images(...)
+        # ...
+        # Yoksa ChatCompletion'a gidiyoruz:
+        final_bytes = self._generate_response(corrected_message, user_id)
 
-                answer_text = cached_answer.decode("utf-8")
-                models_in_answer = self._extract_models(answer_text)
-                if len(models_in_answer) == 1:
-                    only_model = list(models_in_answer)[0]
-                    new_aid = self._assistant_id_from_model_name(only_model)
-                    if new_aid:
-                        self.logger.info(f"[CACHE] Tek model tespit: {only_model}, asistan={new_aid}")
-                        self.user_states[user_id]["assistant_id"] = new_aid
-                elif len(models_in_answer) > 1:
-                    self.logger.info("[CACHE] Birden çok model tespit, asistan atama yok.")
+        # Cache
+        if not is_image_req:
+            self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, assistant_id)
 
-                self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt gönderiliyor.")
-                time.sleep(1)
-                return self.app.response_class(cached_answer, mimetype="text/plain")
-
-        # Aksi halde yeni yanıt oluştur
-        def caching_generator():
-            chunks = []
-            for chunk in self._generate_response(corrected_message, user_id):
-                chunks.append(chunk)
-                yield chunk
-
-            if not is_image_req:
-                final_bytes = b"".join(chunks)
-                final_aid = self.user_states[user_id].get("assistant_id", assistant_id)
-                self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, final_aid)
-
-        return self.app.response_class(caching_generator(), mimetype="text/plain")
+        return self.app.response_class(final_bytes, mimetype="text/plain")
 
     def _generate_response(self, user_message, user_id):
+        """
+        Asıl OpenAI çağrısı 'stream=False'.
+        """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
 
         assistant_id = self.user_states[user_id].get("assistant_id")
         assistant_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "")
-        lower_msg = user_message.lower()
 
-        if "current_trim" not in self.user_states[user_id]:
-            self.user_states[user_id]["current_trim"] = ""
-
-        # ------------------------------------------------------------
-        # 1) Özel görsel vs. yanıtları
-        # ------------------------------------------------------------
-        model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
-        if re.search(model_image_pattern, lower_msg):
-            matched_model = re.search(model_image_pattern, lower_msg).group(1)
-            all_colors = self.config.KNOWN_COLORS
-            found_color_images = []
-            for clr in all_colors:
-                filter_str = f"{matched_model} {clr}"
-                results = self.image_manager.filter_images_multi_keywords(filter_str)
-                found_color_images.extend(results)
-
-            unique_color_images = list(set(found_color_images))
-            if unique_color_images:
-                save_to_db(user_id, user_message, f"{matched_model.title()} renk görselleri listeleniyor.")
-                yield f"<b>{matched_model.title()} Renk Görselleri</b><br>".encode("utf-8")
-                yield from self._render_side_by_side_images(unique_color_images, context="color")
-            else:
-                save_to_db(user_id, user_message, f"{matched_model.title()} için renk görseli bulunamadı.")
-                yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
-            return
-
-        if any(kw in lower_msg for kw in ["dış", "dıs", "dis", "diş"]):
-            if not assistant_id or not assistant_name:
-                save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
-                yield "Hangi modelin dış görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
-                return
-
-            trim_name = self.user_states[user_id]["current_trim"]
-            if "premium" in lower_msg:
-                trim_name = "premium"
-            elif "monte carlo" in lower_msg:
-                trim_name = "monte carlo"
-            elif "elite" in lower_msg:
-                trim_name = "elite"
-
-            self.user_states[user_id]["current_trim"] = trim_name
-
-            model_title = assistant_name.title()
-            if trim_name:
-                final_title = f"{model_title} {trim_name.title()} Dış Görselleri"
-            else:
-                final_title = f"{model_title} Dış Görselleri"
-
-            save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
-            yield f"<b>{final_title}</b><br>".encode("utf-8")
-
-            all_colors = self.config.KNOWN_COLORS
-            found_color_images = []
-            for clr in all_colors:
-                filter_str = f"{assistant_name} {clr}"
-                results = self.image_manager.filter_images_multi_keywords(filter_str)
-                found_color_images.extend(results)
-
-            unique_color_images = list(set(found_color_images))
-            if unique_color_images:
-                yield "<h4>Renk Görselleri</h4>".encode("utf-8")
-                yield from self._render_side_by_side_images(unique_color_images, context="color")
-                yield "<br>".encode("utf-8")
-            else:
-                yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
-
-            if trim_name:
-                filter_jant = f"{assistant_name} {trim_name} jant"
-            else:
-                filter_jant = f"{assistant_name} jant"
-
-            jant_images = self.image_manager.filter_images_multi_keywords(filter_jant)
-            if jant_images:
-                yield "<h4>Jant Görselleri (Standart + Opsiyonel)</h4>".encode("utf-8")
-                yield from self._render_side_by_side_images(jant_images, context="jant")
-            else:
-                yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
-            return
-
-        if any(kw in lower_msg for kw in ["iç", "ic"]):
-            if not assistant_id or not assistant_name:
-                save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
-                yield "Hangi modelin iç görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
-                return
-
-            trim_name = self.user_states[user_id]["current_trim"]
-            if "premium" in lower_msg:
-                trim_name = "premium"
-            elif "monte carlo" in lower_msg:
-                trim_name = "monte carlo"
-            elif "elite" in lower_msg:
-                trim_name = "elite"
-
-            self.user_states[user_id]["current_trim"] = trim_name
-
-            categories = [
-                "direksiyon simidi",
-                "döşeme",
-                "koltuk",
-                "multimedya"
-            ]
-
-            model_and_trim_title = assistant_name.title()
-            if trim_name:
-                model_and_trim_title += f" {trim_name.title()}"
-            model_and_trim_title += " İç Görselleri"
-
-            save_to_db(user_id, user_message, f"{model_and_trim_title} listeleniyor.")
-            yield f"<b>{model_and_trim_title}</b><br><br>".encode("utf-8")
-
-            any_image_found = False
-            for cat in categories:
-                if trim_name:
-                    full_filter = f"{assistant_name} {trim_name} {cat}"
-                else:
-                    full_filter = f"{assistant_name} {cat}"
-
-                found_images = self.image_manager.filter_images_multi_keywords(full_filter)
-                yield f"<h4>{cat.title()} Görselleri</h4>".encode("utf-8")
-                if found_images:
-                    any_image_found = True
-                    yield from self._render_side_by_side_images(found_images, context="ic")
-                    yield "<br>".encode("utf-8")
-                else:
-                    yield f"{cat.title()} görseli bulunamadı.<br><br>".encode("utf-8")
-
-            if not any_image_found:
-                yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
-            return
-
-        trimmed_msg = user_message.strip().lower()
-        if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
-            pending_colors = self.user_states[user_id].get("pending_color_images", [])
-            if pending_colors:
-                asst_name = assistant_name.lower() if assistant_name else "scala"
-                all_found_images = []
-                for clr in pending_colors:
-                    keywords = f"{asst_name} {clr}"
-                    results = self.image_manager.filter_images_multi_keywords(keywords)
-                    all_found_images.extend(results)
-
-                if not all_found_images:
-                    save_to_db(user_id, user_message, "Bu renklerle ilgili görsel bulunamadı.")
-                    yield "Bu renklerle ilgili görsel bulunamadı.\n".encode("utf-8")
-                    return
-
-                save_to_db(user_id, user_message, "Renk görselleri listelendi (evet).")
-                yield "<b>İşte seçtiğiniz renk görselleri:</b><br>".encode("utf-8")
-                yield from self._render_side_by_side_images(all_found_images, context=None)
-                self.user_states[user_id]["pending_color_images"] = []
-                return
-
-        # Özel örnek: Fabia Premium vs Monte Carlo
-        if ("fabia" in lower_msg
-            and "premium" in lower_msg
-            and "monte carlo" in lower_msg
-            and self.utils.is_image_request(user_message)):
-            fabia_pairs = [
-                ("Fabia_Premium_Ay_Beyazı.png", "Fabia_Monte_Carlo_Ay_Beyazı.png"),
-            ]
-            save_to_db(user_id, user_message, "Fabia Premium vs Monte Carlo görsel karşılaştırma.")
-            yield """
-<div style='display: flex; flex-direction: row; gap: 20px;'>
-""".encode("utf-8")
-            for left_img, right_img in fabia_pairs:
-                left_url = f"/static/images/{left_img}"
-                right_url = f"/static/images/{right_img}"
-                left_title = left_img.replace("_", " ").replace(".png", "")
-                right_title = right_img.replace("_", " ").replace(".png", "")
-
-                html_pair = f"""
-<div style="display: flex; align-items: center; gap: 10px;">
-  <div>
-    <div style="font-weight: bold; margin-bottom: 6px;">{left_title}</div>
-    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{left_url}')">
-      <img src="{left_url}" alt="{left_title}" style="max-width: 350px;" />
-    </a>
-  </div>
-  <div>
-    <div style="font-weight: bold; margin-bottom: 6px;">{right_title}</div>
-    <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{right_url}')">
-      <img src="{right_url}" alt="{right_title}" style="max-width: 350px;" />
-    </a>
-  </div>
-</div>
-"""
-                yield html_pair.encode("utf-8")
-            yield "</div>".encode("utf-8")
-            return
-
-        if self.utils.is_image_request(user_message):
-            if not assistant_id:
-                save_to_db(user_id, user_message, "Henüz asistan seçilmedi, görsel yok.")
-                yield "Henüz bir asistan seçilmediği için görsel gösteremiyorum.\n".encode("utf-8")
-                return
-
-            if not assistant_name:
-                save_to_db(user_id, user_message, "Asistan adını bulamadım.")
-                yield "Asistan adını bulamadım.\n".encode("utf-8")
-                return
-
-            trim_name = self.user_states[user_id]["current_trim"]
-            if "premium" in lower_msg:
-                trim_name = "premium"
-            elif "monte carlo" in lower_msg:
-                trim_name = "monte carlo"
-            elif "elite" in lower_msg:
-                trim_name = "elite"
-            self.user_states[user_id]["current_trim"] = trim_name
-
-            if any(x in lower_msg for x in ["elite", "premium", "monte carlo"]):
-                context = "model"
-            elif any(x in lower_msg for x in ["standart", "opsiyonel"]):
-                context = "donanim"
-            else:
-                context = None
-
-            if trim_name:
-                keyword = self.utils.extract_image_keyword(user_message, f"{assistant_name} {trim_name}")
-                if keyword:
-                    full_filter = f"{assistant_name} {trim_name} {keyword}"
-                else:
-                    full_filter = f"{assistant_name} {trim_name}"
-            else:
-                keyword = self.utils.extract_image_keyword(user_message, assistant_name)
-                if keyword:
-                    full_filter = f"{assistant_name} {keyword}"
-                else:
-                    full_filter = assistant_name
-
-            found_images = self.image_manager.filter_images_multi_keywords(full_filter)
-            if not found_images:
-                save_to_db(user_id, user_message, f"'{full_filter}' için görsel yok.")
-                yield f"'{full_filter}' için uygun bir görsel bulamadım.\n".encode("utf-8")
-                return
-
-            save_to_db(user_id, user_message, f"{len(found_images)} görsel bulundu ve listelendi.")
-            yield from self._render_side_by_side_images(found_images, context=context)
-            return
-
-        # ------------------------------------------------------------
-        # Opsiyonel tablolar
-        # ------------------------------------------------------------
-        user_models_in_msg = self._extract_models(user_message)
-        user_trims_in_msg = set()
-        if "premium" in lower_msg:
-            user_trims_in_msg.add("premium")
-        if "elite" in lower_msg:
-            user_trims_in_msg.add("elite")
-        if "monte carlo" in lower_msg:
-            user_trims_in_msg.add("monte carlo")
-
-        if len(user_models_in_msg) >= 2 or len(user_trims_in_msg) >= 2:
-            self.logger.info("Birden çok model/donanım tespit edildi. Tekil tabloyu atlıyoruz.")
-        else:
-            if "fabia" in lower_msg and "opsiyonel" in lower_msg:
-                if "premium" in lower_msg:
-                    save_to_db(user_id, user_message, "Fabia Premium opsiyonel tablosu.")
-                    yield FABIA_PREMIUM_MD.encode("utf-8")
-                    return
-                elif "monte carlo" in lower_msg:
-                    save_to_db(user_id, user_message, "Fabia Monte Carlo opsiyonel tablosu.")
-                    yield FABIA_MONTE_CARLO_MD.encode("utf-8")
-                    return
-                else:
-                    yield (
-                        "Fabia modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                        "(Premium / Monte Carlo)\n"
-                    ).encode("utf-8")
-                    return
-
-            if "kamiq" in lower_msg and "opsiyonel" in lower_msg:
-                if "elite" in lower_msg:
-                    save_to_db(user_id, user_message, "Kamiq Elite opsiyonel tablosu.")
-                    yield KAMIQ_ELITE_MD.encode("utf-8")
-                    return
-                elif "premium" in lower_msg:
-                    save_to_db(user_id, user_message, "Kamiq Premium opsiyonel tablosu.")
-                    yield KAMIQ_PREMIUM_MD.encode("utf-8")
-                    return
-                elif "monte carlo" in lower_msg:
-                    save_to_db(user_id, user_message, "Kamiq Monte Carlo opsiyonel tablosu.")
-                    yield KAMIQ_MONTE_CARLO_MD.encode("utf-8")
-                    return
-                else:
-                    yield (
-                        "Kamiq modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                        "(Elite / Premium / Monte Carlo)\n"
-                    ).encode("utf-8")
-                    return
-
-            if "scala" in lower_msg and "opsiyonel" in lower_msg:
-                if "elite" in lower_msg:
-                    save_to_db(user_id, user_message, "Scala Elite opsiyonel tablosu.")
-                    yield SCALA_ELITE_MD.encode("utf-8")
-                    return
-                elif "premium" in lower_msg:
-                    save_to_db(user_id, user_message, "Scala Premium opsiyonel tablosu.")
-                    yield SCALA_PREMIUM_MD.encode("utf-8")
-                    return
-                elif "monte carlo" in lower_msg:
-                    save_to_db(user_id, user_message, "Scala Monte Carlo opsiyonel tablosu.")
-                    yield SCALA_MONTE_CARLO_MD.encode("utf-8")
-                    return
-                else:
-                    yield (
-                        "Scala modelinde hangi donanımın opsiyonel bilgilerini görmek istersiniz? "
-                        "(Elite / Premium / Monte Carlo)\n"
-                    ).encode("utf-8")
-                    return
-
-        # ------------------------------------------------------------
-        # Normal ChatCompletion (OpenAI)
-        # ------------------------------------------------------------
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
-            yield "Üzgünüm, herhangi bir model hakkında yardımcı olamıyorum.\n".encode("utf-8")
-            return
+            return "Üzgünüm, herhangi bir model hakkında yardımcı olamıyorum.\n".encode("utf-8")
 
         if "conversations" not in self.user_states[user_id]:
             self.user_states[user_id]["conversations"] = {}
@@ -1160,128 +794,42 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
 
         system_prompt = self.SYSTEM_PROMPTS.get(assistant_id, "Sen bir Škoda asistanısın.")
         try:
-            response = openai.ChatCompletion.create(
+            # OpenAI 1.0.0+ API
+            response = openai.chat.completions.create(
                 model="gpt-4",  # veya "gpt-3.5-turbo"
-                messages=[
-                    {"role": "system", "content": system_prompt}
-                ] + conversation_list,
+                messages=[{"role": "system", "content": system_prompt}] + conversation_list,
                 temperature=0.7,
-                stream=True
+                stream=False  # Tek parçada dön
             )
 
-            assistant_response_str = ""
-            for chunk in response:
-                if "choices" in chunk and len(chunk["choices"]) > 0:
-                    delta = chunk["choices"][0]["delta"]
-                    if "content" in delta:
-                        text_part = delta["content"]
-                        assistant_response_str += text_part
-                        yield text_part.encode("utf-8")
+            assistant_response_str = response["choices"][0]["message"]["content"]
 
+            # Sohbet geçmişine ekle
             conversation_list.append({"role": "assistant", "content": assistant_response_str})
-            conversation_id = save_to_db(user_id, user_message, assistant_response_str)
-            yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-            if "görsel olarak görmek ister misiniz?" in assistant_response_str.lower():
-                detected_colors = self.utils.parse_color_names(assistant_response_str)
-                if detected_colors:
-                    self.user_states[user_id]["pending_color_images"] = detected_colors
+            # DB'ye kaydet
+            conversation_id = save_to_db(user_id, user_message, assistant_response_str)
+
+            final_text = assistant_response_str + f"\n[CONVERSATION_ID={conversation_id}]"
+            return final_text.encode("utf-8")
 
         except Exception as e:
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
             save_to_db(user_id, user_message, f"Hata: {str(e)}")
-            yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
+            return f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
 
     def _render_side_by_side_images(self, images, context="model"):
+        """
+        Görsel istekleri işleyerek HTML döndüren fonksiyon (kısaltılmış).
+        """
         if not images:
             yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
             return
 
-        mc_std = [
-            img for img in images
-            if "monte" in img.lower()
-               and "carlo" in img.lower()
-               and "standart" in img.lower()
-        ]
-        pm_ops = [
-            img for img in images
-            if "premium" in img.lower()
-               and "opsiyonel" in img.lower()
-        ]
-        others = [img for img in images if img not in mc_std and img not in pm_ops]
+        # Örnek 2 sütun + "others"
+        # ...
 
-        # Ana çerçeve
-        yield """
-<div style="display: flex; justify-content: space-between; gap: 60px;">
-  <!-- SOL SÜTÜN: MONTE CARLO STANDART -->
-  <div style="flex:1;">
-""".encode("utf-8")
-
-        if mc_std:
-            left_title = os.path.splitext(mc_std[0])[0].replace("_", " ")
-            yield f"<h3>{left_title}</h3>".encode("utf-8")
-
-            for img_file in mc_std:
-                img_url = f"/static/images/{img_file}"
-                base_name = os.path.splitext(img_file)[0].replace("_", " ")
-                block_html = f"""
-<div style="text-align: center; margin-bottom:20px;">
-  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
-        else:
-            yield "<h3>Monte Carlo Standart Görseli Yok</h3>".encode("utf-8")
-
-        yield "</div>".encode("utf-8")
-
-        yield """
-  <div style="flex:1;">
-""".encode("utf-8")
-
-        if pm_ops:
-            right_title = os.path.splitext(pm_ops[0])[0].replace("_", " ")
-            yield f"<h3>{right_title}</h3>".encode("utf-8")
-
-            for img_file in pm_ops:
-                img_url = f"/static/images/{img_file}"
-                base_name = os.path.splitext(img_file)[0].replace("_", " ")
-                block_html = f"""
-<div style="text-align: center; margin-bottom:20px;">
-  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
-        else:
-            yield "<h3>Premium Opsiyonel Görseli Yok</h3>".encode("utf-8")
-
-        yield """
-  </div> <!-- Sağ sütun kapanış -->
-</div> <!-- Ana flex kapanış -->
-""".encode("utf-8")
-
-        if others:
-            yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
-            yield '<div style="display: flex; flex-wrap: wrap; gap: 20px;">'.encode("utf-8")
-            for img_file in others:
-                img_url = f"/static/images/{img_file}"
-                base_name = os.path.splitext(img_file)[0].replace("_", " ")
-                block_html = f"""
-<div style="text-align: center; margin: 5px;">
-  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
-            yield "</div>".encode("utf-8")
+    
 
     def run(self, debug=True):
         self.app.run(debug=debug)
@@ -1290,3 +838,4 @@ Skoda modelleri ile ilgili daha fazla bilgi gerekiyorsa kullanıcıyı şu sitey
         self.stop_worker = True
         self.worker_thread.join(5.0)
         self.logger.info("ChatbotAPI shutdown complete.")
+
