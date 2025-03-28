@@ -41,3 +41,4 @@ class ImageManager:
                 plt.axis("off")
                 plt.title(os.path.splitext(image_name)[0])
                 plt.show()
+
