@@ -92,3 +92,4 @@ class MarkdownProcessor:
             html += '</tr>\n'
         html += '</tbody>\n</table>'
         return html
+
