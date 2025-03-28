@@ -669,3 +669,4 @@ KAMIQ_DONANIM_LISTESI = """\
 (Not: Buradaki veriler birinci PDF ile büyük ölçüde aynıdır, tekrarlanmıştır.)
 - Güvenlik, konfor, opsiyonel paketler, teknik veriler vb. ilk tablolarla aynıdır.
 """
+
