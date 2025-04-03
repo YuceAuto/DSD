@@ -16,6 +16,7 @@ def get_db_connection():
 def create_tables():
     conn = get_db_connection()
     cursor = conn.cursor()
+    # conversations tablosu
     cursor.execute('''
         IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='conversations' AND xtype='U')
         CREATE TABLE conversations (
@@ -25,6 +26,17 @@ def create_tables():
             answer NVARCHAR(MAX) NOT NULL,
             customer_answer INT DEFAULT 0,
             timestamp DATETIME DEFAULT GETDATE()
+        )
+    ''')
+    # cache_faq tablosu (önbellek)
+    cursor.execute('''
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='cache_faq' AND xtype='U')
+        CREATE TABLE cache_faq (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            user_id NVARCHAR(255),
+            question NVARCHAR(MAX),
+            answer NVARCHAR(MAX),
+            created_at DATETIME DEFAULT GETDATE()
         )
     ''')
     conn.commit()

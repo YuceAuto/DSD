@@ -15,18 +15,20 @@ class Config:
 
         # =================================================
         # A S S I S T A N T   C O N F I G
-        # (Burada yeni All Models Bot'u ekliyoruz)
+        # (Burada KAROQ Bot'u da ekliyoruz)
         # =================================================
         self.ASSISTANT_CONFIG = {
             "asst_fw6RpRp8PbNiLUR1KB2XtAkK": ["Kamiq"],
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": ["Fabia"],
             "asst_njSG1NVgg4axJFmvVYAIXrpM": ["Scala"],
+            "asst_SPrqRQcjUnjXGGKQQLy2l2d2": ["Karoq"],  # <-- YENİ EKLENEN
         }
 
         self.ASSISTANT_NAME_MAP = {
             "asst_fw6RpRp8PbNiLUR1KB2XtAkK": "Kamiq",
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": "Fabia",
             "asst_njSG1NVgg4axJFmvVYAIXrpM": "Scala",
+            "asst_SPrqRQcjUnjXGGKQQLy2l2d2": "Karoq",   # <-- YENİ EKLENEN
         }
         # =================================================
 

@@ -1,5 +1,3 @@
-# modules/chatbot.py
-
 import os
 import time
 import logging
@@ -36,6 +34,13 @@ from modules.data.kamiq_data import (
 from modules.data.fabia_data import (
     FABIA_PREMIUM_MD,
     FABIA_MONTE_CARLO_MD
+)
+
+# Karoq tabloları (EKLENDİ)
+from modules.data.karoq_data import (
+    KAROQ_PREMIUM_MD,
+    KAROQ_PRESTIGE_MD,
+    KAROQ_SPORTLINE_MD
 )
 
 load_dotenv()
@@ -201,7 +206,7 @@ class ChatbotAPI:
 
     def _extract_models(self, text: str) -> set:
         """
-        Kullanıcı mesajındaki 'fabia', 'scala', 'kamiq' kelimelerini yakalar.
+        Kullanıcı mesajındaki 'fabia', 'scala', 'kamiq', 'karoq' kelimelerini yakalar.
         """
         lower_t = text.lower()
         models = set()
@@ -211,6 +216,8 @@ class ChatbotAPI:
             models.add("scala")
         if "kamiq" in lower_t:
             models.add("kamiq")
+        if "karoq" in lower_t:  # YENİ EKLENDİ
+            models.add("karoq")
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
@@ -330,6 +337,11 @@ class ChatbotAPI:
             user_trims.add("monte carlo")
         if "elite" in lower_corrected:
             user_trims.add("elite")
+        # Karoq için eklendi (Prestige, Sportline da var) - opsiyonel
+        if "prestige" in lower_corrected:
+            user_trims.add("prestige")
+        if "sportline" in lower_corrected:
+            user_trims.add("sportline")
 
         # Asistan seçimi
         old_assistant_id = None
@@ -486,7 +498,7 @@ class ChatbotAPI:
         # --------------------------------------------------------
         # 1) Model + "görsel" -> renk
         # --------------------------------------------------------
-        model_image_pattern = r"(scala|fabia|kamiq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
+        model_image_pattern = r"(scala|fabia|kamiq|karoq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
         if re.search(model_image_pattern, lower_msg):
             matched_model = re.search(model_image_pattern, lower_msg).group(1)
 
@@ -514,7 +526,7 @@ class ChatbotAPI:
             if self.utils.is_image_request(user_message):
                 if not assistant_id or not assistant_name:
                     save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
-                    yield "Hangi modelin dış görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
+                    yield "Hangi modelin dış görsellerini görmek istersiniz? (Fabia, Scala, Kamiq, Karoq vb.)\n".encode("utf-8")
                     return
 
                 trim_name = self.user_states[user_id]["current_trim"]
@@ -524,6 +536,10 @@ class ChatbotAPI:
                     trim_name = "monte carlo"
                 elif "elite" in lower_msg:
                     trim_name = "elite"
+                elif "prestige" in lower_msg:
+                    trim_name = "prestige"
+                elif "sportline" in lower_msg:
+                    trim_name = "sportline"
 
                 self.user_states[user_id]["current_trim"] = trim_name
 
@@ -575,7 +591,7 @@ class ChatbotAPI:
         if re.search(pattern_ic, lower_msg) and self.utils.is_image_request(user_message):
             if not assistant_id or not assistant_name:
                 save_to_db(user_id, user_message, "İç görseller için model seçilmemiş.")
-                yield "Hangi modelin iç görsellerini görmek istersiniz? (Fabia, Scala, Kamiq vb.)\n".encode("utf-8")
+                yield "Hangi modelin iç görsellerini görmek istersiniz? (Fabia, Scala, Kamiq, Karoq vb.)\n".encode("utf-8")
                 return
 
             trim_name = self.user_states[user_id]["current_trim"]
@@ -585,6 +601,10 @@ class ChatbotAPI:
                 trim_name = "monte carlo"
             elif "elite" in lower_msg:
                 trim_name = "elite"
+            elif "prestige" in lower_msg:
+                trim_name = "prestige"
+            elif "sportline" in lower_msg:
+                trim_name = "sportline"
 
             self.user_states[user_id]["current_trim"] = trim_name
 
@@ -661,6 +681,10 @@ class ChatbotAPI:
             user_trims_in_msg.add("monte carlo")
         if "elite" in lower_msg:
             user_trims_in_msg.add("elite")
+        if "prestige" in lower_msg:
+            user_trims_in_msg.add("prestige")
+        if "sportline" in lower_msg:
+            user_trims_in_msg.add("sportline")
 
         pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
 
@@ -684,10 +708,17 @@ class ChatbotAPI:
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
+                    # Modelinize göre donanımları söyleyebilirsiniz:
                     if found_model == "fabia":
                         yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
-                    else:
+                    elif found_model == "scala":
                         yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                    elif found_model == "kamiq":
+                        yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                    elif found_model == "karoq":
+                        yield "Hangi donanımı görmek istersiniz? (Premium / Prestige / Sportline)\n".encode("utf-8")
+                    else:
+                        yield f"'{found_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                     return
 
         if pending_ops_model:
@@ -698,16 +729,30 @@ class ChatbotAPI:
                     yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
                     return
                 else:
+                    # Modelinize göre
                     if pending_ops_model.lower() == "fabia":
                         yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Premium / Monte Carlo)\n".encode("utf-8")
-                    else:
+                    elif pending_ops_model.lower() == "scala":
                         yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                    elif pending_ops_model.lower() == "kamiq":
+                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                    elif pending_ops_model.lower() == "karoq":
+                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Premium / Prestige / Sportline)\n".encode("utf-8")
+                    else:
+                        yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                     return
             else:
+                # Hala donanım belirtmemişse
                 if pending_ops_model.lower() == "fabia":
                     yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
-                else:
+                elif pending_ops_model.lower() == "scala":
                     yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                elif pending_ops_model.lower() == "kamiq":
+                    yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                elif pending_ops_model.lower() == "karoq":
+                    yield "Hangi donanımı görmek istersiniz? (Premium / Prestige / Sportline)\n".encode("utf-8")
+                else:
+                    yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                 return
 
         # --------------------------------------------------------
@@ -916,6 +961,20 @@ class ChatbotAPI:
                 table_yielded = True
             else:
                 yield "Kamiq için geçerli donanımlar: Elite / Premium / Monte Carlo\n".encode("utf-8")
+
+        elif model_name == "karoq":  # YENİ BLOK
+            if "premium" in trim_name:
+                yield KAROQ_PREMIUM_MD.encode("utf-8")
+                table_yielded = True
+            elif "prestige" in trim_name:
+                yield KAROQ_PRESTIGE_MD.encode("utf-8")
+                table_yielded = True
+            elif "sportline" in trim_name:
+                yield KAROQ_SPORTLINE_MD.encode("utf-8")
+                table_yielded = True
+            else:
+                yield "Karoq için geçerli donanımlar: Premium / Prestige / Sportline\n".encode("utf-8")
+
         else:
             yield f"'{model_name}' modeli için opsiyonel tablo bulunamadı.\n".encode("utf-8")
 
@@ -926,6 +985,8 @@ class ChatbotAPI:
                 all_trims = ["elite", "premium", "monte carlo"]
             elif model_name == "kamiq":
                 all_trims = ["elite", "premium", "monte carlo"]
+            elif model_name == "karoq":
+                all_trims = ["premium", "prestige", "sportline"]
             else:
                 all_trims = []
 
