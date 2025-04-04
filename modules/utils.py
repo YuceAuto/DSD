@@ -1,6 +1,6 @@
 import re
 import logging
-import difflib  # EKLENDİ: difflib.SequenceMatcher ile benzerlik hesaplanacak
+import difflib
 from modules.config import Config
 
 class Utils:
@@ -20,6 +20,7 @@ class Utils:
 
     def is_image_request(self, message):
         msg = message.lower()
+        # "görsel", "resim", "fotoğraf" kelimelerini arıyoruz
         return ("resim" in msg) or ("fotoğraf" in msg) or ("görsel" in msg)
 
     def extract_image_keyword(self, message, assistant_name):
@@ -46,17 +47,7 @@ class Utils:
                 found.append(color)
         return found
 
-    #
-    # EKLENDİ: fuzzy_find fonksiyonu
-    #
     def fuzzy_find(self, user_word, candidate_list, threshold=0.7):
-        """
-        user_word: kullanıcıdan gelen kelime (ör: 'premum')
-        candidate_list: doğru kelimeler listesi (ör: ['premium','elite','monte','carlo'])
-        threshold: benzerlik eşiği (0.7 => %70)
-
-        Döner: candidate_list içinden en iyi eşleşen kelime veya None
-        """
         best_match = None
         best_ratio = 0.0
         for candidate in candidate_list:
