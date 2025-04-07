@@ -345,12 +345,12 @@ class ChatbotAPI:
 
         # Eğer user cümlesinde bir model varsa asistanı ona ayarla
         if len(user_models_in_msg) == 1:
-            # Tek model -> direkt bul
-            found_model = list(user_models_in_msg)[0]  # fabia, scala vs.
+            # Tek model
+            found_model = list(user_models_in_msg)[0]
             new_assistant_id = self._assistant_id_from_model_name(found_model)
         elif len(user_models_in_msg) > 1:
-            # Birden fazla model diyor -> en son modeli seçebilir veya fallback
-            # (Basit mantık: ilk bulduğunu al)
+            # Birden fazla model -> basitçe ilk bulduğumuzu asistan olarak alacağız
+            # (ama görsel isteklerinde hepsi için görselleri listeleyeceğiz)
             first_model = list(user_models_in_msg)[0]
             new_assistant_id = self._assistant_id_from_model_name(first_model)
 
@@ -369,8 +369,24 @@ class ChatbotAPI:
         self.user_states[user_id]["assistant_id"] = new_assistant_id
         assistant_name = self.ASSISTANT_NAME_MAP.get(new_assistant_id, "")
 
-        # Görsel isteklerinde genelde cache kullanılmıyor
+        # Görsel isteği?
         is_image_req = self.utils.is_image_request(user_message)
+
+        # Eğer birden fazla model varsa ve görsel talebi geldiyse:
+        if len(user_models_in_msg) > 1 and is_image_req:
+            def multi_model_generator():
+                chunks = []
+                for chunk in self._handle_multiple_models_image_requests(user_id, corrected_message, user_models_in_msg):
+                    chunks.append(chunk)
+                    yield chunk
+                # Önbellek
+                final_bytes = b"".join(chunks)
+                # Bu durumda spesifik bir asistan ID'ye kaydetmek yerine, 
+                # "ilk" asistan'a kaydediyoruz (ya da bir fallback).
+                self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, new_assistant_id)
+            return self.app.response_class(multi_model_generator(), mimetype="text/plain")
+
+        # Cache kontrolü
         cached_answer = None
         if not is_image_req:
             cached_answer = self._find_fuzzy_cached_answer(
@@ -380,12 +396,11 @@ class ChatbotAPI:
                 threshold=local_threshold
             )
 
-        # ...Eğer cache varsa ve model uyumsuzluğu yoksa direkt dön.
         if cached_answer and not is_image_req:
-            # Model uyuşmazlığı
             answer_text = cached_answer.decode("utf-8")
             models_in_answer = self._extract_models(answer_text)
 
+            # Eğer kullanıcı mesajındaki modeller, cevaptaki modellerle çelişmiyorsa:
             if user_models_in_msg and not user_models_in_msg.issubset(models_in_answer):
                 self.logger.info("Model uyuşmazlığı -> cache bypass.")
             else:
@@ -393,14 +408,13 @@ class ChatbotAPI:
                 time.sleep(1)
                 return self.app.response_class(cached_answer, mimetype="text/plain")
 
-        # Stream response (chat) için generator
+        # Streaming response
         def caching_generator():
             chunks = []
             for chunk in self._generate_response(corrected_message, user_id):
                 chunks.append(chunk)
                 yield chunk
 
-            # Görsel istek değilse cache'e yaz
             if not is_image_req:
                 final_bytes = b"".join(chunks)
                 self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, new_assistant_id)
@@ -466,15 +480,12 @@ class ChatbotAPI:
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # 1) Model + "görsel" -> renk
+        # -----------------------------------------------------
+        # (1) Tek model + "görsel" pattern (örnek: "fabia görsel")
+        # -----------------------------------------------------
         model_image_pattern = r"(scala|fabia|kamiq|karoq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
         if re.search(model_image_pattern, lower_msg):
             matched_model = re.search(model_image_pattern, lower_msg).group(1)
-            # Burada matched_model'e geçiş yapabilirsiniz veya
-            # eğer asistanla zaten örtüşüyorsa aynen devam edebilirsiniz.
-            # Basit yaklaşım: matched_model -> asistan
-            # (Zaten yukarıda asistan ID güncellemesi yapılmış olabilir.)
-
             all_colors = self.config.KNOWN_COLORS
             found_color_images = []
             for clr in all_colors:
@@ -492,10 +503,11 @@ class ChatbotAPI:
                 yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
             return
 
-        # 2) Dış görsel istekleri
+        # -----------------------------------------------------
+        # (2) "dış" görsel istekleri
+        # -----------------------------------------------------
         if any(kw in lower_msg for kw in ["dış ", " dış", "dıs", "dis", "diş"]):
             if self.utils.is_image_request(user_message):
-                # Model tespit yoksa, asistan_name üzerinden devam
                 if not assistant_name:
                     save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
                     yield "Uygun model bulunamadı.\n".encode("utf-8")
@@ -552,7 +564,9 @@ class ChatbotAPI:
                     yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
                 return
 
-        # 3) İç görsel istekleri
+        # -----------------------------------------------------
+        # (3) "iç" görsel istekleri
+        # -----------------------------------------------------
         pattern_interior = r"\b(iç|ic|direksiyon simidi|direksiyon|koltuk|döşeme|multimedya)\b"
         if re.search(pattern_interior, lower_msg) and self.utils.is_image_request(user_message):
             if not assistant_name:
@@ -573,19 +587,17 @@ class ChatbotAPI:
                 trim_name = "sportline"
             self.user_states[user_id]["current_trim"] = trim_name
 
-            # Parçalar
             possible_parts = ["direksiyon simidi", "direksiyon", "koltuk", "döşeme", "multimedya"]
             user_requested_parts = []
             for p in possible_parts:
                 if p in lower_msg:
                     user_requested_parts.append(p)
 
-            # “direksiyon simidi” varsa “direksiyon”u çıkar
+            # “direksiyon simidi” varsa “direksiyon” kelimesini çıkar
             if "direksiyon simidi" in user_requested_parts and "direksiyon" in user_requested_parts:
                 user_requested_parts.remove("direksiyon")
 
             is_general_interior = ("iç" in lower_msg or "ic" in lower_msg)
-
             if is_general_interior and not user_requested_parts:
                 categories = ["direksiyon simidi", "döşeme", "koltuk", "multimedya"]
             else:
@@ -623,7 +635,9 @@ class ChatbotAPI:
                 yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
             return
 
-        # 4) "Evet" kontrolü (renk seçimi)
+        # -----------------------------------------------------
+        # (4) "Evet" kontrolü (renk seçimi vs.)
+        # -----------------------------------------------------
         trimmed_msg = user_message.strip().lower()
         if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
             pending_colors = self.user_states[user_id].get("pending_color_images", [])
@@ -646,7 +660,9 @@ class ChatbotAPI:
                 self.user_states[user_id]["pending_color_images"] = []
                 return
 
-        # 5) Opsiyonel donanım tabloları
+        # -----------------------------------------------------
+        # (5) Opsiyonel donanım tabloları
+        # -----------------------------------------------------
         user_models_in_msg = self._extract_models(user_message)
         user_trims_in_msg = set()
         if "premium" in lower_msg:
@@ -670,7 +686,6 @@ class ChatbotAPI:
             elif len(user_models_in_msg) > 1:
                 found_model = list(user_models_in_msg)[0]  # Basit mantık
 
-            # Eğer user mesajında yoksa da "assistant_name" var mı bak?
             if not found_model and assistant_name:
                 found_model = assistant_name.lower()
 
@@ -731,7 +746,9 @@ class ChatbotAPI:
                     yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                 return
 
-        # 6) Normal Chat (OpenAI vb.)
+        # -----------------------------------------------------
+        # (6) Normal Chat (OpenAI veya benzeri)
+        # -----------------------------------------------------
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
             yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
@@ -789,7 +806,7 @@ class ChatbotAPI:
             conversation_id = save_to_db(user_id, user_message, assistant_response)
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-            # Renk ismi tespiti
+            # Renk ismi tespiti (opsiyonel örnek)
             if "görsel olarak görmek ister misiniz?" in assistant_response.lower():
                 detected_colors = self.utils.parse_color_names(assistant_response)
                 if detected_colors:
@@ -799,6 +816,42 @@ class ChatbotAPI:
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
             save_to_db(user_id, user_message, f"Hata: {str(e)}")
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
+
+    # -----------------------------------------------------
+    # YARDIMCI FONKSİYON: Birden çok modele ait görselleri döndür
+    # -----------------------------------------------------
+    def _handle_multiple_models_image_requests(self, user_id, user_message, models):
+        """
+        Örnek: aynı anda 2+ model için “görsel” isteğinde bulunulmuşsa,
+        her model için renk görsellerini sırasıyla döndürür.
+        Burada sadece renk görselleri demo amaçlı listeleniyor.
+        """
+        all_colors = self.config.KNOWN_COLORS
+        result_texts = []
+
+        for model_name in models:
+            # Başlık
+            title_text = f"<b>{model_name.title()} Renk Görselleri</b><br>"
+            yield title_text.encode("utf-8")
+
+            found_color_images = []
+            for clr in all_colors:
+                filter_str = f"{model_name} {clr}"
+                results = self.image_manager.filter_images_multi_keywords(filter_str)
+                found_color_images.extend(results)
+
+            unique_color_images = list(set(found_color_images))
+            if unique_color_images:
+                yield from self._render_side_by_side_images(unique_color_images, context="color")
+                yield b"<br><br>"
+            else:
+                no_msg = f"{model_name.title()} için renk görseli bulunamadı.<br>"
+                yield no_msg.encode("utf-8")
+
+        # Tüm modellerin görsellerini bitirdikten sonra DB kaydı
+        summary_text = f"{', '.join(models)} modelleri için görseller listelendi."
+        save_to_db(user_id, user_message, summary_text.encode("utf-8"))
+        yield summary_text.encode("utf-8")
 
     def _render_side_by_side_images(self, images, context="model"):
         """
