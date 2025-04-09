@@ -332,7 +332,6 @@ class ChatbotAPI:
         # Eğer yeni mesajda model yok ve last_models dolu ise, soruya ekleyelim
         if not user_models_in_msg and last_models:
             joined_models = " ve ".join(last_models)  # fabia ve scala gibi
-            # Örnek: "fabia ve scala" + " motor donanım özellikleri neler"
             corrected_message = f"{joined_models} {corrected_message}".strip()
             # Tekrar modelleri tespit et
             user_models_in_msg = self._extract_models(corrected_message)
@@ -395,12 +394,10 @@ class ChatbotAPI:
                     yield chunk
                 # Önbellek
                 final_bytes = b"".join(chunks)
-                # Bu durumda spesifik bir asistan ID'ye kaydetmek yerine,
-                # "ilk" asistan'a kaydediyoruz.
                 self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, new_assistant_id)
             return self.app.response_class(multi_model_generator(), mimetype="text/plain")
 
-        # Cache kontrolü
+        # Cache kontrolü (sadece görsel isteği değilse):
         cached_answer = None
         if not is_image_req:
             cached_answer = self._find_fuzzy_cached_answer(
@@ -493,25 +490,38 @@ class ChatbotAPI:
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # (1) Tek model + "görsel" pattern
-        model_image_pattern = r"(scala|fabia|kamiq|karoq)\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
-        if re.search(model_image_pattern, lower_msg):
-            matched_model = re.search(model_image_pattern, lower_msg).group(1)
-            all_colors = self.config.KNOWN_COLORS
-            found_color_images = []
-            for clr in all_colors:
-                filter_str = f"{matched_model} {clr}"
-                results = self.image_manager.filter_images_multi_keywords(filter_str)
-                found_color_images.extend(results)
+        # --------------------------------------------------------------------
+        # (1) Genişletilmiş Regex: Model + Opsiyonel Trim + Görsel isteği
+        # --------------------------------------------------------------------
+        model_trim_image_pattern = (
+            r"(scala|fabia|kamiq|karoq)"
+            r"(?:\s+(premium|monte carlo|elite|prestige|sportline))?"
+            r"\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
+        )
+        match = re.search(model_trim_image_pattern, lower_msg)
+        if match:
+            matched_model = match.group(1)
+            matched_trim = match.group(2)
 
-            unique_color_images = list(set(found_color_images))
-            if unique_color_images:
-                save_to_db(user_id, user_message, f"{matched_model.title()} renk görselleri listeleniyor.")
-                yield f"<b>{matched_model.title()} Renk Görselleri</b><br>".encode("utf-8")
-                yield from self._render_side_by_side_images(unique_color_images, context="color")
+            filter_str = matched_model
+            if matched_trim:
+                filter_str += f" {matched_trim}"
+
+            found_images = self.image_manager.filter_images_multi_keywords(filter_str)
+            if found_images:
+                yield f"<b>{matched_model.title()}".encode("utf-8")
+                if matched_trim:
+                    yield f" {matched_trim.title()}".encode("utf-8")
+                yield f" Görselleri</b><br>".encode("utf-8")
+                for chunk in self._render_side_by_side_images(found_images, context="model+trim"):
+                    yield chunk
             else:
-                save_to_db(user_id, user_message, f"{matched_model.title()} için renk görseli bulunamadı.")
-                yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+                no_img_msg = f"{matched_model.title()}"
+                if matched_trim:
+                    no_img_msg += f" {matched_trim.title()}"
+                no_img_msg += " için görsel bulunamadı.<br>"
+                yield no_img_msg.encode("utf-8")
+
             return
 
         # (2) "dış" görsel istekleri
@@ -545,6 +555,7 @@ class ChatbotAPI:
                 save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
                 yield f"<b>{final_title}</b><br>".encode("utf-8")
 
+                # Renk görselleri
                 all_colors = self.config.KNOWN_COLORS
                 found_color_images = []
                 for clr in all_colors:
@@ -560,6 +571,7 @@ class ChatbotAPI:
                 else:
                     yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
 
+                # Jant görselleri
                 if trim_name:
                     filter_jant = f"{assistant_name} {trim_name} jant"
                 else:
@@ -822,33 +834,63 @@ class ChatbotAPI:
     def _handle_multiple_models_image_requests(self, user_id, user_message, models):
         """
         Örnek: aynı anda 2+ model için “görsel” isteğinde bulunulmuşsa,
-        her model için renk görsellerini sırasıyla döndürür.
+        her model için trim/donanım ve renk görsellerini sırasıyla döndürür.
         """
+        lower_msg = user_message.lower()
+        # Donanım yakalama
+        trim_keywords = []
+        if "premium" in lower_msg:
+            trim_keywords.append("premium")
+        if "monte carlo" in lower_msg:
+            trim_keywords.append("monte carlo")
+        if "elite" in lower_msg:
+            trim_keywords.append("elite")
+        if "prestige" in lower_msg:
+            trim_keywords.append("prestige")
+        if "sportline" in lower_msg:
+            trim_keywords.append("sportline")
+
+        # Renkleri de isteyebilirsiniz
         all_colors = self.config.KNOWN_COLORS
 
         for model_name in models:
-            # Başlık
-            title_text = f"<b>{model_name.title()} Renk Görselleri</b><br>"
+            title_text = f"<b>{model_name.title()} Görselleri</b><br>"
             yield title_text.encode("utf-8")
 
-            found_color_images = []
-            for clr in all_colors:
-                filter_str = f"{model_name} {clr}"
-                results = self.image_manager.filter_images_multi_keywords(filter_str)
-                found_color_images.extend(results)
-
-            unique_color_images = list(set(found_color_images))
-            if unique_color_images:
-                for chunk in self._render_side_by_side_images(unique_color_images, context="color"):
-                    yield chunk
-                yield b"<br><br>"
+            if trim_keywords:
+                # Her trim için arayalım
+                for trim in trim_keywords:
+                    filter_str = f"{model_name} {trim}"
+                    found_images = self.image_manager.filter_images_multi_keywords(filter_str)
+                    if found_images:
+                        yield f"{model_name.title()} {trim.title()} görselleri:<br>".encode("utf-8")
+                        yield from self._render_side_by_side_images(found_images, context="multi")
+                    else:
+                        yield f"{model_name.title()} {trim.title()} için görsel bulunamadı.<br>".encode("utf-8")
             else:
-                no_msg = f"{model_name.title()} için renk görseli bulunamadı.<br>"
-                yield no_msg.encode("utf-8")
+                # Trim yoksa model bazında arayabilir veya renkleri ekleyebilirsiniz
+                found_model_images = self.image_manager.filter_images_multi_keywords(model_name)
+                if found_model_images:
+                    yield from self._render_side_by_side_images(found_model_images, context="no-trim")
+                else:
+                    yield f"{model_name.title()} için genel görsel bulunamadı.<br>".encode("utf-8")
 
-        # Tüm modeller bitti, DB kaydı
-        summary_text = f"{', '.join(models)} modelleri için görseller listelendi."
-        save_to_db(user_id, user_message, summary_text.encode("utf-8"))
+            # Opsiyonel: Renkleri listelemek isterseniz
+            color_images = []
+            for clr in all_colors:
+                fstr = f"{model_name} {clr}"
+                results = self.image_manager.filter_images_multi_keywords(fstr)
+                color_images.extend(results)
+
+            unique_color_images = list(set(color_images))
+            if unique_color_images:
+                yield f"<br><i>{model_name.title()} Renk Görselleri:</i><br>".encode("utf-8")
+                yield from self._render_side_by_side_images(unique_color_images, context="color")
+
+            yield b"<hr>"
+
+        summary_text = f"{', '.join(models)} modelleri için görseller listelendi.<br>"
+        save_to_db(user_id, user_message, summary_text)
         yield summary_text.encode("utf-8")
 
     def _render_side_by_side_images(self, images, context="model"):
