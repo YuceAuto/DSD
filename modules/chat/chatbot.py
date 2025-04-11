@@ -108,7 +108,8 @@ class ChatbotAPI:
     def _define_routes(self):
         @self.app.route("/", methods=["GET"])
         def home():
-            session.pop('last_activity', None)
+            # SİLİNEN VEYA YORUM SATIRI YAPILAN KISIM:
+            # session.pop('last_activity', None)
             return render_template("index.html")
 
         @self.app.route("/ask", methods=["POST"])
@@ -119,7 +120,6 @@ class ChatbotAPI:
         def check_session():
             if 'last_activity' in session:
                 now = time.time()
-                # Session timeout vb. kontrol edebilirsiniz
             return jsonify({"active": True})
 
         @self.app.route("/like", methods=["POST"])
@@ -169,9 +169,7 @@ class ChatbotAPI:
         self.logger.info("Background DB writer thread stopped.")
 
     def _load_cache_from_db(self):
-        """
-        DB'den son X kaydı çekerek self.fuzzy_cache'e doldurabilirsiniz (opsiyonel).
-        """
+        """(Opsiyonel) DB'den cache verilerini alıp self.fuzzy_cache'e koyabilirsiniz."""
         self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
 
         conn = get_db_connection()
@@ -296,7 +294,7 @@ class ChatbotAPI:
 
     def _ask(self):
         """
-        Kullanıcıdan gelen message (POST /ask) -> Chat yanıtı stream.
+        Kullanıcıdan gelen message (POST /ask) -> Chat yanıtı (stream).
         """
         try:
             data = request.get_json()
@@ -330,7 +328,7 @@ class ChatbotAPI:
 
         last_models = self.user_states[user_id].get("last_models", set())
 
-        # Eğer yeni mesajda model yok ve last_models dolu ise
+        # Eğer yeni mesajda model yoksa ve last_models doluysa, önceki modeli ekliyoruz
         if not user_models_in_msg and last_models:
             joined_models = " ve ".join(last_models)
             corrected_message = f"{joined_models} {corrected_message}".strip()
@@ -361,7 +359,6 @@ class ChatbotAPI:
             new_assistant_id = self._assistant_id_from_model_name(first_model)
 
         if new_assistant_id is None and old_assistant_id:
-            # Yeni model yok -> eski asistan
             new_assistant_id = old_assistant_id
 
         if not new_assistant_id:
@@ -377,7 +374,7 @@ class ChatbotAPI:
         # Görsel isteği?
         is_image_req = self.utils.is_image_request(user_message)
 
-        # Birden fazla model ve görsel talebi
+        # Birden fazla model + görsel talebi
         if len(user_models_in_msg) > 1 and is_image_req:
             def multi_model_generator():
                 chunks = []
@@ -482,8 +479,6 @@ class ChatbotAPI:
 
         # -------------------------------------------------------------
         # (1) MODEL + (Opsiyonel Trim) + (görsel|resim|fotoğraf)
-        #     -> Renk görselleri (eğer trim yok veya "renk" kelimesi var)
-        #     -> Yoksa trim görselleri
         # -------------------------------------------------------------
         model_trim_image_pattern = (
             r"(scala|fabia|kamiq|karoq)"
@@ -492,12 +487,16 @@ class ChatbotAPI:
         )
         match = re.search(model_trim_image_pattern, lower_msg)
         if match:
-            matched_model = match.group(1)        # "fabia"/"scala"/"kamiq"/"karoq"
-            matched_trim = match.group(2) or ""   # "premium"/"elite"/"monte carlo" vs. veya None
+            matched_model = match.group(1)
+            matched_trim = match.group(2) or ""
 
-            # Eğer "renk" kelimesi geçiyorsa veya trim belirtilmemişse, renkleri paylaş
+            # Örnek kural:
+            if matched_model == "fabia" and matched_trim == "elite":
+                yield "Fabia Elite görsellerine şu anda erişim sağlayamıyorum.\n".encode("utf-8")
+                return
+
             if ("renk" in lower_msg) or (not matched_trim):
-                all_colors = self.config.KNOWN_COLORS  # ["ay beyazı","gümüş",...]
+                all_colors = self.config.KNOWN_COLORS
                 color_images = []
                 for clr in all_colors:
                     fstr = f"{matched_model} {clr}"
@@ -513,7 +512,6 @@ class ChatbotAPI:
                     yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
 
             else:
-                # Trim belirtilmişse
                 filter_str = f"{matched_model} {matched_trim}"
                 found_images = self.image_manager.filter_images_multi_keywords(filter_str)
 
@@ -524,7 +522,7 @@ class ChatbotAPI:
                 else:
                     yield f"{matched_model.title()} {matched_trim.title()} için görsel bulunamadı.<br>".encode("utf-8")
 
-            return  # Bu bloğun sonunda fonksiyondan çıkıyoruz
+            return
 
         # -------------------------------------------------------------
         # (2) "dış" görsel istekleri
@@ -564,8 +562,7 @@ class ChatbotAPI:
                 found_color_images = []
                 for clr in all_colors:
                     filter_str = f"{assistant_name} {clr}"
-                    results = self.image_manager.filter_images_multi_keywords(filter_str)
-                    found_color_images.extend(results)
+                    found_color_images.extend(self.image_manager.filter_images_multi_keywords(filter_str))
 
                 unique_color_images = list(set(found_color_images))
                 if unique_color_images:
@@ -618,7 +615,7 @@ class ChatbotAPI:
                 if p in lower_msg:
                     user_requested_parts.append(p)
 
-            # “direksiyon simidi” varsa “direksiyon”u listeden çıkar
+            # “direksiyon simidi” varsa “direksiyon”u çıkar
             if "direksiyon simidi" in user_requested_parts and "direksiyon" in user_requested_parts:
                 user_requested_parts.remove("direksiyon")
 
@@ -656,6 +653,115 @@ class ChatbotAPI:
 
             if not any_image_found:
                 yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
+            return
+
+        # -------------------------------------------------------------
+        # (3b) KATEGORİ LINK İSTEĞİ + ÖNCE BİLGİ + SONRA GÖRSELLER
+        # -------------------------------------------------------------
+        category_info = {
+            "dijital gösterge paneli": """\
+Bu dijital gösterge paneli, 10.25" ekranıyla sürücüye önemli bilgileri yüksek çözünürlükle sunar.
+Kişiselleştirilebilir temalar ve sürüş asistanı uyarıları vb. mevcuttur.
+""",
+            "direksiyon simidi": """\
+3 kollu spor direksiyon simidi, deri kaplama ve fonksiyonel tuşları ile konforlu bir sürüş sağlar.
+Opsiyonel ısıtma özelliği mevcuttur.
+""",
+            "döşeme": """\
+Koltuk döşemeleri, yüksek kaliteli kumaş veya opsiyonel deri/Suedia seçeneklerine sahiptir.
+Renk kombinasyonları ile iç mekana şıklık katar.
+""",
+            "jant": """\
+Alüminyum alaşım jantlar farklı ebat ve tasarımlarda sunulur. Standart veya opsiyonel olarak seçilebilir.
+""",
+            "multimedya": """\
+Geniş dokunmatik ekranlı multimedya sistemi; Apple CarPlay, Android Auto ve Bluetooth destekler.
+""",
+            "ön konsol": """\
+Ön konsol tasarımı ergonomik bir yapıya sahiptir. Yumuşak dokulu malzeme ve opsiyonel ambiyans aydınlatma mevcuttur.
+""",
+            "renkler": """\
+Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, sedefli veya özel renkler mevcuttur.
+"""
+        }
+
+        categories_pattern = r"\b(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|ön konsol|renkler)\b"
+        cat_match = re.search(categories_pattern, lower_msg)
+        if cat_match:
+            if not assistant_name:
+                yield "Hangi modelin görsellerini istediğinizi anlayamadım.\n".encode("utf-8")
+                return
+
+            trim_name = self.user_states[user_id]["current_trim"]
+            if "premium" in lower_msg:
+                trim_name = "premium"
+            elif "monte carlo" in lower_msg:
+                trim_name = "monte carlo"
+            elif "elite" in lower_msg:
+                trim_name = "elite"
+            elif "prestige" in lower_msg:
+                trim_name = "prestige"
+            elif "sportline" in lower_msg:
+                trim_name = "sportline"
+            self.user_states[user_id]["current_trim"] = trim_name
+
+            category_word = cat_match.group(1)
+            model_and_trim_title = f"{assistant_name.title()} {trim_name.title()}" if trim_name else assistant_name.title()
+
+            # 1) Ürün Bilgisi Göster
+            if category_word in category_info:
+                info_text = category_info[category_word].strip()
+            else:
+                info_text = f"{category_word.title()} hakkında detaylı bilgi mevcut değil."
+
+            yield f"<b>{model_and_trim_title} - {category_word.title()}</b><br><br>".encode("utf-8")
+            yield f"{info_text}<br><br>".encode("utf-8")
+
+            # 2) Görselleri Göster
+            if category_word == "renkler":
+                all_colors = self.config.KNOWN_COLORS
+                found_color_images = []
+                for clr in all_colors:
+                    filter_str = f"{assistant_name} {clr}"
+                    # Opsiyonel: eğer trim de dahil etmek isterseniz
+                    # filter_str = f"{assistant_name} {trim_name} {clr}"
+                    results = self.image_manager.filter_images_multi_keywords(filter_str)
+                    found_color_images.extend(results)
+
+                if found_color_images:
+                    found_color_images = list(set(found_color_images))
+                    for chunk in self._render_side_by_side_images(found_color_images, context="color"):
+                        yield chunk
+                else:
+                    yield f"{assistant_name.title()} {trim_name} renk görseli bulunamadı.<br>".encode("utf-8")
+            else:
+                filter_str = f"{assistant_name} {trim_name} {category_word}"
+                found_images = self.image_manager.filter_images_multi_keywords(filter_str)
+
+                if not found_images:
+                    yield f"{assistant_name.title()} {trim_name} - '{category_word}' görseli bulunamadı.<br>".encode("utf-8")
+                else:
+                    for chunk in self._render_side_by_side_images(found_images, context="category"):
+                        yield chunk
+
+            # 3) En sonda Kullanıcıya Diğer Kategoriler
+            yield "<br><b>Diğer görselleri de görmek ister misiniz?</b><br>".encode("utf-8")
+            new_categories = [
+                ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
+                ("Direksiyon Simidi", "direksiyon simidi"),
+                ("Döşeme", "döşeme"),
+                ("Jant", "jant"),
+                ("Multimedya", "multimedya"),
+                ("Ön Konsol", "ön konsol"),
+                ("Renkler", "renkler"),
+            ]
+            for label, keyw in new_categories:
+                link_cmd = f"{assistant_name} {trim_name} {keyw}".strip()
+                block_html = f"""
+ &bull; <a href="#" onclick="sendMessage('{link_cmd}');return false;">{label}</a><br>
+"""
+                yield block_html.encode("utf-8")
+
             return
 
         # -------------------------------------------------------------
@@ -838,11 +944,12 @@ class ChatbotAPI:
             save_to_db(user_id, user_message, f"Hata: {str(e)}")
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
 
+    #
+    # ==================================================================
+    #    ÇOKLU MODEL GÖRSEL İSTEĞİ: _handle_multiple_models_image_requests
+    # ==================================================================
+    #
     def _handle_multiple_models_image_requests(self, user_id, user_message, models):
-        """
-        Birden fazla model için “görsel” isteğinde bulunulursa,
-        sırayla her bir modeli ve opsiyonel trim vb. kısımları ekrana basar.
-        """
         lower_msg = user_message.lower()
         trim_keywords = []
         if "premium" in lower_msg:
@@ -856,6 +963,60 @@ class ChatbotAPI:
         if "sportline" in lower_msg:
             trim_keywords.append("sportline")
 
+        # YENİ KURAL: (FABIA + SCALA + PREMIUM) => Tıklanabilir link
+        if "fabia" in models and "scala" in models and "premium" in trim_keywords:
+            yield "<b>Fabia Premium ve Scala Premium için aşağıdaki kategori başlıklarına tıklayabilirsiniz:</b><br><br>".encode("utf-8")
+            categories = [
+                ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
+                ("Direksiyon Simidi", "direksiyon simidi"),
+                ("Döşeme", "döşeme"),
+                ("Jant", "jant"),
+                ("Multimedya", "multimedya"),
+                ("Ön Konsol", "ön konsol"),
+                ("Renkler", "renkler"),
+            ]
+            for cat_label, cat_keyword in categories:
+                fabia_cmd = f"fabia premium {cat_keyword}"
+                scala_cmd = f"scala premium {cat_keyword}"
+                html_snippet = f"""
+<p><b>{cat_label}:</b><br>
+   &bull; <a href="#" onclick="sendMessage('{fabia_cmd}'); return false;">Fabia Premium</a><br>
+   &bull; <a href="#" onclick="sendMessage('{scala_cmd}'); return false;">Scala Premium</a>
+</p>
+"""
+                yield html_snippet.encode("utf-8")
+
+            summary_text = ("Fabia ve Scala Premium donanımları için görsel kategorileri listelendi. "
+                            "İstediğiniz başlığa tıklayarak ilgili görselleri tetikleyebilirsiniz.")
+            save_to_db(user_id, user_message, summary_text)
+            yield summary_text.encode("utf-8")
+            return
+
+        # Eğer fabia ve scala aynı anda isteniyor ama premium değilse, eskisi gibi renk görselleri
+        if "fabia" in models and "scala" in models:
+            for model_name in models:
+                yield f"<b>{model_name.title()} Renk Görselleri</b><br>".encode("utf-8")
+                color_images = []
+                for clr in self.config.KNOWN_COLORS:
+                    fstr = f"{model_name} {clr}"
+                    results = self.image_manager.filter_images_multi_keywords(fstr)
+                    color_images.extend(results)
+                unique_color_images = list(set(color_images))
+
+                if unique_color_images:
+                    for chunk in self._render_side_by_side_images(unique_color_images, context="color"):
+                        yield chunk
+                else:
+                    yield f"{model_name.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+
+                yield b"<hr>"
+
+            summary_text = f"{', '.join(models)} modelleri için renk görselleri listelendi.<br>"
+            save_to_db(user_id, user_message, summary_text)
+            yield summary_text.encode("utf-8")
+            return
+
+        # Diğer çoklu model (ör. fabia + kamiq) normal akış
         all_colors = self.config.KNOWN_COLORS
 
         for model_name in models:
@@ -878,7 +1039,7 @@ class ChatbotAPI:
                 else:
                     yield f"{model_name.title()} için genel görsel bulunamadı.<br>".encode("utf-8")
 
-            # Renk görselleri (opsiyonel)
+            # Renk görselleri de ekleyebilirsiniz (opsiyonel)
             color_images = []
             for clr in all_colors:
                 fstr = f"{model_name} {clr}"
@@ -899,7 +1060,6 @@ class ChatbotAPI:
     def _render_side_by_side_images(self, images, context="model"):
         """
         Görselleri belli bir düzende ekrana basan yardımcı fonksiyon.
-        Burada 'img_file' alt klasör yolunu içerir.
         """
         import os
 
@@ -926,7 +1086,6 @@ class ChatbotAPI:
 <div style="display: flex; justify-content: space-between; gap: 60px;">
   <div style="flex:1;">
 """
-
         if mc_std:
             left_title = os.path.splitext(os.path.basename(mc_std[0]))[0].replace("_", " ")
             yield f"<h3>{left_title}</h3>".encode("utf-8")
@@ -954,7 +1113,6 @@ class ChatbotAPI:
         yield b"""
   <div style="flex:1;">
 """
-
         if pm_ops:
             right_title = os.path.splitext(os.path.basename(pm_ops[0]))[0].replace("_", " ")
             yield f"<h3>{right_title}</h3>".encode("utf-8")
