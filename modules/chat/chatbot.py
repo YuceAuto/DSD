@@ -92,6 +92,16 @@ class ChatbotAPI:
         # Önbellekteki cevabın geçerli kalma süresi (1 gün = 86400 sn)
         self.CACHE_EXPIRY_SECONDS = 86400
 
+        # ----------------------------------------------------------------
+        # MODEL - TRIM EŞLEŞMELERİ (Geçerli donanımlar)
+        # ----------------------------------------------------------------
+        self.MODEL_VALID_TRIMS = {
+            "fabia": ["premium", "monte carlo"],
+            "scala": ["elite", "premium", "monte carlo"],
+            "kamiq": ["elite", "premium", "monte carlo"],
+            "karoq": ["premium", "prestige", "sportline"]
+        }
+
         # Flask route tanımları
         self._define_routes()
 
@@ -108,8 +118,6 @@ class ChatbotAPI:
     def _define_routes(self):
         @self.app.route("/", methods=["GET"])
         def home():
-            # SİLİNEN VEYA YORUM SATIRI YAPILAN KISIM:
-            # session.pop('last_activity', None)
             return render_template("index.html")
 
         @self.app.route("/ask", methods=["POST"])
@@ -328,7 +336,7 @@ class ChatbotAPI:
 
         last_models = self.user_states[user_id].get("last_models", set())
 
-        # Eğer yeni mesajda model yoksa ve last_models doluysa, önceki modeli ekliyoruz
+        # Eğer yeni mesajda model yoksa ve last_models doluysa, önceki modeli ekle
         if not user_models_in_msg and last_models:
             joined_models = " ve ".join(last_models)
             corrected_message = f"{joined_models} {corrected_message}".strip()
@@ -371,21 +379,10 @@ class ChatbotAPI:
         self.user_states[user_id]["assistant_id"] = new_assistant_id
         assistant_name = self.ASSISTANT_NAME_MAP.get(new_assistant_id, "")
 
-        # Görsel isteği?
+        # Görsel isteği mi?
         is_image_req = self.utils.is_image_request(user_message)
 
-        # Birden fazla model + görsel talebi
-        if len(user_models_in_msg) > 1 and is_image_req:
-            def multi_model_generator():
-                chunks = []
-                for chunk in self._handle_multiple_models_image_requests(user_id, corrected_message, user_models_in_msg):
-                    chunks.append(chunk)
-                    yield chunk
-                final_bytes = b"".join(chunks)
-                self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, new_assistant_id)
-            return self.app.response_class(multi_model_generator(), mimetype="text/plain")
-
-        # Cache kontrolü (sadece görsel isteği değilse)
+        # Cache kontrolü (görsel talebi değilse)
         cached_answer = None
         if not is_image_req:
             cached_answer = self._find_fuzzy_cached_answer(
@@ -394,16 +391,15 @@ class ChatbotAPI:
                 new_assistant_id,
                 threshold=local_threshold
             )
-
-        if cached_answer and not is_image_req:
-            answer_text = cached_answer.decode("utf-8")
-            models_in_answer = self._extract_models(answer_text)
-            if user_models_in_msg and not user_models_in_msg.issubset(models_in_answer):
-                self.logger.info("Model uyuşmazlığı -> cache bypass.")
-            else:
-                self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt.")
-                time.sleep(1)
-                return self.app.response_class(cached_answer, mimetype="text/plain")
+            if cached_answer:
+                answer_text = cached_answer.decode("utf-8")
+                models_in_answer = self._extract_models(answer_text)
+                if user_models_in_msg and not user_models_in_msg.issubset(models_in_answer):
+                    self.logger.info("Model uyuşmazlığı -> cache bypass.")
+                else:
+                    self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt.")
+                    time.sleep(1)
+                    return self.app.response_class(cached_answer, mimetype="text/plain")
 
         # Streaming response
         def caching_generator():
@@ -411,7 +407,6 @@ class ChatbotAPI:
             for chunk in self._generate_response(corrected_message, user_id):
                 chunks.append(chunk)
                 yield chunk
-
             if not is_image_req:
                 final_bytes = b"".join(chunks)
                 self._store_in_fuzzy_cache(user_id, corrected_message, final_bytes, new_assistant_id)
@@ -466,10 +461,14 @@ class ChatbotAPI:
 
     def _generate_response(self, user_message, user_id):
         """
-        Asıl iş mantığı - satır satır yield edilerek frontend'e iletiliyor.
+        Ana yanıt oluşturma:
+        1) Geçersiz trim kontrolü
+        2) İlk görsel -> tek random renk
+        3) Renkler linkine tıklandığında -> tüm renkler (fallback)
+        4) Opsiyonel tablolar
+        ...
         """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
-
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         assistant_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "")
         lower_msg = user_message.lower()
@@ -477,322 +476,105 @@ class ChatbotAPI:
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # -------------------------------------------------------------
-        # (1) MODEL + (Opsiyonel Trim) + (görsel|resim|fotoğraf)
-        # -------------------------------------------------------------
+        # (A) Yardımcı fonksiyon: Kategori linkleri
+        def _show_categories_links(model, trim):
+            model_title = model.title()
+            trim_title = trim.title() if trim else ""
+            if trim_title:
+                base_cmd = f"{model} {trim}"
+                heading = f"<b>{model_title} {trim_title} Kategoriler</b><br>"
+            else:
+                base_cmd = f"{model}"
+                heading = f"<b>{model_title} Kategoriler</b><br>"
+
+            categories = [
+                ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
+                ("Direksiyon Simidi", "direksiyon simidi"),
+                ("Döşeme", "döşeme"),
+                ("Jant", "jant"),
+                ("Multimedya", "multimedya"),
+                ("Renkler", "renkler"),
+            ]
+            html_snippet = heading
+            for label, keyw in categories:
+                link_cmd = f"{base_cmd} {keyw}".strip()
+                html_snippet += f"""&bull; <a href="#" onclick="sendMessage('{link_cmd}');return false;">{label}</a><br>"""
+
+            return html_snippet
+
+        # (B) Geçersiz trim uyarısı
+        def _yield_invalid_trim_message(model, invalid_trim):
+            msg = f"{model.title()} {invalid_trim.title()} modelimiz bulunmamaktadır.<br>"
+            msg += f"Dilerseniz aşağıdaki donanımlarımıza bakabilirsiniz:<br><br>"
+            yield msg.encode("utf-8")
+
+            valid_trims = self.MODEL_VALID_TRIMS.get(model, [])
+            for vt in valid_trims:
+                cmd_str = f"{model} {vt} görsel"
+                link_label = f"{model.title()} {vt.title()}"
+                link_html = f"""&bull; <a href="#" onclick="sendMessage('{cmd_str}');return false;">{link_label}</a><br>"""
+                yield link_html.encode("utf-8")
+
+        # (C) "model + trim + görsel" pattern
         model_trim_image_pattern = (
-            r"(scala|fabia|kamiq|karoq)"
+            r"(fabia|scala|kamiq|karoq)"
             r"(?:\s+(premium|monte carlo|elite|prestige|sportline))?"
-            r"\s+(?:görsel(?:er)?|resim(?:ler)?|fotoğraf(?:lar)?)"
+            r"\s+(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
         )
         match = re.search(model_trim_image_pattern, lower_msg)
         if match:
             matched_model = match.group(1)
             matched_trim = match.group(2) or ""
 
-            # Örnek kural:
-            if matched_model == "fabia" and matched_trim == "elite":
-                yield "Fabia Elite görsellerine şu anda erişim sağlayamıyorum.\n".encode("utf-8")
+            if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
+                # Geçersiz trim
+                yield from _yield_invalid_trim_message(matched_model, matched_trim)
                 return
 
-            if ("renk" in lower_msg) or (not matched_trim):
-                all_colors = self.config.KNOWN_COLORS
-                color_images = []
-                for clr in all_colors:
-                    fstr = f"{matched_model} {clr}"
-                    results = self.image_manager.filter_images_multi_keywords(fstr)
-                    color_images.extend(results)
-                color_images = list(set(color_images))
+            # Trim set
+            self.user_states[user_id]["current_trim"] = matched_trim
 
-                if color_images:
-                    yield f"<b>{matched_model.title()} Renk Görselleri</b><br>".encode("utf-8")
-                    for chunk in self._render_side_by_side_images(color_images, context="color"):
-                        yield chunk
-                else:
-                    yield f"{matched_model.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+            # 1) Tek rastgele renk görseli
+            yield from self._show_single_random_color_image(matched_model, matched_trim)
 
-            else:
-                filter_str = f"{matched_model} {matched_trim}"
-                found_images = self.image_manager.filter_images_multi_keywords(filter_str)
+            # 2) Kategori linkleri
+            cat_links_html = _show_categories_links(matched_model, matched_trim)
+            yield cat_links_html.encode("utf-8")
 
-                if found_images:
-                    yield f"<b>{matched_model.title()} {matched_trim.title()} Görselleri</b><br>".encode("utf-8")
-                    for chunk in self._render_side_by_side_images(found_images, context="model+trim"):
-                        yield chunk
-                else:
-                    yield f"{matched_model.title()} {matched_trim.title()} için görsel bulunamadı.<br>".encode("utf-8")
-
+            save_to_db(user_id, user_message, f"{matched_model.title()} {matched_trim.title()} -> tek renk + linkler")
             return
 
-        # -------------------------------------------------------------
-        # (2) "dış" görsel istekleri
-        # -------------------------------------------------------------
-        if any(kw in lower_msg for kw in ["dış ", " dış", "dıs", "dis", "diş"]):
-            if self.utils.is_image_request(user_message):
-                if not assistant_name:
-                    save_to_db(user_id, user_message, "Dış görseller için model seçilmemiş.")
-                    yield "Uygun model bulunamadı.\n".encode("utf-8")
-                    return
+        # (D) "model + trim + kategori" pattern
+        categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
+        cat_match = re.search(
+            fr"(fabia|scala|kamiq|karoq)\s*(premium|monte carlo|elite|prestige|sportline)?\s*({categories_pattern})",
+            lower_msg
+        )
 
-                trim_name = self.user_states[user_id]["current_trim"]
-                if "premium" in lower_msg:
-                    trim_name = "premium"
-                elif "monte carlo" in lower_msg:
-                    trim_name = "monte carlo"
-                elif "elite" in lower_msg:
-                    trim_name = "elite"
-                elif "prestige" in lower_msg:
-                    trim_name = "prestige"
-                elif "sportline" in lower_msg:
-                    trim_name = "sportline"
-
-                self.user_states[user_id]["current_trim"] = trim_name
-
-                model_title = assistant_name.title()
-                if trim_name:
-                    final_title = f"{model_title} {trim_name.title()} Dış Görselleri"
-                else:
-                    final_title = f"{model_title} Dış Görselleri"
-
-                save_to_db(user_id, user_message, f"{final_title} listeleniyor.")
-                yield f"<b>{final_title}</b><br>".encode("utf-8")
-
-                # Renk görselleri
-                all_colors = self.config.KNOWN_COLORS
-                found_color_images = []
-                for clr in all_colors:
-                    filter_str = f"{assistant_name} {clr}"
-                    found_color_images.extend(self.image_manager.filter_images_multi_keywords(filter_str))
-
-                unique_color_images = list(set(found_color_images))
-                if unique_color_images:
-                    yield "<h4>Renk Görselleri</h4>".encode("utf-8")
-                    yield from self._render_side_by_side_images(unique_color_images, context="color")
-                    yield "<br>".encode("utf-8")
-                else:
-                    yield "Renk görselleri bulunamadı.<br><br>".encode("utf-8")
-
-                # Jant görselleri
-                if trim_name:
-                    filter_jant = f"{assistant_name} {trim_name} jant"
-                else:
-                    filter_jant = f"{assistant_name} jant"
-
-                jant_images = self.image_manager.filter_images_multi_keywords(filter_jant)
-                if jant_images:
-                    yield "<h4>Jant Görselleri (Standart + Opsiyonel)</h4>".encode("utf-8")
-                    yield from self._render_side_by_side_images(jant_images, context="jant")
-                else:
-                    yield "Jant görselleri bulunamadı.<br><br>".encode("utf-8")
-                return
-
-        # -------------------------------------------------------------
-        # (3) "iç" görsel istekleri
-        # -------------------------------------------------------------
-        pattern_interior = r"\b(iç|ic|direksiyon simidi|direksiyon|koltuk|döşeme|multimedya)\b"
-        if re.search(pattern_interior, lower_msg) and self.utils.is_image_request(user_message):
-            if not assistant_name:
-                save_to_db(user_id, user_message, "İç mekan görselleri için model seçilmemiş.")
-                yield "Uygun model bulunamadı.\n".encode("utf-8")
-                return
-
-            trim_name = self.user_states[user_id]["current_trim"]
-            if "premium" in lower_msg:
-                trim_name = "premium"
-            elif "monte carlo" in lower_msg:
-                trim_name = "monte carlo"
-            elif "elite" in lower_msg:
-                trim_name = "elite"
-            elif "prestige" in lower_msg:
-                trim_name = "prestige"
-            elif "sportline" in lower_msg:
-                trim_name = "sportline"
-            self.user_states[user_id]["current_trim"] = trim_name
-
-            possible_parts = ["direksiyon simidi", "direksiyon", "koltuk", "döşeme", "multimedya"]
-            user_requested_parts = []
-            for p in possible_parts:
-                if p in lower_msg:
-                    user_requested_parts.append(p)
-
-            # “direksiyon simidi” varsa “direksiyon”u çıkar
-            if "direksiyon simidi" in user_requested_parts and "direksiyon" in user_requested_parts:
-                user_requested_parts.remove("direksiyon")
-
-            is_general_interior = ("iç" in lower_msg or "ic" in lower_msg)
-            if is_general_interior and not user_requested_parts:
-                categories = ["direksiyon simidi", "döşeme", "koltuk", "multimedya"]
-            else:
-                categories = user_requested_parts if user_requested_parts else ["direksiyon simidi", "döşeme", "koltuk", "multimedya"]
-
-            model_and_trim_title = assistant_name.title()
-            if trim_name:
-                model_and_trim_title += f" {trim_name.title()}"
-            model_and_trim_title += " İç Görselleri"
-
-            save_to_db(user_id, user_message, f"{model_and_trim_title} listeleniyor.")
-            yield f"<b>{model_and_trim_title}</b><br><br>".encode("utf-8")
-
-            any_image_found = False
-            for cat in categories:
-                if trim_name:
-                    full_filter = f"{assistant_name} {trim_name} {cat}"
-                else:
-                    full_filter = f"{assistant_name} {cat}"
-
-                found_images = self.image_manager.filter_images_multi_keywords(full_filter)
-
-                yield f"<h4>{cat.title()} Görselleri</h4>".encode("utf-8")
-                if found_images:
-                    any_image_found = True
-                    for chunk in self._render_side_by_side_images(found_images, context="ic"):
-                        yield chunk
-                    yield "<br>".encode("utf-8")
-                else:
-                    yield f"{cat.title()} görseli bulunamadı.<br><br>".encode("utf-8")
-
-            if not any_image_found:
-                yield "Herhangi bir iç görsel bulunamadı.<br>".encode("utf-8")
-            return
-
-        # -------------------------------------------------------------
-        # (3b) KATEGORİ LINK İSTEĞİ + ÖNCE BİLGİ + SONRA GÖRSELLER
-        # -------------------------------------------------------------
-        category_info = {
-            "dijital gösterge paneli": """\
-Bu dijital gösterge paneli, 10.25" ekranıyla sürücüye önemli bilgileri yüksek çözünürlükle sunar.
-Kişiselleştirilebilir temalar ve sürüş asistanı uyarıları vb. mevcuttur.
-""",
-            "direksiyon simidi": """\
-3 kollu spor direksiyon simidi, deri kaplama ve fonksiyonel tuşları ile konforlu bir sürüş sağlar.
-Opsiyonel ısıtma özelliği mevcuttur.
-""",
-            "döşeme": """\
-Koltuk döşemeleri, yüksek kaliteli kumaş veya opsiyonel deri/Suedia seçeneklerine sahiptir.
-Renk kombinasyonları ile iç mekana şıklık katar.
-""",
-            "jant": """\
-Alüminyum alaşım jantlar farklı ebat ve tasarımlarda sunulur. Standart veya opsiyonel olarak seçilebilir.
-""",
-            "multimedya": """\
-Geniş dokunmatik ekranlı multimedya sistemi; Apple CarPlay, Android Auto ve Bluetooth destekler.
-""",
-            "ön konsol": """\
-Ön konsol tasarımı ergonomik bir yapıya sahiptir. Yumuşak dokulu malzeme ve opsiyonel ambiyans aydınlatma mevcuttur.
-""",
-            "renkler": """\
-Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, sedefli veya özel renkler mevcuttur.
-"""
-        }
-
-        categories_pattern = r"\b(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|ön konsol|renkler)\b"
-        cat_match = re.search(categories_pattern, lower_msg)
         if cat_match:
-            if not assistant_name:
-                yield "Hangi modelin görsellerini istediğinizi anlayamadım.\n".encode("utf-8")
+            matched_model = cat_match.group(1)
+            matched_trim = cat_match.group(2) or ""
+            matched_category = cat_match.group(3)
+
+            if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
+                yield from _yield_invalid_trim_message(matched_model, matched_trim)
                 return
 
-            trim_name = self.user_states[user_id]["current_trim"]
-            if "premium" in lower_msg:
-                trim_name = "premium"
-            elif "monte carlo" in lower_msg:
-                trim_name = "monte carlo"
-            elif "elite" in lower_msg:
-                trim_name = "elite"
-            elif "prestige" in lower_msg:
-                trim_name = "prestige"
-            elif "sportline" in lower_msg:
-                trim_name = "sportline"
-            self.user_states[user_id]["current_trim"] = trim_name
+            # Trim set
+            self.user_states[user_id]["current_trim"] = matched_trim
 
-            category_word = cat_match.group(1)
-            model_and_trim_title = f"{assistant_name.title()} {trim_name.title()}" if trim_name else assistant_name.title()
+            # Renkler -> Tüm renk (fallback)
+            # Diğer kategori -> direkt
+            yield from self._show_category_images(matched_model, matched_trim, matched_category)
 
-            # 1) Ürün Bilgisi Göster
-            if category_word in category_info:
-                info_text = category_info[category_word].strip()
-            else:
-                info_text = f"{category_word.title()} hakkında detaylı bilgi mevcut değil."
+            # Sonra yine kategori linkleri
+            cat_links_html = _show_categories_links(matched_model, matched_trim)
+            yield cat_links_html.encode("utf-8")
 
-            yield f"<b>{model_and_trim_title} - {category_word.title()}</b><br><br>".encode("utf-8")
-            yield f"{info_text}<br><br>".encode("utf-8")
-
-            # 2) Görselleri Göster
-            if category_word == "renkler":
-                all_colors = self.config.KNOWN_COLORS
-                found_color_images = []
-                for clr in all_colors:
-                    filter_str = f"{assistant_name} {clr}"
-                    # Opsiyonel: eğer trim de dahil etmek isterseniz
-                    # filter_str = f"{assistant_name} {trim_name} {clr}"
-                    results = self.image_manager.filter_images_multi_keywords(filter_str)
-                    found_color_images.extend(results)
-
-                if found_color_images:
-                    found_color_images = list(set(found_color_images))
-                    for chunk in self._render_side_by_side_images(found_color_images, context="color"):
-                        yield chunk
-                else:
-                    yield f"{assistant_name.title()} {trim_name} renk görseli bulunamadı.<br>".encode("utf-8")
-            else:
-                filter_str = f"{assistant_name} {trim_name} {category_word}"
-                found_images = self.image_manager.filter_images_multi_keywords(filter_str)
-
-                if not found_images:
-                    yield f"{assistant_name.title()} {trim_name} - '{category_word}' görseli bulunamadı.<br>".encode("utf-8")
-                else:
-                    for chunk in self._render_side_by_side_images(found_images, context="category"):
-                        yield chunk
-
-            # 3) En sonda Kullanıcıya Diğer Kategoriler
-            yield "<br><b>Diğer görselleri de görmek ister misiniz?</b><br>".encode("utf-8")
-            new_categories = [
-                ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
-                ("Direksiyon Simidi", "direksiyon simidi"),
-                ("Döşeme", "döşeme"),
-                ("Jant", "jant"),
-                ("Multimedya", "multimedya"),
-                ("Ön Konsol", "ön konsol"),
-                ("Renkler", "renkler"),
-            ]
-            for label, keyw in new_categories:
-                link_cmd = f"{assistant_name} {trim_name} {keyw}".strip()
-                block_html = f"""
- &bull; <a href="#" onclick="sendMessage('{link_cmd}');return false;">{label}</a><br>
-"""
-                yield block_html.encode("utf-8")
-
+            save_to_db(user_id, user_message, f"{matched_model.title()} {matched_trim} -> kategori: {matched_category}")
             return
 
-        # -------------------------------------------------------------
-        # (4) "Evet" kontrolü (renk seçimi vb.)
-        # -------------------------------------------------------------
-        trimmed_msg = user_message.strip().lower()
-        if trimmed_msg in ["evet", "evet.", "evet!", "evet?", "evet,"]:
-            pending_colors = self.user_states[user_id].get("pending_color_images", [])
-            if pending_colors:
-                asst_name = assistant_name.lower() if assistant_name else "scala"
-                all_found_images = []
-                for clr in pending_colors:
-                    keywords = f"{asst_name} {clr}"
-                    results = self.image_manager.filter_images_multi_keywords(keywords)
-                    all_found_images.extend(results)
-
-                if not all_found_images:
-                    save_to_db(user_id, user_message, "Bu renklerle ilgili görsel bulunamadı.")
-                    yield "Bu renklerle ilgili görsel bulunamadı.\n".encode("utf-8")
-                    return
-
-                save_to_db(user_id, user_message, "Renk görselleri listelendi (evet).")
-                yield "<b>İşte seçtiğiniz renk görselleri:</b><br>".encode("utf-8")
-                for chunk in self._render_side_by_side_images(all_found_images, context=None):
-                    yield chunk
-                self.user_states[user_id]["pending_color_images"] = []
-                return
-
-        # -------------------------------------------------------------
-        # (5) Opsiyonel donanım tabloları
-        # -------------------------------------------------------------
+        # (E) Opsiyonel tablo istekleri
         user_trims_in_msg = set()
         if "premium" in lower_msg:
             user_trims_in_msg.add("premium")
@@ -825,10 +607,15 @@ Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, s
                 self.user_states[user_id]["pending_opsiyonel_model"] = found_model
                 if len(user_trims_in_msg) == 1:
                     found_trim = list(user_trims_in_msg)[0]
+                    if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
+                        yield from _yield_invalid_trim_message(found_model, found_trim)
+                        return
+
                     save_to_db(user_id, user_message, f"{found_model.title()} {found_trim.title()} opsiyonel tablosu.")
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
+                    # Kullanıcıdan hangi trim?
                     if found_model == "fabia":
                         yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
                     elif found_model == "scala":
@@ -841,14 +628,20 @@ Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, s
                         yield f"'{found_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                     return
 
+        # (F) Eğer opsiyonel model bekleniyorsa
         if pending_ops_model:
             if user_trims_in_msg:
                 if len(user_trims_in_msg) == 1:
                     found_trim = list(user_trims_in_msg)[0]
+                    if found_trim not in self.MODEL_VALID_TRIMS.get(pending_ops_model, []):
+                        yield from _yield_invalid_trim_message(pending_ops_model, found_trim)
+                        return
+
                     save_to_db(user_id, user_message, f"{pending_ops_model.title()} {found_trim.title()} opsiyonel tablosu.")
                     yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
                     return
                 else:
+                    # Birden fazla trim tespit
                     if pending_ops_model.lower() == "fabia":
                         yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Premium / Monte Carlo)\n".encode("utf-8")
                     elif pending_ops_model.lower() == "scala":
@@ -861,6 +654,7 @@ Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, s
                         yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                     return
             else:
+                # Kullanıcı trim belirtmemiş
                 if pending_ops_model.lower() == "fabia":
                     yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
                 elif pending_ops_model.lower() == "scala":
@@ -873,9 +667,7 @@ Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, s
                     yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                 return
 
-        # -------------------------------------------------------------
-        # (6) Normal Chat (OpenAI vb.)
-        # -------------------------------------------------------------
+        # (G) Normal Chat (OpenAI) - opsiyonel kısım
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
             yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
@@ -933,217 +725,97 @@ Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, s
             conversation_id = save_to_db(user_id, user_message, assistant_response)
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-            # Renk ismi tespiti (opsiyonel)
-            if "görsel olarak görmek ister misiniz?" in assistant_response.lower():
-                detected_colors = self.utils.parse_color_names(assistant_response)
-                if detected_colors:
-                    self.user_states[user_id]["pending_color_images"] = detected_colors
-
         except Exception as e:
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
             save_to_db(user_id, user_message, f"Hata: {str(e)}")
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
 
-    #
-    # ==================================================================
-    #    ÇOKLU MODEL GÖRSEL İSTEĞİ: _handle_multiple_models_image_requests
-    # ==================================================================
-    #
-    def _handle_multiple_models_image_requests(self, user_id, user_message, models):
-        lower_msg = user_message.lower()
-        trim_keywords = []
-        if "premium" in lower_msg:
-            trim_keywords.append("premium")
-        if "monte carlo" in lower_msg:
-            trim_keywords.append("monte carlo")
-        if "elite" in lower_msg:
-            trim_keywords.append("elite")
-        if "prestige" in lower_msg:
-            trim_keywords.append("prestige")
-        if "sportline" in lower_msg:
-            trim_keywords.append("sportline")
 
-        # YENİ KURAL: (FABIA + SCALA + PREMIUM) => Tıklanabilir link
-        if "fabia" in models and "scala" in models and "premium" in trim_keywords:
-            yield "<b>Fabia Premium ve Scala Premium için aşağıdaki kategori başlıklarına tıklayabilirsiniz:</b><br><br>".encode("utf-8")
-            categories = [
-                ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
-                ("Direksiyon Simidi", "direksiyon simidi"),
-                ("Döşeme", "döşeme"),
-                ("Jant", "jant"),
-                ("Multimedya", "multimedya"),
-                ("Ön Konsol", "ön konsol"),
-                ("Renkler", "renkler"),
-            ]
-            for cat_label, cat_keyword in categories:
-                fabia_cmd = f"fabia premium {cat_keyword}"
-                scala_cmd = f"scala premium {cat_keyword}"
-                html_snippet = f"""
-<p><b>{cat_label}:</b><br>
-   &bull; <a href="#" onclick="sendMessage('{fabia_cmd}'); return false;">Fabia Premium</a><br>
-   &bull; <a href="#" onclick="sendMessage('{scala_cmd}'); return false;">Scala Premium</a>
-</p>
-"""
-                yield html_snippet.encode("utf-8")
+    # ====================================================================
+    # YARDIMCI FONKSİYONLAR
+    # ====================================================================
 
-            summary_text = ("Fabia ve Scala Premium donanımları için görsel kategorileri listelendi. "
-                            "İstediğiniz başlığa tıklayarak ilgili görselleri tetikleyebilirsiniz.")
-            save_to_db(user_id, user_message, summary_text)
-            yield summary_text.encode("utf-8")
+    def _show_single_random_color_image(self, model, trim):
+        """
+        1) 'model + trim + color' şeklinde görsel arar (örn. 'kamiq premium blue')
+           sonuç bulunamazsa => 'model + color' ('kamiq blue') fallback.
+        2) Rastgele 1 tane seçip döndürür.
+        """
+        model_trim_str = f"{model} {trim}".strip().lower()
+
+        # 1. Adım: TRIM + COLOR
+        found_any = False
+        all_color_images = []
+        for clr in self.config.KNOWN_COLORS:
+            filter_str = f"{model_trim_str} {clr}"
+            results = self.image_manager.filter_images_multi_keywords(filter_str)
+            if results:
+                all_color_images.extend(results)
+                found_any = True
+
+        # 2. Adım: Hiç yoksa sadece MODEL + COLOR
+        if not found_any:
+            for clr in self.config.KNOWN_COLORS:
+                fallback_str = f"{model} {clr}"
+                results2 = self.image_manager.filter_images_multi_keywords(fallback_str)
+                if results2:
+                    all_color_images.extend(results2)
+
+        if not all_color_images:
+            yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
             return
 
-        # Eğer fabia ve scala aynı anda isteniyor ama premium değilse, eskisi gibi renk görselleri
-        if "fabia" in models and "scala" in models:
-            for model_name in models:
-                yield f"<b>{model_name.title()} Renk Görselleri</b><br>".encode("utf-8")
-                color_images = []
+        chosen_image = random.choice(all_color_images)
+        img_url = f"/static/images/{chosen_image}"
+        base_name = os.path.splitext(os.path.basename(chosen_image))[0]
+
+        html_block = f"""
+<p><b>{model.title()} {trim.title()} - Rastgele Renk Görseli</b></p>
+<div style="text-align: center; margin-bottom:20px;">
+  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 400px; cursor:pointer;" />
+  </a>
+</div>
+"""
+        yield html_block.encode("utf-8")
+
+    def _show_category_images(self, model, trim, category):
+        """
+        'Renkler' kategorisi => tüm renk görselleri (fallback)
+        Diğer kategoriler => normal
+        """
+        model_trim_str = f"{model} {trim}".strip().lower()
+
+        if category in ["renkler", "renk"]:
+            # Tüm renkler + fallback
+            # 1. Adım: 'model + trim + color'
+            found_any = False
+            all_color_images = []
+            for clr in self.config.KNOWN_COLORS:
+                flt = f"{model_trim_str} {clr}"
+                results = self.image_manager.filter_images_multi_keywords(flt)
+                if results:
+                    all_color_images.extend(results)
+                    found_any = True
+
+            # 2. Adım: fallback -> 'model + color'
+            if not found_any:
                 for clr in self.config.KNOWN_COLORS:
-                    fstr = f"{model_name} {clr}"
-                    results = self.image_manager.filter_images_multi_keywords(fstr)
-                    color_images.extend(results)
-                unique_color_images = list(set(color_images))
+                    flt2 = f"{model} {clr}"
+                    results2 = self.image_manager.filter_images_multi_keywords(flt2)
+                    if results2:
+                        all_color_images.extend(results2)
 
-                if unique_color_images:
-                    for chunk in self._render_side_by_side_images(unique_color_images, context="color"):
-                        yield chunk
-                else:
-                    yield f"{model_name.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+            heading = f"<b>{model.title()} {trim.title()} - Tüm Renk Görselleri</b><br>"
+            yield heading.encode("utf-8")
 
-                yield b"<hr>"
+            if not all_color_images:
+                yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+                return
 
-            summary_text = f"{', '.join(models)} modelleri için renk görselleri listelendi.<br>"
-            save_to_db(user_id, user_message, summary_text)
-            yield summary_text.encode("utf-8")
-            return
-
-        # Diğer çoklu model (ör. fabia + kamiq) normal akış
-        all_colors = self.config.KNOWN_COLORS
-
-        for model_name in models:
-            title_text = f"<b>{model_name.title()} Görselleri</b><br>"
-            yield title_text.encode("utf-8")
-
-            if trim_keywords:
-                for trim in trim_keywords:
-                    filter_str = f"{model_name} {trim}"
-                    found_images = self.image_manager.filter_images_multi_keywords(filter_str)
-                    if found_images:
-                        yield f"{model_name.title()} {trim.title()} görselleri:<br>".encode("utf-8")
-                        yield from self._render_side_by_side_images(found_images, context="multi")
-                    else:
-                        yield f"{model_name.title()} {trim.title()} için görsel bulunamadı.<br>".encode("utf-8")
-            else:
-                found_model_images = self.image_manager.filter_images_multi_keywords(model_name)
-                if found_model_images:
-                    yield from self._render_side_by_side_images(found_model_images, context="no-trim")
-                else:
-                    yield f"{model_name.title()} için genel görsel bulunamadı.<br>".encode("utf-8")
-
-            # Renk görselleri de ekleyebilirsiniz (opsiyonel)
-            color_images = []
-            for clr in all_colors:
-                fstr = f"{model_name} {clr}"
-                results = self.image_manager.filter_images_multi_keywords(fstr)
-                color_images.extend(results)
-
-            unique_color_images = list(set(color_images))
-            if unique_color_images:
-                yield f"<br><i>{model_name.title()} Renk Görselleri:</i><br>".encode("utf-8")
-                yield from self._render_side_by_side_images(unique_color_images, context="color")
-
-            yield b"<hr>"
-
-        summary_text = f"{', '.join(models)} modelleri için görseller listelendi.<br>"
-        save_to_db(user_id, user_message, summary_text)
-        yield summary_text.encode("utf-8")
-
-    def _render_side_by_side_images(self, images, context="model"):
-        """
-        Görselleri belli bir düzende ekrana basan yardımcı fonksiyon.
-        """
-        import os
-
-        if not images:
-            yield "Bu kriterlere ait görsel bulunamadı.\n".encode("utf-8")
-            return
-
-        # Gruplama: Monte Carlo Standart / Premium Opsiyonel / Diğer
-        mc_std = [
-            img for img in images
-            if "monte" in img.lower()
-               and "carlo" in img.lower()
-               and "standart" in img.lower()
-        ]
-        pm_ops = [
-            img for img in images
-            if "premium" in img.lower()
-               and "opsiyonel" in img.lower()
-        ]
-        others = [img for img in images if img not in mc_std and img not in pm_ops]
-
-        # Sol sütun: Monte Carlo Standart
-        yield b"""
-<div style="display: flex; justify-content: space-between; gap: 60px;">
-  <div style="flex:1;">
-"""
-        if mc_std:
-            left_title = os.path.splitext(os.path.basename(mc_std[0]))[0].replace("_", " ")
-            yield f"<h3>{left_title}</h3>".encode("utf-8")
-
-            for img_file in mc_std:
-                img_url = f"/static/images/{img_file}"
-                just_filename = os.path.basename(img_file)
-                base_name = os.path.splitext(just_filename)[0].replace("_", " ")
-
-                block_html = f"""
-<div style="text-align: center; margin-bottom:20px;">
-  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
-        else:
-            yield "<h3>Monte Carlo Standart Görseli Yok</h3>".encode("utf-8")
-
-        yield b"</div>"
-
-        # Sağ sütun: Premium Opsiyonel
-        yield b"""
-  <div style="flex:1;">
-"""
-        if pm_ops:
-            right_title = os.path.splitext(os.path.basename(pm_ops[0]))[0].replace("_", " ")
-            yield f"<h3>{right_title}</h3>".encode("utf-8")
-
-            for img_file in pm_ops:
-                img_url = f"/static/images/{img_file}"
-                just_filename = os.path.basename(img_file)
-                base_name = os.path.splitext(just_filename)[0].replace("_", " ")
-
-                block_html = f"""
-<div style="text-align: center; margin-bottom:20px;">
-  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
-        else:
-            yield "<h3>Premium Opsiyonel Görseli Yok</h3>".encode("utf-8")
-
-        yield b"""
-  </div>
-</div>
-"""
-
-        # Kalan tüm görseller
-        if others:
-            yield "<hr><b>Diğer Görseller:</b><br>".encode("utf-8")
             yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
-            for img_file in others:
+            for img_file in all_color_images:
                 img_url = f"/static/images/{img_file}"
                 just_filename = os.path.basename(img_file)
                 base_name = os.path.splitext(just_filename)[0].replace("_", " ")
@@ -1157,7 +829,36 @@ Farklı renk seçenekleriyle aracınızı kişiselleştirebilirsiniz. Metalik, s
 </div>
 """
                 yield block_html.encode("utf-8")
-            yield b"</div>"
+            yield b"</div><br>"
+            return
+
+        # Diğer kategoriler
+        filter_str = f"{model_trim_str} {category}".strip().lower()
+        found_images = self.image_manager.filter_images_multi_keywords(filter_str)
+
+        heading = f"<b>{model.title()} {trim.title()} - {category.title()} Görselleri</b><br>"
+        yield heading.encode("utf-8")
+
+        if not found_images:
+            yield f"{model.title()} {trim.title()} için '{category}' görseli bulunamadı.<br>".encode("utf-8")
+            return
+
+        yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
+        for img_file in found_images:
+            img_url = f"/static/images/{img_file}"
+            just_filename = os.path.basename(img_file)
+            base_name = os.path.splitext(just_filename)[0].replace("_", " ")
+
+            block_html = f"""
+<div style="text-align: center; margin: 5px;">
+  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+  </a>
+</div>
+"""
+            yield block_html.encode("utf-8")
+        yield b"</div><br>"
 
     def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
         """
