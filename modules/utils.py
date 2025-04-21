@@ -18,12 +18,27 @@ class Utils:
         logger.setLevel(logging.INFO)
         return logger
 
-    def is_image_request(self, message):
-        msg = message.lower()
-        # "görsel", "resim", "fotoğraf" kelimelerini arıyoruz
-        return ("resim" in msg) or ("fotoğraf" in msg) or ("görsel" in msg)
+    # -------------------------------------------------------------------
+    # is_image_request: Artık yalnızca "görsel", "görseller", "resim",
+    # "resimler", "fotoğraf", "fotoğraflar" kelimeleri NET olarak (fuzzy
+    # düzeltme sonrası) geçiyorsa True dönecek.
+    # -------------------------------------------------------------------
+    def is_image_request(self, corrected_message):
+        msg_lower = corrected_message.lower()
+        triggers = [
+            "görsel",
+            "görseller",
+            "resim",
+            "resimler",
+            "fotoğraf",
+            "fotoğraflar"
+        ]
+        return any(t in msg_lower for t in triggers)
 
     def extract_image_keyword(self, message, assistant_name):
+        """
+        (Opsiyonel) Sizde daha önce vardı. İsterseniz kullanırsınız.
+        """
         lower_msg = message.lower()
         brand_lower = assistant_name.lower()
         cleaned = lower_msg.replace(brand_lower, "")
@@ -47,6 +62,9 @@ class Utils:
                 found.append(color)
         return found
 
+    # -------------------------------------------------------------------
+    # fuzzy_find: difflib based approximate matching
+    # -------------------------------------------------------------------
     def fuzzy_find(self, user_word, candidate_list, threshold=0.7):
         best_match = None
         best_ratio = 0.0
@@ -59,6 +77,7 @@ class Utils:
             return best_match
         return None
 
+    # Diğer sıralama fonksiyonları (opsiyonel) - orijinal kodunuz
     def get_priority_for_mc(self, filename: str) -> int:
         lower_f = filename.lower()
         for index, pattern_keywords in enumerate(self.config.monte_carlo_12):
@@ -90,7 +109,7 @@ class Utils:
     def get_priority_for_kamiq_12(self, filename: str) -> int:
         lower_f = filename.lower()
         for index, pattern_keywords in enumerate(self.config.kamiq_12):
-            if all(k in lower_f for k in pattern_keywords):
+            if all(k in lower_f for k in keywords):
                 return index
         return 999
 
