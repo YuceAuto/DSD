@@ -68,6 +68,18 @@ def extract_model_trim_pairs(text):
 
     return pairs
 
+
+def normalize_trim_str(t: str) -> list:
+    """
+    Bir trim ifadesinin ("monte carlo" vb.) birkaç farklı yazılış varyasyonunu döndürür.
+    Örn: "monte carlo" -> ["monte carlo", "monte_carlo", "montecarlo"]
+    """
+    t = t.lower().strip()
+    with_underscore = t.replace(" ", "_")
+    no_space = t.replace(" ", "")
+    return [t, with_underscore, no_space]
+
+
 class ChatbotAPI:
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
         # Flask yapılandırması
@@ -516,8 +528,59 @@ class ChatbotAPI:
 
         return html_snippet
 
+    # --------------------------------------------------------
+    #  TRIM DIŞI KELİMELERİ HARİÇ BIRAKMA FONKSİYONU
+    # --------------------------------------------------------
+    def _exclude_other_trims(self, image_list, requested_trim):
+        """
+        Kullanıcı trim belirttiğinde, farklı trim'leri dosya adında barındıranları eler.
+        Ör: "premium" istendiyse, "monte carlo" / "elite" / vb. geçen dosya atılacak.
+        Ayrıca requested_trim'in varyasyonlarının da mutlaka dosya adında bulunması sağlanır.
+        """
+        requested_trim = requested_trim.lower().strip()
+        if not requested_trim:
+            # Trim yoksa hiçbir şey dışlama.
+            return image_list
+
+        # Tüm olası trim'ler:
+        all_trims = ["premium", "monte carlo", "elite", "prestige", "sportline"]
+
+        requested_variants = normalize_trim_str(requested_trim)
+
+        filtered = []
+        for img_file in image_list:
+            lower_img = img_file.lower()
+
+            # 1) Farklı trim var mı diye bak
+            conflict_found = False
+            for other_trim in all_trims:
+                other_trim = other_trim.lower().strip()
+                if other_trim == requested_trim:
+                    continue  # İstediğimiz trim ise sorun yok
+
+                # "other_trim" için olası yazılış varyasyonları
+                other_variants = normalize_trim_str(other_trim)
+
+                # Eğer bu 'other_variants' içinden biri dosya adında bulunuyorsa
+                # çatışma var => bu dosya atılmalı
+                if any(ov in lower_img for ov in other_variants):
+                    conflict_found = True
+                    break
+
+            if conflict_found:
+                continue
+
+            # 2) İstediğimiz trim mutlaka geçsin
+            if not any(rv in lower_img for rv in requested_variants):
+                # Dosya adında "monte_carlo" vs. hiç yoksa
+                continue
+
+            filtered.append(img_file)
+
+        return filtered
+
     # ===============================================================
-    #   Birden çok görsel kartı (kategori linkleri + rastgele resim)
+    #   Birden çok görsel kartı (Kategori linkleri + rastgele resim)
     # ===============================================================
     def _show_multiple_image_cards(self, pairs):
         """
@@ -531,13 +594,8 @@ class ChatbotAPI:
         )
 
         for (model, trim) in pairs:
-            # 1) Rastgele renkli görsel HTML'si
             img_html, base_name = self._get_single_random_color_image_html(model, trim)
-
-            # 2) Kategori linklerini ekleyelim
             cat_links_html = self._show_categories_links(model, trim)
-
-            # 3) Kart HTML'si
             card_block = f"""
             <div style="width: 420px; border: 1px solid #ccc; border-radius: 8px;
                         padding: 10px; text-align: center;">
@@ -559,26 +617,25 @@ class ChatbotAPI:
 
     def _get_single_random_color_image_html(self, model, trim):
         """
-        Rastgele renk eşleşen resmi <img> HTML ve resmin base_name'ini döndürür.
-        Bulunamazsa kısaca 'görsel yok' metni döner.
+        (Aynı mantık, sadece HTML döndürür.)
         """
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
 
-        # "model + trim + color"
         for clr in self.config.KNOWN_COLORS:
             filter_str = f"{model_trim_str} {clr}"
             results = self.image_manager.filter_images_multi_keywords(filter_str)
-            if results:
-                all_color_images.extend(results)
+            all_color_images.extend(results)
 
-        # Fallback "model + color"
+        # Fallback
         if not all_color_images:
             for clr in self.config.KNOWN_COLORS:
                 fallback_str = f"{model} {clr}"
                 results2 = self.image_manager.filter_images_multi_keywords(fallback_str)
-                if results2:
-                    all_color_images.extend(results2)
+                all_color_images.extend(results2)
+
+        # Trim dışı kelime içeren dosyaları dışla
+        all_color_images = self._exclude_other_trims(all_color_images, trim)
 
         if not all_color_images:
             msg = f"<p>{model.title()} {trim.title()} görseli bulunamadı.</p>"
@@ -588,7 +645,6 @@ class ChatbotAPI:
         img_url = f"/static/images/{chosen_image}"
         base_name = os.path.splitext(os.path.basename(chosen_image))[0]
 
-        # <img> HTML
         img_html = f"""
         <a href="#" data-toggle="modal" data-target="#imageModal" 
            onclick="showPopupImage('{img_url}')">
@@ -609,20 +665,21 @@ class ChatbotAPI:
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
-        # Birden fazla (model, trim) görsel isteği
         pairs = extract_model_trim_pairs(lower_msg)
         is_image_req = self.utils.is_image_request(lower_msg)
 
+        # (A) Birden fazla model + görsel isteği
         if len(pairs) >= 2 and is_image_req:
-            # Çoklu kart
-            multiple_cards_html = self._show_multiple_image_cards(pairs)
-            yield multiple_cards_html.encode("utf-8")
+            for (model, trim) in pairs:
+                yield f"<b>{model.title()} Görselleri</b>".encode("utf-8")
+                yield from self._show_single_random_color_image(model, trim)
+                cat_links_html = self._show_categories_links(model, trim)
+                yield cat_links_html.encode("utf-8")
 
             save_to_db(user_id, user_message, f"Çoklu görsel talebi: {pairs}")
             return
 
-        # ==============================
-        # (A) Tekli "model + trim + görsel" pattern
+        # (B) Tekli "model + trim + görsel" pattern
         model_trim_image_pattern = (
             r"(fabia|scala|kamiq|karoq)"
             r"(?:\s+(premium|monte carlo|elite|prestige|sportline))?"
@@ -638,9 +695,7 @@ class ChatbotAPI:
                 return
 
             self.user_states[user_id]["current_trim"] = matched_trim
-            # Tekil rastgele renk görseli
             yield from self._show_single_random_color_image(matched_model, matched_trim)
-
             cat_links_html = self._show_categories_links(matched_model, matched_trim)
             yield cat_links_html.encode("utf-8")
 
@@ -648,8 +703,7 @@ class ChatbotAPI:
                        f"{matched_model.title()} {matched_trim.title()} -> tek renk + linkler")
             return
 
-        # ==============================
-        # (B) "model + trim + kategori" pattern
+        # (C) "model + trim + kategori" pattern
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
         cat_match = re.search(
             fr"(fabia|scala|kamiq|karoq)\s*(premium|monte carlo|elite|prestige|sportline)?\s*({categories_pattern})",
@@ -673,8 +727,7 @@ class ChatbotAPI:
                        f"{matched_model.title()} {matched_trim} -> kategori: {matched_category}")
             return
 
-        # ==============================
-        # (C) Opsiyonel tablo istekleri
+        # (D) Opsiyonel tablo istekleri
         user_trims_in_msg = set()
         if "premium" in lower_msg:
             user_trims_in_msg.add("premium")
@@ -764,7 +817,7 @@ class ChatbotAPI:
                     yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                 return
 
-        # (D) Normal Chat (OpenAI) ...
+        # (E) Normal Chat (OpenAI) ...
         if not assistant_id:
             save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
             yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
@@ -775,6 +828,7 @@ class ChatbotAPI:
             thread_id = threads_dict.get(assistant_id)
 
             if not thread_id:
+                # Varsayımsal "beta.threads" API
                 new_thread = self.client.beta.threads.create(
                     messages=[{"role": "user", "content": user_message}]
                 )
@@ -844,10 +898,13 @@ class ChatbotAPI:
             yield link_html.encode("utf-8")
 
     def _show_single_random_color_image(self, model, trim):
+        """
+        Tekil rastgele renk görseli döndürür.
+        """
         model_trim_str = f"{model} {trim}".strip().lower()
-
-        found_any = False
         all_color_images = []
+        found_any = False
+
         for clr in self.config.KNOWN_COLORS:
             filter_str = f"{model_trim_str} {clr}"
             results = self.image_manager.filter_images_multi_keywords(filter_str)
@@ -861,6 +918,9 @@ class ChatbotAPI:
                 results2 = self.image_manager.filter_images_multi_keywords(fallback_str)
                 if results2:
                     all_color_images.extend(results2)
+
+        # Trim dışı kelimeleri dışla
+        all_color_images = self._exclude_other_trims(all_color_images, trim)
 
         if not all_color_images:
             yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
@@ -882,6 +942,9 @@ class ChatbotAPI:
         yield html_block.encode("utf-8")
 
     def _show_category_images(self, model, trim, category):
+        """
+        Kullanıcı "fabia premium döşeme" vb. dediğinde çoklu görseli döndürür.
+        """
         model_trim_str = f"{model} {trim}".strip().lower()
 
         if category in ["renkler", "renk"]:
@@ -900,6 +963,9 @@ class ChatbotAPI:
                     results2 = self.image_manager.filter_images_multi_keywords(flt2)
                     if results2:
                         all_color_images.extend(results2)
+
+            # Trim dışı kelimeleri dışla
+            all_color_images = self._exclude_other_trims(all_color_images, trim)
 
             heading = f"<b>{model.title()} {trim.title()} - Tüm Renk Görselleri</b><br>"
             yield heading.encode("utf-8")
@@ -928,6 +994,9 @@ class ChatbotAPI:
 
         filter_str = f"{model_trim_str} {category}".strip().lower()
         found_images = self.image_manager.filter_images_multi_keywords(filter_str)
+
+        # Trim dışı kelimeleri dışla
+        found_images = self._exclude_other_trims(found_images, trim)
 
         heading = f"<b>{model.title()} {trim.title()} - {category.title()} Görselleri</b><br>"
         yield heading.encode("utf-8")
