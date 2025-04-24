@@ -68,7 +68,6 @@ def extract_model_trim_pairs(text):
 
     return pairs
 
-
 def normalize_trim_str(t: str) -> list:
     """
     Bir trim ifadesinin ("monte carlo" vb.) birkaç farklı yazılış varyasyonunu döndürür.
@@ -78,6 +77,19 @@ def normalize_trim_str(t: str) -> list:
     with_underscore = t.replace(" ", "_")
     no_space = t.replace(" ", "")
     return [t, with_underscore, no_space]
+
+# YENİ EKLENEN TRIM KONTROLÜ: Cevap içerisindeki trim'leri bulmak için basit fonksiyon
+def extract_trims(text: str) -> set:
+    text_lower = text.lower()
+    possible_trims = ["premium", "monte carlo", "elite", "prestige", "sportline"]
+    found_trims = set()
+
+    for t in possible_trims:
+        variants = normalize_trim_str(t)  # "monte carlo" => ["monte carlo", "monte_carlo", "montecarlo"]
+        if any(v in text_lower for v in variants):
+            found_trims.add(t)
+
+    return found_trims
 
 
 class ChatbotAPI:
@@ -429,7 +441,20 @@ class ChatbotAPI:
         # 3) Görsel isteği mi?
         is_image_req = self.utils.is_image_request(corrected_message)
 
-        # Cache kontrolü (görsel talebi değilse)
+        # YENİ: Kullanıcının mesajındaki trim’leri bulalım
+        user_trims_in_msg = set()
+        if "premium" in lower_corrected:
+            user_trims_in_msg.add("premium")
+        if "monte carlo" in lower_corrected:
+            user_trims_in_msg.add("monte carlo")
+        if "elite" in lower_corrected:
+            user_trims_in_msg.add("elite")
+        if "prestige" in lower_corrected:
+            user_trims_in_msg.add("prestige")
+        if "sportline" in lower_corrected:
+            user_trims_in_msg.add("sportline")
+
+        # 4) Cache kontrolü (görsel talebi değilse)
         cached_answer = None
         if not is_image_req:
             cached_answer = self._find_fuzzy_cached_answer(
@@ -440,10 +465,33 @@ class ChatbotAPI:
             )
             if cached_answer:
                 answer_text = cached_answer.decode("utf-8")
+
+                # Model uyuşmazlığı?
                 models_in_answer = self._extract_models(answer_text)
                 if user_models_in_msg and not user_models_in_msg.issubset(models_in_answer):
                     self.logger.info("Model uyuşmazlığı -> cache bypass.")
+                    cached_answer = None
                 else:
+                    # YENİ EKLENEN TRIM KONTROLÜ
+                    trims_in_answer = extract_trims(answer_text)
+
+                    # Eğer kullanıcı TEK trim istediyse ve cevapta birden fazla trim varsa -> Bypass
+                    # Ya da o tek trim hiç yoksa -> Bypass
+                    if len(user_trims_in_msg) == 1:
+                        single_trim = list(user_trims_in_msg)[0]
+                        if (single_trim not in trims_in_answer) or (len(trims_in_answer) > 1):
+                            self.logger.info("Trim uyuşmazlığı -> cache bypass.")
+                            cached_answer = None
+                    elif len(user_trims_in_msg) > 1:
+                        # Kullanıcı birden fazla trim sormuşsa,
+                        # cevapta bunların TAM karşılığı var mı diye bakabilirsiniz.
+                        # Örnek: basit check -> set eşitliği
+                        if user_trims_in_msg != trims_in_answer:
+                            self.logger.info("Trim uyuşmazlığı (çoklu) -> cache bypass.")
+                            cached_answer = None
+
+                if cached_answer:
+                    # Geçerli kaldıysa, direkt yanıt
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt.")
                     time.sleep(1)
                     return self.app.response_class(cached_answer, mimetype="text/plain")
@@ -534,7 +582,7 @@ class ChatbotAPI:
     def _exclude_other_trims(self, image_list, requested_trim):
         """
         Kullanıcı trim belirttiğinde, farklı trim'leri dosya adında barındıranları eler.
-        Ör: "premium" istendiyse, "monte carlo" / "elite" / vb. geçen dosya atılacak.
+        Ör: "premium" istendiyse, "monte carlo" / "elite" / vb. geçen dosya atılmalı.
         Ayrıca requested_trim'in varyasyonlarının da mutlaka dosya adında bulunması sağlanır.
         """
         requested_trim = requested_trim.lower().strip()
@@ -682,8 +730,8 @@ class ChatbotAPI:
         # (B) Tekli "model + trim + görsel" pattern
         model_trim_image_pattern = (
             r"(fabia|scala|kamiq|karoq)"
-            r"(?:\s+(premium|monte carlo|elite|prestige|sportline))?"
-            r"\s+(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
+            r"(?:\s+(premium|monte carlo|elite|prestige|sportline))?\s+"
+            r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
         )
         match = re.search(model_trim_image_pattern, lower_msg)
         if match:
@@ -828,7 +876,7 @@ class ChatbotAPI:
             thread_id = threads_dict.get(assistant_id)
 
             if not thread_id:
-                # Varsayımsal "beta.threads" API
+                # Varsayımsal "beta.threads" API (OpenAI'nin gerçekte böyle bir endpoint'i olmayabilir)
                 new_thread = self.client.beta.threads.create(
                     messages=[{"role": "user", "content": user_message}]
                 )
