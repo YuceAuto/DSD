@@ -1,37 +1,46 @@
 /* --------------------------------------------- */
-/* style.css */
+/* style.css - Responsive Tam Ekran Yüksekliği Örneği */
 /* --------------------------------------------- */
 
-/* Body ve HTML - Tam ekran yüksekliği iptal, arka plan gradyan korunuyor */
+/* Body ve HTML - Arka plan gradyan korunuyor, ekrana tam oturacak şekilde */
 body, html {
   margin: 0;
   padding: 0;
   background: #6F797A;
   background: -webkit-linear-gradient(to right, #0E3A2F, #78FAAE);
   background: linear-gradient(to right, #0E3A2F, #78FAAE);
+  height: 100%; /* Body %100 yükseklik */
 }
 
-/* container-fluid ve row: Tam yükseklik + flex iptal, sadece ortalama */
+/* container-fluid - normal reset */
 .container-fluid {
   margin: 0 auto;
   padding: 0;
 }
 
-.row.justify-content-center.h-100 {
-  /* height: 100vh; flex: ... vs. kaldırıldı */
+/* row.justify-content-center - yükseklik otomatik / margin ile ortala */
+.row.justify-content-center {
   display: flex;
   justify-content: center;
-  align-items: center;
-  margin: 20px auto;
+  align-items: flex-start; /* üst kısma hizala */
+  margin: 20px auto;       /* Üst-alt 20px boşluk */
+  width: 100%;
 }
 
-/* Chat kutusu sabit boyut */
+/* 
+  .chat:
+  - Ekran yüksekliğini tam doldurması için: height: calc(100vh - 40px);
+  - 40px = margin-top (20px) + margin-bottom (20px) kadar boşluğu hesaba katalım.
+  - Genişlik responsive kalsın, max-width 1200px'e kadar büyüsün. 
+*/
 .chat {
-  width: 1400px;    /* Sabit genişlik (dilediğiniz gibi değiştirebilirsiniz) */
-  height: 1400px;   /* Sabit yükseklik (dilediğiniz gibi değiştirebilirsiniz) */
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 1200px;
+  height: calc(100vh - 40px); /* Yüksekliği ekranın tamamına göre hesaplanır */
   border-radius: 15px;
+  margin: 0 10px; /* Yatayda 10px boşluk */
 }
 
 /* Kart, chat alanını tam doldurur */
@@ -39,9 +48,9 @@ body, html {
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100%;
   border-radius: 15px !important;
   background-color: #000000 !important;
+  height: 100%; /* Ebeveynin yüksekliğini kapla */
 }
 
 /* Header (üst kısım) */
@@ -61,10 +70,11 @@ body, html {
   display: flex;
 }
 
-/* Mesajların listelendiği alan */
+/* Mesajların listelendiği alan 
+   (flex: 1; -> mümkün olan boşluğu kaplar, overflow-y -> içte kaydırma) */
 .msg_card_body {
   flex: 1;
-  overflow-y: auto; /* İçerik taşıyınca dikey scroll görünsün */
+  overflow-y: auto;
 }
 
 /* Kullanıcı / Bot görsel boyutları */
@@ -217,31 +227,38 @@ body, html {
   cursor: default;
 }
 
-/* ============================== */
 /* POP-UP GÖRSELİ BÜYÜTME VE ARKA PLAN */
-/* ============================== */
-
-/* 1) Modal içindeki resmi büyütme (daha geniş göstermek için) */
 #popupImage {
   max-width: 800px;
   width: 100%;
   height: auto;
   border-radius: 8px;
-
-  /* -- Aşağıdaki 2 satır çerçeve ve hafif boşluk için eklendi: -- */
-  border: 4px solid #fff; /* Beyaz çerçeve */
-  padding: 2px;           /* Görsel ile çerçeve arasında boşluk */
+  border: 4px solid #fff;
+  padding: 2px;
 }
-
-/* 2) Modal penceresini genişletmek için (opsiyonel) */
 .modal-dialog.modal-lg {
-  max-width: 800px; /* Varsayılan ~800px */
+  max-width: 800px;
 }
-
-/* 3) Modal açıldığında arka planı siyah, ancak yarı şeffaf yapmak */
 .modal-backdrop.show {
   background-color: rgba(0, 0, 0, 0.7) !important; 
   opacity: 1 !important;                           
   backdrop-filter: none !important;                
   -webkit-backdrop-filter: none !important;
+}
+
+/* =========================================== */
+/* Media Query: Daha dar ekranlar (max-width: 768px) */
+/* =========================================== */
+@media (max-width: 768px) {
+  .user_info span {
+    font-size: 16px;
+  }
+  .user_img {
+    height: 50px;
+    width: 50px;
+  }
+  .chat {
+    margin: 0 auto;
+    height: calc(100vh - 20px); /* Mobilde daha az margin, daha fazla alan */
+  }
 }
