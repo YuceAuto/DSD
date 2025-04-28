@@ -45,7 +45,6 @@ from modules.data.karoq_data import (
 
 load_dotenv()
 
-
 def normalize_trim_str(t: str) -> list:
     t = t.lower().strip()
     with_underscore = t.replace(" ", "_")
@@ -559,18 +558,20 @@ class ChatbotAPI:
             '<div style="display: flex; flex-wrap: wrap; gap: 20px; '
             'justify-content: space-around;">'
         )
-
         for (model, trim) in pairs:
             img_html, base_name = self._get_single_random_color_image_html(model, trim)
+
+            # -- YENİ EKLENDİ (friendly heading):
+            friendly_title = self._make_friendly_image_title(model, trim, base_name)
+
             cat_links_html = self._show_categories_links(model, trim)
             card_block = f"""
             <div style="width: 420px; border: 1px solid #ccc; border-radius: 8px;
                         padding: 10px; text-align: center;">
                 <h4 style="margin-bottom:8px;">{model.title()} {trim.title()}</h4>
                 <hr style="margin:0 0 10px 0;">
-                <p><b>{model.title()} - Rastgele Renk Görseli</b></p>
+                <p><b>{friendly_title}</b></p>
                 <div style="margin-bottom:12px;">
-                    <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
                     {img_html}
                 </div>
                 <hr>
@@ -582,6 +583,41 @@ class ChatbotAPI:
         html += "</div>"
         return html
 
+    # -- YENİ EKLENDİ (friendly başlık üretici fonksiyon)
+    def _make_friendly_image_title(self, model: str, trim: str, base_name: str) -> str:
+        """
+        Dosya adını (ör. 'Karoq_Prestige_Metalik_Renk_Büyülü_Siyah') parçalayıp
+        kullanıcı dostu bir başlık döndürür.
+
+        Örnek dönüş:
+          "İşte aşağıda Karoq Prestige'in özel renk paketinden Metalik Renk Büyülü Siyah görselini bulabilirsin."
+        """
+        parts = base_name.split("_")
+        # model ve trim'i, 'renk' vb. kelimeleri ignore listesine alalım:
+        skip_list = [model.lower(), trim.lower(), "renk"]
+
+        filtered = []
+        for p in parts:
+            if p.lower() not in skip_list:
+                filtered.append(p)
+
+        color_part = " ".join(filtered)  # Örn: "Metalik Büyülü Siyah"
+        model_title = model.title()
+        trim_title = trim.title() if trim else ""
+
+        if trim:
+            return (
+                f"İşte aşağıda {model_title} {trim_title}'in "
+                f"özel renk paketinden {color_part} görselini bulabilirsin."
+            )
+        else:
+            return (
+                f"İşte aşağıda {model_title}'in "
+                f"özel renk paketinden {color_part} görselini bulabilirsin."
+            )
+
+    # Bu fonksiyon, _show_multiple_image_cards içinde çağrıldığından
+    # bir "HTML parçası" ve "dosya adı" döndürür.
     def _get_single_random_color_image_html(self, model, trim):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
@@ -591,7 +627,6 @@ class ChatbotAPI:
             results = self.image_manager.filter_images_multi_keywords(filter_str)
             all_color_images.extend(results)
 
-        # Eğer hiçbir şey yoksa, sadece model + renk dene (trim yok say)
         if not all_color_images:
             for clr in self.config.KNOWN_COLORS:
                 fallback_str = f"{model} {clr}"
@@ -793,7 +828,7 @@ class ChatbotAPI:
             if user_models_in_msg2:
                 # Birden fazla model varsa, hepsi için random görsel gösterilebilir.
                 if len(user_models_in_msg2) > 1:
-                    yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>".encode("utf-8")
+                    #yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>".encode("utf-8")
                     for m in user_models_in_msg2:
                         yield f"<b>{m.title()} Görselleri</b><br>".encode("utf-8")
                         yield from self._show_single_random_color_image(m, "")
@@ -804,7 +839,7 @@ class ChatbotAPI:
                 else:
                     # Tek model
                     single_model = list(user_models_in_msg2)[0]
-                    yield f"<b>{single_model.title()} için rastgele görseller</b><br>".encode("utf-8")
+                    #yield f"<b>{single_model.title()} için görseller</b><br>".encode("utf-8")
                     yield from self._show_single_random_color_image(single_model, "")
                     cat_links_html = self._show_categories_links(single_model, "")
                     yield cat_links_html.encode("utf-8")
@@ -893,6 +928,7 @@ class ChatbotAPI:
             link_html = f"""&bull; <a href="#" onclick="sendMessage('{cmd_str}');return false;">{link_label}</a><br>"""
             yield link_html.encode("utf-8")
 
+    # -- GÖRSEL GÖSTERME METODU (tek rastgele renk):
     def _show_single_random_color_image(self, model, trim):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
@@ -922,10 +958,12 @@ class ChatbotAPI:
         img_url = f"/static/images/{chosen_image}"
         base_name = os.path.splitext(os.path.basename(chosen_image))[0]
 
+        # -- YENİ EKLENDİ (friendly başlık):
+        friendly_title = self._make_friendly_image_title(model, trim, base_name)
+
         html_block = f"""
-<p><b>{model.title()} {trim.title()} - Rastgele Renk Görseli</b></p>
+<p><b>{friendly_title}</b></p>
 <div style="text-align: center; margin-bottom:20px;">
-  <div style="font-weight: bold; margin-bottom: 6px;">{base_name}</div>
   <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
     <img src="{img_url}" alt="{base_name}" style="max-width: 400px; cursor:pointer;" />
   </a>
