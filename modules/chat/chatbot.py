@@ -560,8 +560,6 @@ class ChatbotAPI:
         )
         for (model, trim) in pairs:
             img_html, base_name = self._get_single_random_color_image_html(model, trim)
-
-            # -- YENİ EKLENDİ (friendly heading):
             friendly_title = self._make_friendly_image_title(model, trim, base_name)
 
             cat_links_html = self._show_categories_links(model, trim)
@@ -583,17 +581,8 @@ class ChatbotAPI:
         html += "</div>"
         return html
 
-    # -- YENİ EKLENDİ (friendly başlık üretici fonksiyon)
     def _make_friendly_image_title(self, model: str, trim: str, base_name: str) -> str:
-        """
-        Dosya adını (ör. 'Karoq_Prestige_Metalik_Renk_Büyülü_Siyah') parçalayıp
-        kullanıcı dostu bir başlık döndürür.
-
-        Örnek dönüş:
-          "İşte aşağıda Karoq Prestige'in özel renk paketinden Metalik Renk Büyülü Siyah görselini bulabilirsin."
-        """
         parts = base_name.split("_")
-        # model ve trim'i, 'renk' vb. kelimeleri ignore listesine alalım:
         skip_list = [model.lower(), trim.lower(), "renk"]
 
         filtered = []
@@ -601,7 +590,7 @@ class ChatbotAPI:
             if p.lower() not in skip_list:
                 filtered.append(p)
 
-        color_part = " ".join(filtered)  # Örn: "Metalik Büyülü Siyah"
+        color_part = " ".join(filtered)
         model_title = model.title()
         trim_title = trim.title() if trim else ""
 
@@ -616,8 +605,6 @@ class ChatbotAPI:
                 f"özel renk paketinden {color_part} görselini bulabilirsin."
             )
 
-    # Bu fonksiyon, _show_multiple_image_cards içinde çağrıldığından
-    # bir "HTML parçası" ve "dosya adı" döndürür.
     def _get_single_random_color_image_html(self, model, trim):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
@@ -665,7 +652,7 @@ class ChatbotAPI:
 
         # (A) Birden fazla model + görsel isteği
         if len(pairs) >= 2 and is_image_req:
-            time.sleep(2)  # 2 sn bekleme (çoklu görsel)
+            time.sleep(2)
             for (model, trim) in pairs:
                 yield f"<b>{model.title()} Görselleri</b>".encode("utf-8")
                 yield from self._show_single_random_color_image(model, trim)
@@ -683,7 +670,7 @@ class ChatbotAPI:
         )
         match = re.search(model_trim_image_pattern, lower_msg)
         if match:
-            time.sleep(2)  # 2 sn bekleme
+            time.sleep(2)
             matched_model = match.group(1)
             matched_trim = match.group(2) or ""
 
@@ -707,7 +694,7 @@ class ChatbotAPI:
             lower_msg
         )
         if cat_match:
-            time.sleep(2)  # 2 sn bekleme
+            time.sleep(2)
             matched_model = cat_match.group(1)
             matched_trim = cat_match.group(2) or ""
             matched_category = cat_match.group(3)
@@ -755,6 +742,7 @@ class ChatbotAPI:
                 return
             else:
                 self.user_states[user_id]["pending_opsiyonel_model"] = found_model
+                # Tek trim yakalandıysa doğrudan tabloyu göster
                 if len(user_trims_in_msg) == 1:
                     found_trim = list(user_trims_in_msg)[0]
                     if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
@@ -767,19 +755,25 @@ class ChatbotAPI:
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
+                    # Kullanıcıya tıklanabilir linklerle donanım seçeneklerini göster
                     if found_model == "fabia":
-                        yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
+                        yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
+                        return
                     elif found_model == "scala":
-                        yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                        yield from self._yield_trim_options("scala", ["elite", "premium", "monte carlo"])
+                        return
                     elif found_model == "kamiq":
-                        yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                        yield from self._yield_trim_options("kamiq", ["elite", "premium", "monte carlo"])
+                        return
                     elif found_model == "karoq":
-                        yield "Hangi donanımı görmek istersiniz? (Premium / Prestige / Sportline)\n".encode("utf-8")
+                        yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
+                        return
                     else:
                         yield f"'{found_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
-                    return
+                        return
 
         if pending_ops_model:
+            # Kullanıcı, opsiyonel model seçimini yapmış ama trim belirtmeden geldiyse...
             if user_trims_in_msg:
                 if len(user_trims_in_msg) == 1:
                     found_trim = list(user_trims_in_msg)[0]
@@ -793,42 +787,50 @@ class ChatbotAPI:
                     yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
                     return
                 else:
+                    # Birden çok trim yakalanmış -> Seçim yapması gerekiyor
                     if pending_ops_model.lower() == "fabia":
-                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Premium / Monte Carlo)\n".encode("utf-8")
+                        yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
+                        return
                     elif pending_ops_model.lower() == "scala":
-                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                        yield from self._yield_trim_options("scala", ["elite", "premium", "monte carlo"])
+                        return
                     elif pending_ops_model.lower() == "kamiq":
-                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                        yield from self._yield_trim_options("kamiq", ["elite", "premium", "monte carlo"])
+                        return
                     elif pending_ops_model.lower() == "karoq":
-                        yield "Birden fazla donanım tespit ettim, lütfen birini seçin. (Premium / Prestige / Sportline)\n".encode("utf-8")
+                        yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
+                        return
                     else:
                         yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
-                    return
+                        return
             else:
+                # Hiç trim söylenmedi -> linklerle soralım
                 if pending_ops_model.lower() == "fabia":
-                    yield "Hangi donanımı görmek istersiniz? (Premium / Monte Carlo)\n".encode("utf-8")
+                    yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
+                    return
                 elif pending_ops_model.lower() == "scala":
-                    yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                    yield from self._yield_trim_options("scala", ["elite", "premium", "monte carlo"])
+                    return
                 elif pending_ops_model.lower() == "kamiq":
-                    yield "Hangi donanımı görmek istersiniz? (Elite / Premium / Monte Carlo)\n".encode("utf-8")
+                    yield from self._yield_trim_options("kamiq", ["elite", "premium", "monte carlo"])
+                    return
                 elif pending_ops_model.lower() == "karoq":
-                    yield "Hangi donanımı görmek istersiniz? (Premium / Prestige / Sportline)\n".encode("utf-8")
+                    yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
+                    return
                 else:
                     yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
-                return
+                    return
 
         # (F) Fallback eklendi: Kullanıcı görsel istiyor ama
         # yukarıdaki (A)-(D) hiçbir koşula uymadıysa buraya düşer:
         if is_image_req:
             user_models_in_msg2 = self._extract_models(user_message)
-            # Kullanıcı cümlesinde model yoksa en son kullanılan modeli alalım.
             if not user_models_in_msg2 and "last_models" in self.user_states[user_id]:
                 user_models_in_msg2 = self.user_states[user_id]["last_models"]
 
             if user_models_in_msg2:
-                # Birden fazla model varsa, hepsi için random görsel gösterilebilir.
                 if len(user_models_in_msg2) > 1:
-                    #yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>".encode("utf-8")
+                    yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>".encode("utf-8")
                     for m in user_models_in_msg2:
                         yield f"<b>{m.title()} Görselleri</b><br>".encode("utf-8")
                         yield from self._show_single_random_color_image(m, "")
@@ -837,9 +839,8 @@ class ChatbotAPI:
                     save_to_db(user_id, user_message, f"Birden çok model fallback: {user_models_in_msg2}")
                     return
                 else:
-                    # Tek model
                     single_model = list(user_models_in_msg2)[0]
-                    #yield f"<b>{single_model.title()} için görseller</b><br>".encode("utf-8")
+                    yield f"<b>{single_model.title()} için rastgele görseller</b><br>".encode("utf-8")
                     yield from self._show_single_random_color_image(single_model, "")
                     cat_links_html = self._show_categories_links(single_model, "")
                     yield cat_links_html.encode("utf-8")
@@ -847,7 +848,6 @@ class ChatbotAPI:
                     save_to_db(user_id, user_message, f"{single_model.title()} fallback görselleri")
                     return
             else:
-                # Hiç model bulunamadı -> kullanıcıdan hangi model istediğini sor
                 yield "Hangi modelin görsellerine bakmak istersiniz? (Fabia, Kamiq, Scala, Karoq vb.)<br>".encode("utf-8")
                 save_to_db(user_id, user_message, "Model belirtilmediği için fallback sorusu")
                 return
@@ -928,7 +928,6 @@ class ChatbotAPI:
             link_html = f"""&bull; <a href="#" onclick="sendMessage('{cmd_str}');return false;">{link_label}</a><br>"""
             yield link_html.encode("utf-8")
 
-    # -- GÖRSEL GÖSTERME METODU (tek rastgele renk):
     def _show_single_random_color_image(self, model, trim):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
@@ -958,7 +957,6 @@ class ChatbotAPI:
         img_url = f"/static/images/{chosen_image}"
         base_name = os.path.splitext(os.path.basename(chosen_image))[0]
 
-        # -- YENİ EKLENDİ (friendly başlık):
         friendly_title = self._make_friendly_image_title(model, trim, base_name)
 
         html_block = f"""
@@ -1137,6 +1135,28 @@ class ChatbotAPI:
                 yield html_snippet.encode("utf-8")
 
         self.user_states[user_id]["pending_opsiyonel_model"] = None
+
+    # YENİ EKLENDİ: Tıklanabilir linklerle donanım seçeneği sunma
+    def _yield_trim_options(self, model: str, trim_list: list):
+        """
+        Örneğin:
+          model = "fabia"
+          trim_list = ["premium", "monte carlo"]
+        Dönüş (HTML):
+          "Hangi donanımı görmek istersiniz?"
+          • <a ... onclick="sendMessage('fabia premium opsiyonel')">Fabia Premium</a>
+          • <a ... onclick="sendMessage('fabia monte carlo opsiyonel')">Fabia Monte Carlo</a>
+        """
+        model_title = model.title()
+        msg = f"Hangi donanımı görmek istersiniz?<br><br>"
+
+        for trim in trim_list:
+            trim_title = trim.title()
+            command_text = f"{model} {trim} opsiyonel"
+            link_label = f"{model_title} {trim_title}"
+            msg += f"""&bull; <a href="#" onclick="sendMessage('{command_text}');return false;">{link_label}</a><br>"""
+
+        yield msg.encode("utf-8")
 
     def run(self, debug=True):
         self.app.run(debug=debug)
