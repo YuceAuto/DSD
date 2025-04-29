@@ -1,5 +1,5 @@
 /* --------------------------------------------- */
-/* style.css - Responsive Tam Ekran Yüksekliği Örneği */
+/* style.css - Tüm kod, beyaz arka planlı modal görsel */
 /* --------------------------------------------- */
 
 /* Body ve HTML - Arka plan gradyan korunuyor, ekrana tam oturacak şekilde */
@@ -27,11 +27,11 @@ body, html {
   width: 100%;
 }
 
-/* 
+/*
   .chat:
   - Ekran yüksekliğini tam doldurması için: height: calc(100vh - 40px);
   - 40px = margin-top (20px) + margin-bottom (20px) kadar boşluğu hesaba katalım.
-  - Genişlik responsive kalsın, max-width 1200px'e kadar büyüsün. 
+  - Genişlik responsive kalsın, max-width 1200px'e kadar büyüsün.
 */
 .chat {
   display: flex;
@@ -70,7 +70,7 @@ body, html {
   display: flex;
 }
 
-/* Mesajların listelendiği alan 
+/* Mesajların listelendiği alan
    (flex: 1; -> mümkün olan boşluğu kaplar, overflow-y -> içte kaydırma) */
 .msg_card_body {
   flex: 1;
@@ -227,22 +227,35 @@ body, html {
   cursor: default;
 }
 
+/* =========================================== */
 /* POP-UP GÖRSELİ BÜYÜTME VE ARKA PLAN */
+/* =========================================== */
+
+/* 1) Modal içindeki resmi büyütme (daha geniş göstermek için)
+   ve şeffaf bölgeleri beyaz olarak göstermek için background-color. */
 #popupImage {
   max-width: 800px;
   width: 100%;
   height: auto;
+  
   border-radius: 8px;
   border: 4px solid #fff;
   padding: 2px;
+  
+  /* Şeffaf kısımlar beyaz gözüksün */
+  background-color: #fff;
 }
+
+/* 2) Modal penceresini genişletmek için (opsiyonel) */
 .modal-dialog.modal-lg {
   max-width: 800px;
 }
+
+/* 3) Modal açıldığında arka planı siyah, ancak yarı şeffaf yapmak */
 .modal-backdrop.show {
-  background-color: rgba(0, 0, 0, 0.7) !important; 
-  opacity: 1 !important;                           
-  backdrop-filter: none !important;                
+  background-color: rgba(0, 0, 0, 0.7) !important;
+  opacity: 1 !important;
+  backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
