@@ -51,7 +51,6 @@ def normalize_trim_str(t: str) -> list:
     no_space = t.replace(" ", "")
     return [t, with_underscore, no_space]
 
-
 def extract_trims(text: str) -> set:
     text_lower = text.lower()
     possible_trims = ["premium", "monte carlo", "elite", "prestige", "sportline"]
@@ -63,7 +62,6 @@ def extract_trims(text: str) -> set:
             found_trims.add(t)
 
     return found_trims
-
 
 def extract_model_trim_pairs(text):
     pattern = r"(fabia|scala|kamiq|karoq)\s*(premium|monte carlo|elite|prestige|sportline)?"
@@ -83,7 +81,6 @@ def extract_model_trim_pairs(text):
             pairs.append((model, trim))
 
     return pairs
-
 
 class ChatbotAPI:
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
@@ -605,39 +602,152 @@ class ChatbotAPI:
                 f"özel renk paketinden {color_part} görselini bulabilirsin."
             )
 
-    def _get_single_random_color_image_html(self, model, trim):
+    # ------------------------------
+    # Aşağıdaki fonksiyon:
+    #  Fabia/Scala/Kamiq + (jant/direksiyon) → popup_size='smaller'
+    #  Diğer her şey normal.
+    # ------------------------------
+    def _show_single_random_color_image(self, model, trim):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
+        found_any = False
 
         for clr in self.config.KNOWN_COLORS:
             filter_str = f"{model_trim_str} {clr}"
             results = self.image_manager.filter_images_multi_keywords(filter_str)
-            all_color_images.extend(results)
+            if results:
+                all_color_images.extend(results)
+                found_any = True
 
-        if not all_color_images:
+        if not found_any:
             for clr in self.config.KNOWN_COLORS:
                 fallback_str = f"{model} {clr}"
                 results2 = self.image_manager.filter_images_multi_keywords(fallback_str)
-                all_color_images.extend(results2)
+                if results2:
+                    all_color_images.extend(results2)
 
         all_color_images = self._exclude_other_trims(all_color_images, trim)
 
         if not all_color_images:
-            msg = f"<p>{model.title()} {trim.title()} görseli bulunamadı.</p>"
-            return msg, ""
+            yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+            return
 
         chosen_image = random.choice(all_color_images)
         img_url = f"/static/images/{chosen_image}"
         base_name = os.path.splitext(os.path.basename(chosen_image))[0]
 
-        img_html = f"""
-        <a href="#" data-toggle="modal" data-target="#imageModal" 
-           onclick="showPopupImage('{img_url}')">
-          <img src="{img_url}" alt="{base_name}" 
-               style="max-width: 350px; cursor:pointer;" />
-        </a>
-        """
-        return img_html, base_name
+        # DİKKAT: Jant veya direksiyon kelimesi varsa + model fabia/scala/kamiq → popup_size='smaller'
+        popup_size = "normal"
+        if model.lower() in ["fabia", "scala", "kamiq"]:
+            low_name = base_name.lower()
+            if "jant" in low_name or "direksiyon" in low_name:
+                popup_size = "smaller"
+
+        friendly_title = self._make_friendly_image_title(model, trim, base_name)
+
+        html_block = f"""
+<p><b>{friendly_title}</b></p>
+<div style="text-align: center; margin-bottom:20px;">
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}', '{popup_size}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+  </a>
+</div>
+"""
+        yield html_block.encode("utf-8")
+
+    # ------------------------------
+    # Aynı mantığı kategori görsellerinde de uyguluyoruz:
+    #  Fabia/Scala/Kamiq + (jant/direksiyon) -> popup_size='smaller'
+    # ------------------------------
+    def _show_category_images(self, model, trim, category):
+        model_trim_str = f"{model} {trim}".strip().lower()
+
+        if category in ["renkler", "renk"]:
+            found_any = False
+            all_color_images = []
+            for clr in self.config.KNOWN_COLORS:
+                flt = f"{model_trim_str} {clr}"
+                results = self.image_manager.filter_images_multi_keywords(flt)
+                if results:
+                    all_color_images.extend(results)
+                    found_any = True
+
+            if not found_any:
+                for clr in self.config.KNOWN_COLORS:
+                    flt2 = f"{model} {clr}"
+                    results2 = self.image_manager.filter_images_multi_keywords(flt2)
+                    if results2:
+                        all_color_images.extend(results2)
+
+            all_color_images = self._exclude_other_trims(all_color_images, trim)
+
+            heading = f"<b>{model.title()} {trim.title()} - Tüm Renk Görselleri</b><br>"
+            yield heading.encode("utf-8")
+
+            if not all_color_images:
+                yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
+                return
+
+            yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
+            for img_file in all_color_images:
+                img_url = f"/static/images/{img_file}"
+                just_filename = os.path.basename(img_file)
+                base_name = os.path.splitext(just_filename)[0].replace("_", " ")
+
+                # Check popup size
+                popup_size = "normal"
+                if model.lower() in ["fabia", "scala", "kamiq"]:
+                    low_name = base_name.lower()
+                    if "jant" in low_name or "direksiyon" in low_name:
+                        popup_size = "smaller"
+
+                block_html = f"""
+<div style="text-align: center; margin: 5px;">
+  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}', '{popup_size}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+  </a>
+</div>
+"""
+                yield block_html.encode("utf-8")
+            yield b"</div><br>"
+            return
+
+        filter_str = f"{model_trim_str} {category}".strip().lower()
+        found_images = self.image_manager.filter_images_multi_keywords(filter_str)
+
+        found_images = self._exclude_other_trims(found_images, trim)
+
+        heading = f"<b>{model.title()} {trim.title()} - {category.title()} Görselleri</b><br>"
+        yield heading.encode("utf-8")
+
+        if not found_images:
+            yield f"{model.title()} {trim.title()} için '{category}' görseli bulunamadı.<br>".encode("utf-8")
+            return
+
+        yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
+        for img_file in found_images:
+            img_url = f"/static/images/{img_file}"
+            just_filename = os.path.basename(img_file)
+            base_name = os.path.splitext(just_filename)[0].replace("_", " ")
+
+            # Check popup size
+            popup_size = "normal"
+            if model.lower() in ["fabia", "scala", "kamiq"]:
+                low_name = base_name.lower()
+                if "jant" in low_name or "direksiyon" in low_name:
+                    popup_size = "smaller"
+
+            block_html = f"""
+<div style="text-align: center; margin: 5px;">
+  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}', '{popup_size}')">
+    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+  </a>
+</div>
+"""
+            yield block_html.encode("utf-8")
+        yield b"</div><br>"
 
     def _generate_response(self, user_message, user_id):
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
@@ -928,123 +1038,6 @@ class ChatbotAPI:
             link_html = f"""&bull; <a href="#" onclick="sendMessage('{cmd_str}');return false;">{link_label}</a><br>"""
             yield link_html.encode("utf-8")
 
-    def _show_single_random_color_image(self, model, trim):
-        model_trim_str = f"{model} {trim}".strip().lower()
-        all_color_images = []
-        found_any = False
-
-        for clr in self.config.KNOWN_COLORS:
-            filter_str = f"{model_trim_str} {clr}"
-            results = self.image_manager.filter_images_multi_keywords(filter_str)
-            if results:
-                all_color_images.extend(results)
-                found_any = True
-
-        if not found_any:
-            for clr in self.config.KNOWN_COLORS:
-                fallback_str = f"{model} {clr}"
-                results2 = self.image_manager.filter_images_multi_keywords(fallback_str)
-                if results2:
-                    all_color_images.extend(results2)
-
-        all_color_images = self._exclude_other_trims(all_color_images, trim)
-
-        if not all_color_images:
-            yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
-            return
-
-        chosen_image = random.choice(all_color_images)
-        img_url = f"/static/images/{chosen_image}"
-        base_name = os.path.splitext(os.path.basename(chosen_image))[0]
-
-        friendly_title = self._make_friendly_image_title(model, trim, base_name)
-
-        html_block = f"""
-<p><b>{friendly_title}</b></p>
-<div style="text-align: center; margin-bottom:20px;">
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 400px; cursor:pointer;" />
-  </a>
-</div>
-"""
-        yield html_block.encode("utf-8")
-
-    def _show_category_images(self, model, trim, category):
-        model_trim_str = f"{model} {trim}".strip().lower()
-
-        if category in ["renkler", "renk"]:
-            found_any = False
-            all_color_images = []
-            for clr in self.config.KNOWN_COLORS:
-                flt = f"{model_trim_str} {clr}"
-                results = self.image_manager.filter_images_multi_keywords(flt)
-                if results:
-                    all_color_images.extend(results)
-                    found_any = True
-
-            if not found_any:
-                for clr in self.config.KNOWN_COLORS:
-                    flt2 = f"{model} {clr}"
-                    results2 = self.image_manager.filter_images_multi_keywords(flt2)
-                    if results2:
-                        all_color_images.extend(results2)
-
-            all_color_images = self._exclude_other_trims(all_color_images, trim)
-
-            heading = f"<b>{model.title()} {trim.title()} - Tüm Renk Görselleri</b><br>"
-            yield heading.encode("utf-8")
-
-            if not all_color_images:
-                yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
-                return
-
-            yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
-            for img_file in all_color_images:
-                img_url = f"/static/images/{img_file}"
-                just_filename = os.path.basename(img_file)
-                base_name = os.path.splitext(just_filename)[0].replace("_", " ")
-
-                block_html = f"""
-<div style="text-align: center; margin: 5px;">
-  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
-  </a>
-</div>
-"""
-                yield block_html.encode("utf-8")
-            yield b"</div><br>"
-            return
-
-        filter_str = f"{model_trim_str} {category}".strip().lower()
-        found_images = self.image_manager.filter_images_multi_keywords(filter_str)
-
-        found_images = self._exclude_other_trims(found_images, trim)
-
-        heading = f"<b>{model.title()} {trim.title()} - {category.title()} Görselleri</b><br>"
-        yield heading.encode("utf-8")
-
-        if not found_images:
-            yield f"{model.title()} {trim.title()} için '{category}' görseli bulunamadı.<br>".encode("utf-8")
-            return
-
-        yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
-        for img_file in found_images:
-            img_url = f"/static/images/{img_file}"
-            just_filename = os.path.basename(img_file)
-            base_name = os.path.splitext(just_filename)[0].replace("_", " ")
-
-            block_html = f"""
-<div style="text-align: center; margin: 5px;">
-  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
-  </a>
-</div>
-"""
-            yield block_html.encode("utf-8")
-        yield b"</div><br>"
-
     def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
         time.sleep(2)
 
@@ -1136,17 +1129,7 @@ class ChatbotAPI:
 
         self.user_states[user_id]["pending_opsiyonel_model"] = None
 
-    # YENİ EKLENDİ: Tıklanabilir linklerle donanım seçeneği sunma
     def _yield_trim_options(self, model: str, trim_list: list):
-        """
-        Örneğin:
-          model = "fabia"
-          trim_list = ["premium", "monte carlo"]
-        Dönüş (HTML):
-          "Hangi donanımı görmek istersiniz?"
-          • <a ... onclick="sendMessage('fabia premium opsiyonel')">Fabia Premium</a>
-          • <a ... onclick="sendMessage('fabia monte carlo opsiyonel')">Fabia Monte Carlo</a>
-        """
         model_title = model.title()
         msg = f"Hangi donanımı görmek istersiniz?<br><br>"
 

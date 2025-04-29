@@ -28,8 +28,18 @@ function getOrCreateUserId() {
 }
 
 // 2) Görsele tıklanınca modal içinde açmayı sağlayan fonksiyon
-function showPopupImage(imgUrl) {
+//    NOT: "size='normal'" ekledik, eğer "smaller" gelirse popupImageSmaller sınıfını ekleyeceğiz.
+function showPopupImage(imgUrl, size = 'normal') {
+  // #popupImage'a resmi koy
   $("#popupImage").attr("src", imgUrl);
+
+  // "smaller" parametresi gelmişse .popupImageSmaller ekle
+  if (size === 'smaller') {
+    $("#popupImage").addClass("popupImageSmaller");
+  } else {
+    // Normal boyut
+    $("#popupImage").removeClass("popupImageSmaller");
+  }
 }
 
 function extractTextContentBlock(fullText) {
@@ -339,9 +349,7 @@ $(document).on("click", ".like-button", function(event) {
 
     const convId = $btn.data("conversation-id");
     if (convId) {
-      // İsterseniz DB'de 0 yapmak için /like ile farklı parametre yollayabilirsiniz.
-      // Örnek: /unlike endpointi vb.
-      // Bu kod opsiyonel
+      // Burada isterseniz 'unlike' için ayrı bir istekte bulunabilirsiniz
     }
   } else {
     // İlk kez beğen
