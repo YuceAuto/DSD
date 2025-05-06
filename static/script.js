@@ -2,8 +2,8 @@
 // script.js (Tablolu cevap + özel parçalama yaklaşımı)
 // + Benzersiz user_id üretme (Local Storage)
 // + Görsel popup fonksiyonu
-// + Sadece son baloncukta "Beğen" butonu
-// + Beğen butonuna tıklayınca /like POST isteği
+// + Sadece son baloncukta "Beğen" VE "Beğenme" butonları
+// + Butonlara tıklayınca /like veya /dislike POST isteği
 // ----------------------------------------------------
 
 // 1) Tarayıcıda kalıcı (localStorage) benzersiz kullanıcı ID oluşturma
@@ -28,16 +28,11 @@ function getOrCreateUserId() {
 }
 
 // 2) Görsele tıklanınca modal içinde açmayı sağlayan fonksiyon
-//    NOT: "size='normal'" ekledik, eğer "smaller" gelirse popupImageSmaller sınıfını ekleyeceğiz.
 function showPopupImage(imgUrl, size = 'normal') {
-  // #popupImage'a resmi koy
   $("#popupImage").attr("src", imgUrl);
-
-  // "smaller" parametresi gelmişse .popupImageSmaller ekle
   if (size === 'smaller') {
     $("#popupImage").addClass("popupImageSmaller");
   } else {
-    // Normal boyut
     $("#popupImage").removeClass("popupImageSmaller");
   }
 }
@@ -157,9 +152,8 @@ function splitNonTableTextIntoBubbles(fullText) {
 }
 
 /**
- * Botun cevabını parça parça işleyip, her bir parçayı (table ya da normal text)
- * ayrı "baloncuk" gibi göstermek yerine, bu örnekte BOT mesajı ortada ve baloncuksuz
- * olarak çıkacak şekilde ayarlıyoruz.
+ * Botun cevabını parça parça işleyip, 
+ * her parça için ortada (baloncuksuz) gösteriyoruz.
  */
 function processBotMessage(fullText, uniqueId) {
   // Bot'tan gelen ham text'i normalleştir
@@ -168,16 +162,14 @@ function processBotMessage(fullText, uniqueId) {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/[–—]/g, '-');
 
-  // Özel pattern "[CONVERSATION_ID=xxx]" yakala
+  // "[CONVERSATION_ID=xxx]" yakala
   let conversationId = null;
   const matchConv = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
   if (matchConv) {
     conversationId = matchConv[1];
-    // Metinden bu satırı çıkaralım ki baloncukta görünmesin
     normalizedText = normalizedText.replace(matchConv[0], "");
   }
 
-  // Bazı özel pattern'leri ayıklama (opsiyonel)
   const extractedValue = extractTextContentBlock(normalizedText);
   const textToCheck = extractedValue ? extractedValue : normalizedText;
 
@@ -187,7 +179,6 @@ function processBotMessage(fullText, uniqueId) {
   let lastIndex = 0;
   let match;
 
-  // Tablo öncesi ve sonrası metni bölme
   while ((match = tableRegexGlobal.exec(textToCheck)) !== null) {
     const tableMarkdown = match[1];
     const textBefore = textToCheck.substring(lastIndex, match.index).trim();
@@ -201,7 +192,6 @@ function processBotMessage(fullText, uniqueId) {
     lastIndex = tableRegexGlobal.lastIndex;
   }
 
-  // Son tablodan sonraki metin
   if (lastIndex < textToCheck.length) {
     const textAfter = textToCheck.substring(lastIndex).trim();
     if (textAfter) {
@@ -212,10 +202,9 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // Bot "typing" placeholder'ını kaldır
+  // "typing" placeholder'ını kaldır
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
-  // Her bubbleda tek tek ortada gösterim yapacağız:
   const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   
   newBubbles.forEach((bubble, index) => {
@@ -228,15 +217,20 @@ function processBotMessage(fullText, uniqueId) {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
-    // Sadece son bubble'da beğeni butonu
+    // Sadece son bubble'da beğeni + beğenmeme butonlarını göster
     const isLastBubble = (index === newBubbles.length - 1);
     let likeButtonHtml = "";
     if (isLastBubble && conversationId) {
       likeButtonHtml = `
         <button class="like-button"
-                style="margin-top:6px;"
+                style="margin-top:6px; margin-right:5px;"
                 data-conversation-id="${conversationId}">
           Beğen
+        </button>
+        <button class="dislike-button"
+                style="margin-top:6px;"
+                data-conversation-id="${conversationId}">
+          Beğenme
         </button>
       `;
     }
@@ -244,13 +238,10 @@ function processBotMessage(fullText, uniqueId) {
     // BOT MESAJI -> ORTALI ve BALONCUKSUZ
     const botHtml = `
       <div class="d-flex justify-content-center mb-4 w-100">
-        <!-- Bot mesajı için baloncuk yerine assistant_message_container -->
         <div class="assistant_message_container">
           <span id="botMessageContent-${bubbleId}">${bubbleContent}</span>
           ${likeButtonHtml}
         </div>
-        <!-- Saat göstermek isterseniz (gri küçük metin):
-             <span class="msg_time" style="display:none;">${currentTime}</span> -->
       </div>
     `;
 
@@ -259,11 +250,6 @@ function processBotMessage(fullText, uniqueId) {
   });
 }
 
-/**
- * ================================================
- *  MESAJ GÖNDERME & STREAM OKUMA
- * ================================================
- */
 $(document).ready(function () {
   const localUserId = getOrCreateUserId();
 
@@ -290,7 +276,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
-    // Botun "yazıyor" şeklindeki placeholder'ı
+    // Botun "yazıyor" placeholder'ı
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
@@ -328,7 +314,7 @@ $(document).ready(function () {
         function readChunk() {
           return reader.read().then(({ done, value }) => {
             if (done) {
-              // Tüm chunk'lar tamamlandı, artık işleyip ekranda gösterelim
+              // Tüm chunk'lar tamamlandı
               processBotMessage(botMessage, uniqueId);
               return;
             }
@@ -344,7 +330,6 @@ $(document).ready(function () {
         console.error("Hata:", err);
         $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
       });
-
   });
 });
 
@@ -353,14 +338,10 @@ $(document).on("click", ".like-button", function(event) {
   event.preventDefault();
   const $btn = $(this);
   if ($btn.hasClass("clicked")) {
-    // Beğeniyi geri alma örneği (isteğe bağlı)
+    // Beğeniyi geri alma (isteğe bağlı)
     $btn.removeClass("clicked");
     $btn.text("Beğen");
-
-    const convId = $btn.data("conversation-id");
-    if (convId) {
-      // Burada isterseniz 'unlike' için ayrı bir istekte bulunabilirsiniz
-    }
+    // Geri alırsanız veritabanını tekrar 0'a çekmek isterseniz burada yapabilirsiniz.
   } else {
     // İlk kez beğen
     $btn.addClass("clicked");
@@ -382,6 +363,40 @@ $(document).on("click", ".like-button", function(event) {
         }
       })
       .catch(err => console.error("Like POST hatası:", err));
+    }
+  }
+});
+
+// "Beğenmeme (dislike)" butonuna tıklama olayı
+$(document).on("click", ".dislike-button", function(event) {
+  event.preventDefault();
+  const $btn = $(this);
+  if ($btn.hasClass("clicked")) {
+    // Beğenmeme'yi geri alma (isteğe bağlı)
+    $btn.removeClass("clicked");
+    $btn.text("Beğenme");
+    // Geri alırsanız veritabanını tekrar 0'a çekmek isterseniz burada yapabilirsiniz.
+  } else {
+    // İlk kez beğenmeme
+    $btn.addClass("clicked");
+    $btn.text("Beğenilmedi");
+
+    const convId = $btn.data("conversation-id");
+    if (convId) {
+      fetch("/dislike", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: convId })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "ok") {
+          console.log("Veritabanı güncellendi: customer_answer=2");
+        } else {
+          console.log("Dislike güncelleme hatası:", data);
+        }
+      })
+      .catch(err => console.error("Dislike POST hatası:", err));
     }
   }
 });

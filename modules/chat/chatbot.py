@@ -161,7 +161,22 @@ class ChatbotAPI:
             if not conv_id:
                 return jsonify({"error": "No conversation_id provided"}), 400
             try:
+                # 1 = "Beğen"
                 update_customer_answer(conv_id, 1)
+                return jsonify({"status": "ok"}), 200
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        # -- YENİ /dislike ENDPOINT --
+        @self.app.route("/dislike", methods=["POST"])
+        def dislike_endpoint():
+            data = request.get_json()
+            conv_id = data.get("conversation_id")
+            if not conv_id:
+                return jsonify({"error": "No conversation_id provided"}), 400
+            try:
+                # 2 = "Beğenmeme (dislike)"
+                update_customer_answer(conv_id, 2)
                 return jsonify({"status": "ok"}), 200
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -602,11 +617,6 @@ class ChatbotAPI:
                 f"özel renk paketinden {color_part} görselini bulabilirsin."
             )
 
-    # ------------------------------
-    # Aşağıdaki fonksiyon:
-    #  Fabia/Scala/Kamiq + (jant/direksiyon) → popup_size='smaller'
-    #  Diğer her şey normal.
-    # ------------------------------
     def _show_single_random_color_image(self, model, trim):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
@@ -655,10 +665,6 @@ class ChatbotAPI:
 """
         yield html_block.encode("utf-8")
 
-    # ------------------------------
-    # Aynı mantığı kategori görsellerinde de uyguluyoruz:
-    #  Fabia/Scala/Kamiq + (jant/direksiyon) -> popup_size='smaller'
-    # ------------------------------
     def _show_category_images(self, model, trim, category):
         model_trim_str = f"{model} {trim}".strip().lower()
 
@@ -694,7 +700,6 @@ class ChatbotAPI:
                 just_filename = os.path.basename(img_file)
                 base_name = os.path.splitext(just_filename)[0].replace("_", " ")
 
-                # Check popup size
                 popup_size = "normal"
                 if model.lower() in ["fabia", "scala", "kamiq"]:
                     low_name = base_name.lower()
@@ -731,7 +736,6 @@ class ChatbotAPI:
             just_filename = os.path.basename(img_file)
             base_name = os.path.splitext(just_filename)[0].replace("_", " ")
 
-            # Check popup size
             popup_size = "normal"
             if model.lower() in ["fabia", "scala", "kamiq"]:
                 low_name = base_name.lower()
