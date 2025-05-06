@@ -156,6 +156,11 @@ function splitNonTableTextIntoBubbles(fullText) {
   return resultBubbles;
 }
 
+/**
+ * Botun cevabını parça parça işleyip, her bir parçayı (table ya da normal text)
+ * ayrı "baloncuk" gibi göstermek yerine, bu örnekte BOT mesajı ortada ve baloncuksuz
+ * olarak çıkacak şekilde ayarlıyoruz.
+ */
 function processBotMessage(fullText, uniqueId) {
   // Bot'tan gelen ham text'i normalleştir
   let normalizedText = fullText
@@ -210,19 +215,20 @@ function processBotMessage(fullText, uniqueId) {
   // Bot "typing" placeholder'ını kaldır
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
-  // Her bubble'ı ayrı mesaj balonu yaparak ekrana bas
+  // Her bubbleda tek tek ortada gösterim yapacağız:
+  const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
   newBubbles.forEach((bubble, index) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
-    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
     let bubbleContent = "";
+
     if (bubble.type === "table") {
       bubbleContent = markdownTableToHTML(bubble.content);
     } else {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
-    // Sadece son baloncukta "Beğen" butonu
+    // Sadece son bubble'da beğeni butonu
     const isLastBubble = (index === newBubbles.length - 1);
     let likeButtonHtml = "";
     if (isLastBubble && conversationId) {
@@ -235,17 +241,16 @@ function processBotMessage(fullText, uniqueId) {
       `;
     }
 
-    // BOT MESAJ BALONU
+    // BOT MESAJI -> ORTALI ve BALONCUKSUZ
     const botHtml = `
-      <div class="d-flex justify-content-start mb-4">
-        <img src="static/images/fotograf.png"
-             class="rounded-circle user_img_msg"
-             alt="bot image">
-        <div class="msg_cotainer">
+      <div class="d-flex justify-content-center mb-4 w-100">
+        <!-- Bot mesajı için baloncuk yerine assistant_message_container -->
+        <div class="assistant_message_container">
           <span id="botMessageContent-${bubbleId}">${bubbleContent}</span>
           ${likeButtonHtml}
         </div>
-        <span class="msg_time">${currentTime}</span>
+        <!-- Saat göstermek isterseniz (gri küçük metin):
+             <span class="msg_time" style="display:none;">${currentTime}</span> -->
       </div>
     `;
 
@@ -254,6 +259,11 @@ function processBotMessage(fullText, uniqueId) {
   });
 }
 
+/**
+ * ================================================
+ *  MESAJ GÖNDERME & STREAM OKUMA
+ * ================================================
+ */
 $(document).ready(function () {
   const localUserId = getOrCreateUserId();
 
@@ -265,7 +275,7 @@ $(document).ready(function () {
 
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // Kullanıcının mesaj balonu
+    // Kullanıcının mesaj balonu (sağda yeşil)
     const userHtml = `
       <div class="d-flex justify-content-end mb-4">
         <div class="msg_cotainer_send">
@@ -287,15 +297,15 @@ $(document).ready(function () {
         <img src="static/images/fotograf.png"
              class="rounded-circle user_img_msg"
              alt="bot image">
-        <div class="msg_cotainer">
-          <span id="botMessageContent-${uniqueId}"></span>
+        <div class="msg_cotainer" id="botMessageContent-${uniqueId}">
+          Yazıyor...
         </div>
-        <span class="msg_time">${currentTime}</span>
       </div>
     `;
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
+    // /ask endpointine istek
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -318,7 +328,7 @@ $(document).ready(function () {
         function readChunk() {
           return reader.read().then(({ done, value }) => {
             if (done) {
-              // Tüm chunk'lar tamamlandı
+              // Tüm chunk'lar tamamlandı, artık işleyip ekranda gösterelim
               processBotMessage(botMessage, uniqueId);
               return;
             }

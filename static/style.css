@@ -151,17 +151,7 @@ body, html {
   border: 2px solid black;
 }
 
-/* Mesaj balonları */
-.msg_cotainer {
-  margin-top: auto;
-  margin-bottom: auto;
-  margin-left: 10px;
-  border-radius: 25px;
-  background-color: rgb(255, 255, 255);
-  padding: 10px;
-  position: relative;
-  color: #000;
-}
+/* Kullanıcı mesaj balonu */
 .msg_cotainer_send {
   margin-top: auto;
   margin-bottom: auto;
@@ -173,14 +163,7 @@ body, html {
   color: #000;
 }
 
-/* Mesaj saatleri */
-.msg_time {
-  position: absolute;
-  left: 0;
-  bottom: -15px;
-  color: rgba(255,255,255,0.5);
-  font-size: 10px;
-}
+/* Kullanıcı mesaj saati */
 .msg_time_send {
   position: absolute;
   right: 0;
@@ -195,7 +178,7 @@ body, html {
   color: #000 !important;
 }
 
-/* Bildirim çubuğu stili */
+/* Bildirim çubuğu stili (opsiyonel) */
 .notification-text {
   background-color: #dff0d8;
   color: #3c763d;
@@ -225,6 +208,19 @@ body, html {
 .like-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* =========================================== */
+/* BOT MESAJINI ORTADA BALONCUKSUZ GÖSTERMEK İÇİN */
+/* =========================================== */
+.assistant_message_container {
+  text-align: center;  /* İçeriği ortala */
+  background: none;    /* Baloncuk arka planını sıfırladık */
+  border: none;        
+  padding: 0;          
+  color: #fff;         /* Koyu arka planda yazı rengi beyaz */
+  max-width: 80%;      
+  margin: 0 auto;      /* Ekranın ortasına yerleştirme */
 }
 
 /* =========================================== */
