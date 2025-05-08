@@ -6,14 +6,17 @@
   <title>Dijital Satış Danışmanı</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/fotograf.png') }}">
 
-  <!-- Bootstrap -->
+  <!-- Bootstrap CSS -->
   <link rel="stylesheet"
         href="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css"
         id="bootstrap-css">
+
+  <!-- Font Awesome (Light ikonlar için PRO sürüm veya uygun sürüm kullanın) -->
   <link rel="stylesheet"
-        href="https://use.fontawesome.com/releases/v5.5.0/css/all.css"
-        integrity="sha384-B4dIHKNBt8Bc12p+WXckhzcICo0wtJAoU8YZTY5qE0Id1GSseTk6S+L3BlXeVIU"
-        crossorigin="anonymous">
+        href="https://pro.fontawesome.com/releases/v6.0.0-beta3/css/all.css" 
+        integrity="sha384-..."
+        crossorigin="anonymous" 
+        referrerpolicy="no-referrer" />
 
   <!-- style.css -->
   <link rel="stylesheet"
@@ -21,17 +24,7 @@
         href="{{ url_for('static', filename='style.css')}}" />
 
   <style>
-    .notification-text {
-      background-color: #dff0d8;
-      color: #3c763d;
-      height: 30px;
-      line-height: 30px;
-      text-align: center;
-      font-family: Arial, sans-serif;
-      font-size: 16px;
-      box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
-      width: 100%;
-    }
+    /* Eğer ek CSS tanımlamalarınız varsa buraya koyabilirsiniz */
   </style>
 </head>
 
@@ -43,6 +36,7 @@
           <div class="card-header msg_head">
             <div class="d-flex bd-highlight">
               <div class="img_cont">
+                <!-- Botun üstteki profil fotoğrafı -->
                 <img src="{{ url_for('static', filename='images/fotograf.png') }}"
                      class="rounded-circle user_img"
                      alt="bot image">
@@ -55,10 +49,12 @@
             </div>
           </div>
 
+          <!-- Mesajların listelendiği alan -->
           <div id="messageFormeight" class="card-body msg_card_body">
-            <!-- Mesajlar burada görüntülenecek -->
+            <!-- Bot ve kullanıcı mesajları buraya eklenecek -->
           </div>
 
+          <!-- Mesaj yazma alanı -->
           <div class="card-footer">
             <form id="messageArea" class="input-group">
               <input type="text"
@@ -82,10 +78,17 @@
   <!-- ===================================================== -->
   <!-- BURADA GÖRSELLERİ POPUP (MODAL) İÇİNDE GÖRÜNTÜLEYECEK YAPI -->
   <!-- ===================================================== -->
-  <div class="modal fade" id="imageModal" tabindex="-1" role="dialog" aria-labelledby="imageModalTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
-      <div class="modal-content" style="background: none; border: none;">
-        <div class="modal-body text-center" style="position: relative;">
+  <div class="modal fade" id="imageModal"
+       tabindex="-1"
+       role="dialog"
+       aria-labelledby="imageModalTitle"
+       aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg"
+         role="document">
+      <div class="modal-content"
+           style="background: none; border: none;">
+        <div class="modal-body text-center"
+             style="position: relative;">
           <button type="button"
                   class="close"
                   data-dismiss="modal"
@@ -107,7 +110,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
   <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
 
-  <!-- script.js (tablolu cevap ve resim modal fonksiyonları vb.) -->
+  <!-- script.js -->
   <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

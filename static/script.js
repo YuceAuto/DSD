@@ -1,12 +1,9 @@
 // ----------------------------------------------------
-// script.js (Tablolu cevap + özel parçalama yaklaşımı)
-// + Benzersiz user_id üretme (Local Storage)
-// + Görsel popup fonksiyonu
-// + Sadece son baloncukta "Beğen" VE "Beğenme" butonları
-// + Butonlara tıklayınca /like veya /dislike POST isteği
+// script.js (Şeffaf, Font Awesome ikonlu Like / Dislike)
+// + Yalnızca ikon rengi değişsin (arka plan yok)
+// + Bir buton tıklanınca diğerini pasif yap
 // ----------------------------------------------------
 
-// 1) Tarayıcıda kalıcı (localStorage) benzersiz kullanıcı ID oluşturma
 function getOrCreateUserId() {
   let existing = localStorage.getItem("skodaBotUserId");
   if (existing) {
@@ -27,7 +24,6 @@ function getOrCreateUserId() {
   return newId;
 }
 
-// 2) Görsele tıklanınca modal içinde açmayı sağlayan fonksiyon
 function showPopupImage(imgUrl, size = 'normal') {
   $("#popupImage").attr("src", imgUrl);
   if (size === 'smaller') {
@@ -202,11 +198,9 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // "typing" placeholder'ını kaldır
+  // "yazıyor" placeholder'ını kaldır
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
-  const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  
   newBubbles.forEach((bubble, index) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
     let bubbleContent = "";
@@ -217,25 +211,22 @@ function processBotMessage(fullText, uniqueId) {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
-    // Sadece son bubble'da beğeni + beğenmeme butonlarını göster
+    // Sadece son bubble'da like/dislike butonlarını göster
     const isLastBubble = (index === newBubbles.length - 1);
     let likeButtonHtml = "";
+    // conversationId Yakalandıysa buton ekle
     if (isLastBubble && conversationId) {
+      // Font Awesome ikonlu butonlar
       likeButtonHtml = `
-        <button class="like-button"
-                style="margin-top:6px; margin-right:5px;"
-                data-conversation-id="${conversationId}">
-          Beğen
+        <button class="like-button" data-conversation-id="${conversationId}">
+          <i class="fa-solid fa-thumbs-up" style="color: #f2f2f2;"></i>
         </button>
-        <button class="dislike-button"
-                style="margin-top:6px;"
-                data-conversation-id="${conversationId}">
-          Beğenme
+        <button class="dislike-button" data-conversation-id="${conversationId}">
+          <i class="fa-solid fa-thumbs-down" style="color: #f2f2f2;"></i>
         </button>
       `;
     }
 
-    // BOT MESAJI -> ORTALI ve BALONCUKSUZ
     const botHtml = `
       <div class="d-flex justify-content-center mb-4 w-100">
         <div class="assistant_message_container">
@@ -244,7 +235,6 @@ function processBotMessage(fullText, uniqueId) {
         </div>
       </div>
     `;
-
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
   });
@@ -260,8 +250,7 @@ $(document).ready(function () {
     if (!rawText) return;
 
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    // Kullanıcının mesaj balonu (sağda yeşil)
+    // Kullanıcı mesajı
     const userHtml = `
       <div class="d-flex justify-content-end mb-4">
         <div class="msg_cotainer_send">
@@ -276,7 +265,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
-    // Botun "yazıyor" placeholder'ı
+    // Bot "yazıyor..." placeholder
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
@@ -291,7 +280,7 @@ $(document).ready(function () {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
-    // /ask endpointine istek
+    // /ask endpoint
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -314,7 +303,6 @@ $(document).ready(function () {
         function readChunk() {
           return reader.read().then(({ done, value }) => {
             if (done) {
-              // Tüm chunk'lar tamamlandı
               processBotMessage(botMessage, uniqueId);
               return;
             }
@@ -333,21 +321,26 @@ $(document).ready(function () {
   });
 });
 
-// "Beğen" butonuna tıklama olayı
+// -----------------------------------------------------
+// LIKE BUTONU TIKLANINCA
+// -----------------------------------------------------
 $(document).on("click", ".like-button", function(event) {
   event.preventDefault();
-  const $btn = $(this);
-  if ($btn.hasClass("clicked")) {
-    // Beğeniyi geri alma (isteğe bağlı)
-    $btn.removeClass("clicked");
-    $btn.text("Beğen");
-    // Geri alırsanız veritabanını tekrar 0'a çekmek isterseniz burada yapabilirsiniz.
-  } else {
-    // İlk kez beğen
-    $btn.addClass("clicked");
-    $btn.text("Beğenildi");
+  const $likeBtn = $(this);
+  const $dislikeBtn = $(".dislike-button"); // diğer butonu
 
-    const convId = $btn.data("conversation-id");
+  // Diğer butonun .clicked sınıfını kaldır
+  $dislikeBtn.removeClass("clicked");
+
+  // Toggle
+  if ($likeBtn.hasClass("clicked")) {
+    // Zaten tıklı -> unclick
+    $likeBtn.removeClass("clicked");
+  } else {
+    // Yeni tıklama
+    $likeBtn.addClass("clicked");
+
+    const convId = $likeBtn.data("conversation-id");
     if (convId) {
       fetch("/like", {
         method: "POST",
@@ -356,32 +349,31 @@ $(document).on("click", ".like-button", function(event) {
       })
       .then(res => res.json())
       .then(data => {
-        if (data.status === "ok") {
-          console.log("Veritabanı güncellendi: customer_answer=1");
-        } else {
-          console.log("Like güncelleme hatası:", data);
-        }
+        console.log("Like POST yanıtı:", data);
       })
       .catch(err => console.error("Like POST hatası:", err));
     }
   }
 });
 
-// "Beğenmeme (dislike)" butonuna tıklama olayı
+// -----------------------------------------------------
+// DISLIKE BUTONU TIKLANINCA
+// -----------------------------------------------------
 $(document).on("click", ".dislike-button", function(event) {
   event.preventDefault();
-  const $btn = $(this);
-  if ($btn.hasClass("clicked")) {
-    // Beğenmeme'yi geri alma (isteğe bağlı)
-    $btn.removeClass("clicked");
-    $btn.text("Beğenme");
-    // Geri alırsanız veritabanını tekrar 0'a çekmek isterseniz burada yapabilirsiniz.
-  } else {
-    // İlk kez beğenmeme
-    $btn.addClass("clicked");
-    $btn.text("Beğenilmedi");
+  const $dislikeBtn = $(this);
+  const $likeBtn = $(".like-button");
 
-    const convId = $btn.data("conversation-id");
+  // Diğer butonun .clicked sınıfını kaldır
+  $likeBtn.removeClass("clicked");
+
+  // Toggle
+  if ($dislikeBtn.hasClass("clicked")) {
+    $dislikeBtn.removeClass("clicked");
+  } else {
+    $dislikeBtn.addClass("clicked");
+
+    const convId = $dislikeBtn.data("conversation-id");
     if (convId) {
       fetch("/dislike", {
         method: "POST",
@@ -390,11 +382,7 @@ $(document).on("click", ".dislike-button", function(event) {
       })
       .then(res => res.json())
       .then(data => {
-        if (data.status === "ok") {
-          console.log("Veritabanı güncellendi: customer_answer=2");
-        } else {
-          console.log("Dislike güncelleme hatası:", data);
-        }
+        console.log("Dislike POST yanıtı:", data);
       })
       .catch(err => console.error("Dislike POST hatası:", err));
     }
@@ -407,10 +395,7 @@ $(document).on("click", ".dislike-button", function(event) {
  * ==============================
  */
 function sendMessage(textToSend) {
-  // 1) Metni sohbet giriş kutusuna yerleştir
   const inputField = $("#text");
   inputField.val(textToSend);
-
-  // 2) Normal submit yaparak, sanki kullanıcı yazmış gibi /ask endpoint’ine gönder
   $("#messageArea").submit();
 }

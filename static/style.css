@@ -1,5 +1,5 @@
 /* --------------------------------------------- */
-/* style.css - Tüm kod, beyaz arka planlı modal görsel */
+/* style.css - Tüm kod, Font Awesome ikonlu Like/Dislike */
 /* --------------------------------------------- */
 
 /* Body ve HTML - Arka plan gradyan korunuyor, ekrana tam oturacak şekilde */
@@ -38,9 +38,9 @@ body, html {
   flex-direction: column;
   width: 100%;
   max-width: 1200px;
-  height: calc(100vh - 40px); /* Yüksekliği ekranın tamamına göre hesaplanır */
+  height: calc(100vh - 40px);
   border-radius: 15px;
-  margin: 0 10px; /* Yatayda 10px boşluk */
+  margin: 0 10px;
 }
 
 /* Kart, chat alanını tam doldurur */
@@ -50,7 +50,7 @@ body, html {
   flex-direction: column;
   border-radius: 15px !important;
   background-color: #000000 !important;
-  height: 100%; /* Ebeveynin yüksekliğini kapla */
+  height: 100%;
 }
 
 /* Header (üst kısım) */
@@ -70,8 +70,7 @@ body, html {
   display: flex;
 }
 
-/* Mesajların listelendiği alan
-   (flex: 1; -> mümkün olan boşluğu kaplar, overflow-y -> içte kaydırma) */
+/* Mesajların listelendiği alan */
 .msg_card_body {
   flex: 1;
   overflow-y: auto;
@@ -151,7 +150,7 @@ body, html {
   border: 2px solid black;
 }
 
-/* Kullanıcı mesaj balonu */
+/* Kullanıcı mesaj balonu (yeşil) */
 .msg_cotainer_send {
   margin-top: auto;
   margin-bottom: auto;
@@ -162,8 +161,6 @@ body, html {
   position: relative;
   color: #000;
 }
-
-/* Kullanıcı mesaj saati */
 .msg_time_send {
   position: absolute;
   right: 0;
@@ -178,56 +175,48 @@ body, html {
   color: #000 !important;
 }
 
-/* Bildirim çubuğu stili (opsiyonel) */
-.notification-text {
-  background-color: #dff0d8;
-  color: #3c763d;
-  height: 30px;
-  line-height: 30px;
-  text-align: center;
-  font-family: Arial, sans-serif;
-  font-size: 16px;
-  box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
-  width: 100%;
-}
-
-/* Beğeni (like) butonu */
-.like-button {
-  background-color: #0E3A2F;
-  color: white;
-  border: 1px solid #0E3A2F;
-  border-radius: 4px;
-  padding: 5px 10px;
-  cursor: pointer;
-  font-size: 14px;
-  margin-left: 6px;
-}
-.like-button:hover {
-  background-color: #078862;
-}
-.like-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 /* =========================================== */
-/* BOT MESAJINI ORTADA BALONCUKSUZ GÖSTERMEK İÇİN */
+/* BOT MESAJINI SOLDAN BALONCUKSUZ GÖSTERMEK İÇİN */
 /* =========================================== */
 .assistant_message_container {
-  text-align: center;  /* İçeriği ortala */
-  background: none;    /* Baloncuk arka planını sıfırladık */
-  border: none;        
-  padding: 0;          
-  color: #fff;         /* Koyu arka planda yazı rengi beyaz */
-  max-width: 80%;      
-  margin: 0 auto;      /* Ekranın ortasına yerleştirme */
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: #fff;
+  max-width: 80%;
+}
+
+/* =========================================== */
+/* Şeffaf Like/Dislike Butonları - Sadece ikon renklensin */
+/* =========================================== */
+.like-button,
+.dislike-button {
+  background: none;       /* Şeffaf arka plan */
+  border: none;           /* Çerçeve yok */
+  cursor: pointer;
+  font-size: 20px;        /* Ikon boyutu */
+  margin-left: 6px;
+  color: #f2f2f2;         /* İlk hali: açık gri / beyaz */
+}
+
+/* TIKLANDIĞINDA YALNIZCA IKON RENGİ DEĞİŞSİN */
+.like-button.clicked i {
+  color: #78FAAE !important; /* Açık yeşil */
+}
+.dislike-button.clicked i {
+  color: #78FAAE !important; /* Koyu yeşil */
+}
+
+/* Hover efekti (opsiyonel) */
+.like-button:hover i,
+.dislike-button:hover i {
+  opacity: 0.8;
 }
 
 /* =========================================== */
 /* POP-UP GÖRSELİ BÜYÜTME VE ARKA PLAN */
 /* =========================================== */
-
-/* 1) Genel kural: Diğer resimler en fazla %75 boyutunda açılacak */
 #popupImage {
   max-width: 75%;
   width: 100%;
@@ -238,18 +227,12 @@ body, html {
   background-color: #fff;
 }
 
-/* 2) Jant / Direksiyon (Fabia/Scala/Kamiq) için ayrı bir sınıf tanımladık.
-   max-width: 60% vererek biraz daha küçük göstereceğiz. */
 .popupImageSmaller {
   max-width: 60% !important;
 }
-
-/* 3) Modal penceresini genişletmek için (opsiyonel) */
 .modal-dialog.modal-lg {
   max-width: 800px;
 }
-
-/* 4) Modal açıldığında arka planı siyah, ancak yarı şeffaf yapmak */
 .modal-backdrop.show {
   background-color: rgba(0, 0, 0, 0.7) !important;
   opacity: 1 !important;
@@ -270,6 +253,6 @@ body, html {
   }
   .chat {
     margin: 0 auto;
-    height: calc(100vh - 20px); /* Mobilde daha az margin, daha fazla alan */
+    height: calc(100vh - 20px);
   }
 }
