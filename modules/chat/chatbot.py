@@ -167,7 +167,6 @@ class ChatbotAPI:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
-        # -- YENİ /dislike ENDPOINT --
         @self.app.route("/dislike", methods=["POST"])
         def dislike_endpoint():
             data = request.get_json()
@@ -376,13 +375,18 @@ class ChatbotAPI:
 
         last_models = self.user_states[user_id].get("last_models", set())
 
-        # Eğer cümlede model yok ama önceden hatırlanan model varsa cümleye ekleyelim
-        if not user_models_in_msg and last_models:
-            joined_models = " ve ".join(last_models)
-            corrected_message = f"{joined_models} {corrected_message}".strip()
-            user_models_in_msg = self._extract_models(corrected_message)
-            self.logger.info(f"[MODEL-EKLEME] Önceki modeller eklendi -> {joined_models}")
+        # ---------------------------------------------------------------------------------
+        # Burada, eğer kullanıcı model adı belirtmezse önceden hatırlanan modeli ekleme:
+        # AŞAĞIDAKİ SATIRLARI YORUM SATIRINA ALDIK / SİLDİK.
+        # ---------------------------------------------------------------------------------
+        # if not user_models_in_msg and last_models:
+        #     joined_models = " ve ".join(last_models)
+        #     corrected_message = f"{joined_models} {corrected_message}".strip()
+        #     user_models_in_msg = self._extract_models(corrected_message)
+        #     self.logger.info(f"[MODEL-EKLEME] Önceki modeller eklendi -> {joined_models}")
+        # ---------------------------------------------------------------------------------
 
+        # Eğer yeni mesajda bir model geçiyorsa bunu "hatırlayalım"
         if user_models_in_msg:
             self.user_states[user_id]["last_models"] = user_models_in_msg
 
@@ -630,6 +634,7 @@ class ChatbotAPI:
                 found_any = True
 
         if not found_any:
+            # ikinci bir tarama
             for clr in self.config.KNOWN_COLORS:
                 fallback_str = f"{model} {clr}"
                 results2 = self.image_manager.filter_images_multi_keywords(fallback_str)
@@ -646,7 +651,6 @@ class ChatbotAPI:
         img_url = f"/static/images/{chosen_image}"
         base_name = os.path.splitext(os.path.basename(chosen_image))[0]
 
-        # DİKKAT: Jant veya direksiyon kelimesi varsa + model fabia/scala/kamiq → popup_size='smaller'
         popup_size = "normal"
         if model.lower() in ["fabia", "scala", "kamiq"]:
             low_name = base_name.lower()
@@ -935,8 +939,7 @@ class ChatbotAPI:
                     yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                     return
 
-        # (F) Fallback eklendi: Kullanıcı görsel istiyor ama
-        # yukarıdaki (A)-(D) hiçbir koşula uymadıysa buraya düşer:
+        # (F) Fallback: Kullanıcı görsel istiyor ama yukarıdaki koşullara uymadı
         if is_image_req:
             user_models_in_msg2 = self._extract_models(user_message)
             if not user_models_in_msg2 and "last_models" in self.user_states[user_id]:
