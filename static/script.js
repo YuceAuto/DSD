@@ -58,7 +58,7 @@ function markdownTableToHTML(mdTable) {
   headerCells.forEach(cell => {
     html += `<th>${cell}</th>`;
   });
-  html += `   </tr>
+  html +=    `</tr>
             </thead>
             <tbody>
   `;
