@@ -106,11 +106,13 @@ class ChatbotAPI:
 
         self.markdown_processor = MarkdownProcessor()
 
+        # Birden fazla asistan tanımı için Config üzerinden
         self.ASSISTANT_CONFIG = self.config.ASSISTANT_CONFIG
         self.ASSISTANT_NAME_MAP = self.config.ASSISTANT_NAME_MAP
 
         self.user_states = {}
 
+        # Fuzzy cache yapısı (assistant_id bazlı)
         self.fuzzy_cache = {}
         self.fuzzy_cache_queue = queue.Queue()
 
@@ -181,13 +183,16 @@ class ChatbotAPI:
                 return jsonify({"error": str(e)}), 500
 
     def _background_db_writer(self):
+        """
+        Birinci koddaki gibi assistant_id'yi de DB'ye kaydeder.
+        """
         self.logger.info("Background DB writer thread started.")
         while not self.stop_worker:
             try:
                 record = self.fuzzy_cache_queue.get(timeout=5.0)
                 if record is None:
                     continue
-                # Burada record'u 5 elemanlı (user_id, q_lower, ans_bytes, tstamp, assistant_id) olarak bekliyoruz.
+                # Beklenen: (user_id, q_lower, ans_bytes, tstamp, assistant_id)
                 (user_id, q_lower, ans_bytes, tstamp, assistant_id) = record
 
                 conn = get_db_connection()
@@ -217,6 +222,9 @@ class ChatbotAPI:
         self.logger.info("Background DB writer thread stopped.")
 
     def _load_cache_from_db(self):
+        """
+        Birinci koddaki gibi assistant_id sütununu da çekiyoruz.
+        """
         self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
 
         conn = get_db_connection()
@@ -335,7 +343,8 @@ class ChatbotAPI:
 
     def _store_in_fuzzy_cache(self, user_id: str, question: str, answer_bytes: bytes, assistant_id: str):
         """
-        Yeni assistant_id sütunu ile birlikte queue'ya 5 elemanlı bir kayıt atıyoruz.
+        Birinci koddaki gibi, veriyi 5 elemanlı tuple olarak kuyrukta tutuyoruz
+        (user_id, question, answer_bytes, timestamp, assistant_id).
         """
         if not assistant_id:
             return
@@ -352,13 +361,12 @@ class ChatbotAPI:
             "timestamp": time.time()
         })
 
-        # Record tuple: (user_id, question, answer_bytes, timestamp, assistant_id)
         record = (user_id, q_lower, answer_bytes, time.time(), assistant_id)
         self.fuzzy_cache_queue.put(record)
 
-    # -----------------------------------------------------------
-    # YENİ EKLENEN FONKSİYON: "Cevaptaki en sık tekrar eden modeli bulma"
-    # -----------------------------------------------------------
+    # -----------------------------------------------------------------
+    # YENİ EKLENEN FONKSİYON (Birinci koddaki "en sık tekrar eden modeli" bulma)
+    # -----------------------------------------------------------------
     def extract_most_frequent_model(self, text: str) -> str:
         candidates = ["fabia", "scala", "kamiq", "karoq"]
         text_lower = text.lower()
@@ -376,6 +384,7 @@ class ChatbotAPI:
         if not most_model or most_count == 0:
             return None
         return most_model
+    # -----------------------------------------------------------------
 
     def _ask(self):
         try:
@@ -389,29 +398,13 @@ class ChatbotAPI:
         user_message = data.get("question", "")
         user_id = data.get("user_id", "default_user")
 
-        # ÖZEL KOMUT KONTROL: [SWITCH_TO_...] / [STAY_WITH_...]
-        if user_message.startswith("[SWITCH_TO_"):
-            m = re.match(r"\[SWITCH_TO_(.+?)\]", user_message)
-            if m:
-                new_model_name = m.group(1).lower()
-                new_assistant_id = self._assistant_id_from_model_name(new_model_name)
-                if new_assistant_id:
-                    self.user_states.setdefault(user_id, {})
-                    self.user_states[user_id]["assistant_id"] = new_assistant_id
-                    return jsonify({"response": f"Asistan {new_model_name.title()} modeline yönlendirildi. Yeni model üzerinden devam edebilirsiniz."})
-            return jsonify({"response": "Geçerli bir model yönlendirmesi bulunamadı."})
+        if not user_message:
+            return jsonify({"response": "Please enter a question."})
 
-        elif user_message.startswith("[STAY_WITH_"):
-            return jsonify({"response": "Aynı asistanda (mevcut model) devam ediliyor."})
-
-        # Oturum süresini güncelle
         if 'last_activity' not in session:
             session['last_activity'] = time.time()
         else:
             session['last_activity'] = time.time()
-
-        if not user_message:
-            return jsonify({"response": "Please enter a question."})
 
         corrected_message = self._correct_all_typos(user_message)
         user_models_in_msg = self._extract_models(corrected_message)
@@ -420,7 +413,7 @@ class ChatbotAPI:
             self.user_states[user_id] = {}
             self.user_states[user_id]["threads"] = {}
 
-        # Eğer yeni mesajda bir model geçiyorsa bunu hatırlayalım
+        # Eğer yeni mesajda bir model geçiyorsa "last_models" olarak hatırlayalım
         if user_models_in_msg:
             self.user_states[user_id]["last_models"] = user_models_in_msg
 
@@ -441,6 +434,7 @@ class ChatbotAPI:
         if new_assistant_id is None and old_assistant_id:
             new_assistant_id = old_assistant_id
 
+        # En az meşgul asistan seçimi (birinci koddaki gibi)
         if not new_assistant_id:
             new_assistant_id = self._pick_least_busy_assistant()
             if not new_assistant_id:
@@ -471,7 +465,6 @@ class ChatbotAPI:
                 new_assistant_id,
                 threshold=local_threshold
             )
-            # Basit bir model-trim uyumluluğu kontrolü
             if cached_answer:
                 answer_text = cached_answer.decode("utf-8")
                 models_in_answer = self._extract_models(answer_text)
@@ -492,7 +485,7 @@ class ChatbotAPI:
 
                 if cached_answer:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt.")
-                    time.sleep(1)  # 1 sn bekleme (opsiyonel)
+                    time.sleep(1)  # 1 sn bekleme
                     return self.app.response_class(cached_answer, mimetype="text/plain")
 
         def caching_generator():
@@ -740,8 +733,8 @@ class ChatbotAPI:
                 base_name = os.path.splitext(just_filename)[0].replace("_", " ")
 
                 popup_size = "normal"
-                low_name = base_name.lower()
                 if model.lower() in ["fabia", "scala", "kamiq"]:
+                    low_name = base_name.lower()
                     if "jant" in low_name or "direksiyon" in low_name:
                         popup_size = "smaller"
 
@@ -776,8 +769,8 @@ class ChatbotAPI:
             base_name = os.path.splitext(just_filename)[0].replace("_", " ")
 
             popup_size = "normal"
-            low_name = base_name.lower()
             if model.lower() in ["fabia", "scala", "kamiq"]:
+                low_name = base_name.lower()
                 if "jant" in low_name or "direksiyon" in low_name:
                     popup_size = "smaller"
 
@@ -895,6 +888,7 @@ class ChatbotAPI:
                 return
             else:
                 self.user_states[user_id]["pending_opsiyonel_model"] = found_model
+                # Tek trim yakalandıysa doğrudan tabloyu göster
                 if len(user_trims_in_msg) == 1:
                     found_trim = list(user_trims_in_msg)[0]
                     if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
@@ -907,6 +901,7 @@ class ChatbotAPI:
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
+                    # Kullanıcıya tıklanabilir linklerle donanım seçeneklerini göster
                     if found_model == "fabia":
                         yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
                         return
@@ -953,6 +948,7 @@ class ChatbotAPI:
                         yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                         return
             else:
+                # Hiç trim söylenmedi -> linklerle soralım
                 if pending_ops_model.lower() == "fabia":
                     yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
                     return
@@ -1010,8 +1006,6 @@ class ChatbotAPI:
             thread_id = threads_dict.get(assistant_id)
 
             if not thread_id:
-                # Bu kısım OpenAI Beta API'siyle ilgili, 
-                # demoyu koruyoruz ama gerçekte pek kullanılmayabilir.
                 new_thread = self.client.beta.threads.create(
                     messages=[{"role": "user", "content": user_message}]
                 )
@@ -1059,41 +1053,27 @@ class ChatbotAPI:
             conversation_id = save_to_db(user_id, user_message, assistant_response)
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
+            # -----------------------------------------------------------
+            # Birinci koddaki gibi "cevaptaki en sık tekrar eden modeli bulma",
+            # ama [SWITCH_TO_...] / [STAY_WITH_...] linkleri eklemeden sadece bilgi olarak kullanıyoruz.
+            # -----------------------------------------------------------
+            if assistant_response:
+                # Kullanıcı mesajında *hiç* model yoksa (user_models_in_msg_latest = 0) 
+                # ama cevabın içinde çok sık geçen bir model varsa, burada tespit edebiliriz.
+                # (İsterseniz sadece log yazabilir veya ufak bir mesaj verebilirsiniz.)
+                user_models_in_msg_latest = self._extract_models(user_message)
+                if len(user_models_in_msg_latest) == 0:
+                    most_freq_model = self.extract_most_frequent_model(assistant_response)
+                    if most_freq_model:
+                        self.logger.info(f"Cevapta en sık tekrar eden model: {most_freq_model}")
+                        # Burada isterseniz kullanıcıya ek bilgi dönebilirsiniz, 
+                        # ama [SWITCH_TO_x] vs. eklemeden:
+                        yield f"\n(Not: Cevap içinde en çok '{most_freq_model.title()}' modeli geçiyor.)".encode("utf-8")
+
         except Exception as e:
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
             save_to_db(user_id, user_message, f"Hata: {str(e)}")
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
-
-        # -----------------------------------------
-        # Kullanıcı model belirtmedi + Cevapta farklı model sık geçiyorsa
-        # -----------------------------------------
-        user_models_in_msg_latest = self._extract_models(user_message)
-        if len(user_models_in_msg_latest) == 0:
-            # Cevabı incelediğimizde en sık tekrar eden model:
-            if assistant_response:
-                most_freq_model = self.extract_most_frequent_model(assistant_response)
-                current_assistant_model = self.ASSISTANT_NAME_MAP.get(assistant_id, "").lower()
-
-                if most_freq_model and most_freq_model != current_assistant_model:
-                    snippet = f"""
-<br><br>
-<div style="margin-top:10px; color:#fff; font-size:0.95rem;">
-  <b>Dilerseniz devam edeceğim asistanı seçebilirsiniz:</b><br>
-  &bull; A) 
-    <a href="#" 
-       onclick="sendMessage('[STAY_WITH_{current_assistant_model.upper()}]');return false;"
-       style="color: #78FAAE;"> 
-      {current_assistant_model.title()} modelinden devam et
-    </a><br>
-  &bull; B)
-    <a href="#" 
-       onclick="sendMessage('[SWITCH_TO_{most_freq_model.upper()}]');return false;"
-       style="color: #78FAAE;">
-      {most_freq_model.title()} modelinden devam et
-    </a>
-</div>
-"""
-                    yield snippet.encode("utf-8")
 
     def _yield_invalid_trim_message(self, model, invalid_trim):
         msg = f"{model.title()} {invalid_trim.title()} modelimiz bulunmamaktadır.<br>"
