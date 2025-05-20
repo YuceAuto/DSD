@@ -11,6 +11,7 @@ import random
 from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
 from dotenv import load_dotenv
+import requests  # <-- HARİCİ API'YE İSTEK ATMAK İÇİN GEREKLİ
 
 from modules.managers.image_manager import ImageManager
 from modules.managers.markdown_utils import MarkdownProcessor
@@ -45,11 +46,13 @@ from modules.data.karoq_data import (
 
 load_dotenv()
 
+
 def normalize_trim_str(t: str) -> list:
     t = t.lower().strip()
     with_underscore = t.replace(" ", "_")
     no_space = t.replace(" ", "")
     return [t, with_underscore, no_space]
+
 
 def extract_trims(text: str) -> set:
     text_lower = text.lower()
@@ -62,6 +65,7 @@ def extract_trims(text: str) -> set:
             found_trims.add(t)
 
     return found_trims
+
 
 def extract_model_trim_pairs(text):
     pattern = r"(fabia|scala|kamiq|karoq)\s*(premium|monte carlo|elite|prestige|sportline)?"
@@ -81,6 +85,7 @@ def extract_model_trim_pairs(text):
             pairs.append((model, trim))
 
     return pairs
+
 
 class ChatbotAPI:
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
@@ -182,9 +187,60 @@ class ChatbotAPI:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        # ---------------------------------------------------
+        # YENİ EKLENEN GET METODU
+        # ---------------------------------------------------
+        @self.app.route("/user", methods=["GET"])
+        def get_userinfo():
+            """
+            Örnek kullanım: GET /user?login=john&menu=DSD
+            """
+            # Query parametrelerini alalım
+            login = request.args.get('login')
+            menu_selected = request.args.get('menu')
+
+            # Dış/harici API url (örnektir, kendi endpoint’inizi yazın)
+            external_api_url = "https://test-dsd.skoda.com.tr/"
+
+            # Döndürülecek değerler
+            userid = "berkeb"
+            username = "Berke Basara"
+
+            # Sadece 'DSD' seçilmişse ve login parametresi doluysa
+            if login and menu_selected == 'DSD':
+                # Örnek GET isteği
+                try:
+                    resp = requests.get(external_api_url, params={"login": login})
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        # Dönmesini beklediğimiz JSON örn:
+                        # { "userid": "12345", "username": "john_doe" }
+                        userid = data.get('userid')
+                        username = data.get('username')
+                    else:
+                        # Harici API hata döndürdü
+                        return jsonify({
+                            "error": f"Dış API çağrısı başarısız. Status code: {resp.status_code}"
+                        }), 502
+
+                except Exception as e:
+                    return jsonify({"error": f"Dış API'ye bağlanırken hata: {str(e)}"}), 500
+            else:
+                # login yok veya menu=DSD değil
+                return jsonify({
+                    "error": "menu=DSD olmalı ve login parametresi gereklidir."
+                }), 400
+
+            # Normalde string istediğiniz için str(...) ile dönüştürelim
+            return jsonify({
+                "userid": str(userid) if userid else "",
+                "username": str(username) if username else ""
+            }), 200
+        # ---------------------------------------------------
+
     def _background_db_writer(self):
         """
-        Birinci koddaki gibi assistant_id'yi de DB'ye kaydeder.
+        Asenkron şekilde DB'ye cache verilerini kaydediyor.
         """
         self.logger.info("Background DB writer thread started.")
         while not self.stop_worker:
@@ -223,7 +279,7 @@ class ChatbotAPI:
 
     def _load_cache_from_db(self):
         """
-        Birinci koddaki gibi assistant_id sütununu da çekiyoruz.
+        Uygulama başlangıcında DB'den son X kaydı çekip self.fuzzy_cache'e yükler.
         """
         self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
 
@@ -321,6 +377,7 @@ class ChatbotAPI:
         best_answer = None
 
         for item in self.fuzzy_cache[user_id][assistant_id]:
+            # Eski kayıtlarda tarih kontrolü (expiration)
             if (now - item["timestamp"]) > self.CACHE_EXPIRY_SECONDS:
                 continue
 
@@ -342,10 +399,6 @@ class ChatbotAPI:
         return None
 
     def _store_in_fuzzy_cache(self, user_id: str, question: str, answer_bytes: bytes, assistant_id: str):
-        """
-        Birinci koddaki gibi, veriyi 5 elemanlı tuple olarak kuyrukta tutuyoruz
-        (user_id, question, answer_bytes, timestamp, assistant_id).
-        """
         if not assistant_id:
             return
         q_lower = question.strip().lower()
@@ -364,10 +417,10 @@ class ChatbotAPI:
         record = (user_id, q_lower, answer_bytes, time.time(), assistant_id)
         self.fuzzy_cache_queue.put(record)
 
-    # -----------------------------------------------------------------
-    # YENİ EKLENEN FONKSİYON (Birinci koddaki "en sık tekrar eden modeli" bulma)
-    # -----------------------------------------------------------------
     def extract_most_frequent_model(self, text: str) -> str:
+        """
+        Cevap içinde en sık tekrar eden modeli bulmak için örnek yöntem.
+        """
         candidates = ["fabia", "scala", "kamiq", "karoq"]
         text_lower = text.lower()
         freq_counts = {}
@@ -384,7 +437,6 @@ class ChatbotAPI:
         if not most_model or most_count == 0:
             return None
         return most_model
-    # -----------------------------------------------------------------
 
     def _ask(self):
         try:
@@ -434,7 +486,7 @@ class ChatbotAPI:
         if new_assistant_id is None and old_assistant_id:
             new_assistant_id = old_assistant_id
 
-        # En az meşgul asistan seçimi (birinci koddaki gibi)
+        # En az meşgul asistan seçimi
         if not new_assistant_id:
             new_assistant_id = self._pick_least_busy_assistant()
             if not new_assistant_id:
@@ -468,6 +520,7 @@ class ChatbotAPI:
             if cached_answer:
                 answer_text = cached_answer.decode("utf-8")
                 models_in_answer = self._extract_models(answer_text)
+                # Model uyuşmazlığı kontrolü
                 if user_models_in_msg and not user_models_in_msg.issubset(models_in_answer):
                     self.logger.info("Model uyuşmazlığı -> cache bypass.")
                     cached_answer = None
@@ -1053,21 +1106,13 @@ class ChatbotAPI:
             conversation_id = save_to_db(user_id, user_message, assistant_response)
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-            # -----------------------------------------------------------
-            # Birinci koddaki gibi "cevaptaki en sık tekrar eden modeli bulma",
-            # ama [SWITCH_TO_...] / [STAY_WITH_...] linkleri eklemeden sadece bilgi olarak kullanıyoruz.
-            # -----------------------------------------------------------
+            # Cevap içindeki en sık tekrar eden modeli tespit edelim (isteğe bağlı)
             if assistant_response:
-                # Kullanıcı mesajında *hiç* model yoksa (user_models_in_msg_latest = 0) 
-                # ama cevabın içinde çok sık geçen bir model varsa, burada tespit edebiliriz.
-                # (İsterseniz sadece log yazabilir veya ufak bir mesaj verebilirsiniz.)
                 user_models_in_msg_latest = self._extract_models(user_message)
                 if len(user_models_in_msg_latest) == 0:
                     most_freq_model = self.extract_most_frequent_model(assistant_response)
                     if most_freq_model:
                         self.logger.info(f"Cevapta en sık tekrar eden model: {most_freq_model}")
-                        # Burada isterseniz kullanıcıya ek bilgi dönebilirsiniz, 
-                        # ama [SWITCH_TO_x] vs. eklemeden:
                         yield f"\n(Not: Cevap içinde en çok '{most_freq_model.title()}' modeli geçiyor.)".encode("utf-8")
 
         except Exception as e:
