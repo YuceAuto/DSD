@@ -146,9 +146,10 @@ class ChatbotAPI:
         def home():
             return render_template("index.html")
 
-        @self.app.route("/ask", methods=["POST"])
-        def ask():
-            return self._ask()
+        @self.app.route("/ask/<string:username>", methods=["POST"])
+        def ask(username):
+            username = "cemc"
+            return self._ask(username)
 
         @self.app.route("/check_session", methods=["GET"])
         def check_session():
@@ -386,7 +387,7 @@ class ChatbotAPI:
         return most_model
     # -----------------------------------------------------------------
 
-    def _ask(self):
+    def _ask(self, username,userrname):
         try:
             data = request.get_json()
             if not data:
@@ -395,9 +396,11 @@ class ChatbotAPI:
             self.logger.error(f"JSON parsing error: {str(e)}")
             return jsonify({"error": "Invalid JSON format."}), 400
 
+        print(data)
         user_message = data.get("question", "")
-        user_id = data.get("user_id", "default_user")
-
+        # user_id = data.get("user_id", "default_user")
+        user_id = username
+        user_rname = userrname
         if not user_message:
             return jsonify({"response": "Please enter a question."})
 
