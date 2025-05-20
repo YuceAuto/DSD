@@ -1,7 +1,5 @@
 // ----------------------------------------------------
-// script.js (Şeffaf, Font Awesome ikonlu Like / Dislike)
-// + Yalnızca ikon rengi değişsin (arka plan yok)
-// + Bir buton tıklanınca diğerini pasif yap
+// script.js 
 // ----------------------------------------------------
 
 function getOrCreateUserId() {
@@ -147,12 +145,7 @@ function splitNonTableTextIntoBubbles(fullText) {
   return resultBubbles;
 }
 
-/**
- * Botun cevabını parça parça işleyip, 
- * her parça için ortada (baloncuksuz) gösteriyoruz.
- */
 function processBotMessage(fullText, uniqueId) {
-  // Bot'tan gelen ham text'i normalleştir
   let normalizedText = fullText
     .replace(/\\n/g, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -169,7 +162,6 @@ function processBotMessage(fullText, uniqueId) {
   const extractedValue = extractTextContentBlock(normalizedText);
   const textToCheck = extractedValue ? extractedValue : normalizedText;
 
-  // Tablo regex
   const tableRegexGlobal = /(\|.*?\|\n\|.*?\|\n[\s\S]+?)(?=\n\n|$)/g;
   let newBubbles = [];
   let lastIndex = 0;
@@ -198,7 +190,6 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // "yazıyor" placeholder'ını kaldır
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
   newBubbles.forEach((bubble, index) => {
@@ -211,12 +202,9 @@ function processBotMessage(fullText, uniqueId) {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
-    // Sadece son bubble'da like/dislike butonlarını göster
     const isLastBubble = (index === newBubbles.length - 1);
     let likeButtonHtml = "";
-    // conversationId Yakalandıysa buton ekle
     if (isLastBubble && conversationId) {
-      // Font Awesome ikonlu butonlar
       likeButtonHtml = `
         <button class="like-button" data-conversation-id="${conversationId}">
           <i class="fa-solid fa-thumbs-up" style="color: #f2f2f2;"></i>
@@ -243,6 +231,48 @@ function processBotMessage(fullText, uniqueId) {
 $(document).ready(function () {
   const localUserId = getOrCreateUserId();
 
+  // ---------------------------------------------
+  //  SAYFA İLK YÜKLENDİĞİNDE -> "Boş question" ile istek at
+  //  Böylece chatbot "Merhaba X, nasıl yardımcı olabilirim?" diyor.
+  // ---------------------------------------------
+  fetch("/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question: "",
+      user_id: localUserId
+    })
+  })
+    .then(r => r.json())
+    .then(data => {
+      // Eğer JSON'da "response" varsa, bunu ekrana bot mesajı gibi basalım
+      if (data.response) {
+        // Bot "placeholder" ekleyip kaldırmak için benzersiz ID
+        const uniqueId = Date.now();
+        const loaderHtml = `
+          <div class="d-flex justify-content-start mb-4">
+            <img src="static/images/fotograf.png"
+                 class="rounded-circle user_img_msg"
+                 alt="bot image">
+            <div class="msg_cotainer" id="botMessageContent-${uniqueId}">
+              Yazıyor...
+            </div>
+          </div>
+        `;
+        $("#messageFormeight").append(loaderHtml);
+
+        // 0.5 sn sonra gösterelim
+        setTimeout(() => {
+          processBotMessage(data.response, uniqueId);
+        }, 500);
+      }
+    })
+    .catch(err => console.error("Greeting fetch hata:", err));
+
+
+  // ---------------------------------------------
+  // MESAJ GÖNDERME (KULLANICI YAZINCA)
+  // ---------------------------------------------
   $("#messageArea").on("submit", function (e) {
     e.preventDefault();
     const inputField = $("#text");
@@ -265,7 +295,6 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
-    // Bot "yazıyor..." placeholder
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
@@ -280,7 +309,6 @@ $(document).ready(function () {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
-    // /ask endpoint
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -321,23 +349,20 @@ $(document).ready(function () {
   });
 });
 
+
 // -----------------------------------------------------
-// LIKE BUTONU TIKLANINCA
+// LIKE BUTONU
 // -----------------------------------------------------
 $(document).on("click", ".like-button", function(event) {
   event.preventDefault();
   const $likeBtn = $(this);
-  const $dislikeBtn = $(".dislike-button"); // diğer butonu
+  const $dislikeBtn = $(".dislike-button");
 
-  // Diğer butonun .clicked sınıfını kaldır
   $dislikeBtn.removeClass("clicked");
 
-  // Toggle
   if ($likeBtn.hasClass("clicked")) {
-    // Zaten tıklı -> unclick
     $likeBtn.removeClass("clicked");
   } else {
-    // Yeni tıklama
     $likeBtn.addClass("clicked");
 
     const convId = $likeBtn.data("conversation-id");
@@ -357,17 +382,15 @@ $(document).on("click", ".like-button", function(event) {
 });
 
 // -----------------------------------------------------
-// DISLIKE BUTONU TIKLANINCA
+// DISLIKE BUTONU
 // -----------------------------------------------------
 $(document).on("click", ".dislike-button", function(event) {
   event.preventDefault();
   const $dislikeBtn = $(this);
   const $likeBtn = $(".like-button");
 
-  // Diğer butonun .clicked sınıfını kaldır
   $likeBtn.removeClass("clicked");
 
-  // Toggle
   if ($dislikeBtn.hasClass("clicked")) {
     $dislikeBtn.removeClass("clicked");
   } else {
@@ -390,9 +413,7 @@ $(document).on("click", ".dislike-button", function(event) {
 });
 
 /**
- * ==============================
- *  EKLENEN SENDMESSAGE FONKSİYONU
- * ==============================
+ * Ek fonksiyon: Link tıklanınca otomatik input'a yazıp gönderme
  */
 function sendMessage(textToSend) {
   const inputField = $("#text");
