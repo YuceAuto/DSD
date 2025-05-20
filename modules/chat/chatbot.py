@@ -387,7 +387,7 @@ class ChatbotAPI:
         return most_model
     # -----------------------------------------------------------------
 
-    def _ask(self, username,userrname):
+    def _ask(self, username):
         try:
             data = request.get_json()
             if not data:
@@ -400,7 +400,7 @@ class ChatbotAPI:
         user_message = data.get("question", "")
         # user_id = data.get("user_id", "default_user")
         user_id = username
-        user_rname = userrname
+        user_name = str.capitalize(user_id[:-1])
         if not user_message:
             return jsonify({"response": "Please enter a question."})
 
