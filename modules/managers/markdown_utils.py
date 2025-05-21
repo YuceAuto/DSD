@@ -2,30 +2,37 @@ import re
 
 class MarkdownProcessor:
     def transform_text_to_markdown(self, input_text):
+        """
+        Kullanıcıya gösterilecek metni satır satır işleyerek:
+          - Başında # (1-6 adet) ister boşluklu ister boşluksuz olsun -> <b>Başlık</b> dönüştürür.
+          - **kalın** ifadeleri <b>...</b> ile değiştirir.
+          - Kalan satırları <br> ekleyerek HTML döndürür.
+        """
         lines = input_text.split('\n')
         transformed_lines = []
 
         for line in lines:
             stripped_line = line.strip()
 
-            # 2''3 -> 2"3 vb. düzeltme
+            # Örnek düzeltmeler
             stripped_line = re.sub(r"(\d)''(\d)", r'\1"\2', stripped_line)
             stripped_line = stripped_line.replace("\\'", "'")
-            # **bold** -> <b>...</b>
+
+            # **kalın** -> <b>...</b>
             stripped_line = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", stripped_line)
-            # PDF referanslarını kaldır (örnek)
+
+            # Örnek: PDF referanslarını temizleme
             stripped_line = re.sub(r"【.*?】", "", stripped_line).strip()
 
-            # ### Başlık
-            if stripped_line.startswith('### '):
-                transformed_lines.append(f"<b>{stripped_line[4:]}</b><br>")
-            # Tek satırlık başlık
-            elif (stripped_line
-                  and not stripped_line.startswith('- ')
-                  and re.match(r'^[A-Za-zÇŞĞÜÖİ0-9 ]+:?$', stripped_line)):
-                heading_text = re.sub(r':$', '', stripped_line)
+            # Başında 1-6 adet '#' -> heading
+            heading_match = re.match(r'^(#{1,6})(\s*)(.*)$', stripped_line)
+            if heading_match:
+                heading_text = heading_match.group(3)
                 transformed_lines.append(f"<b>{heading_text}</b><br>")
-            elif stripped_line.startswith('- '):
+                continue
+
+            # Liste satırları ("- " ile başlıyorsa)
+            if stripped_line.startswith('- '):
                 transformed_lines.append(f"&bull; {stripped_line[2:]}<br>")
             else:
                 transformed_lines.append(f"{stripped_line}<br>")
