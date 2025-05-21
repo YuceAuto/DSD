@@ -21,6 +21,9 @@ class Config:
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": ["Fabia"],
             "asst_njSG1NVgg4axJFmvVYAIXrpM": ["Scala"],
             "asst_SPrqRQcjUnjXGGKQQLy2l2d2": ["Karoq"],
+
+            # YENİ ENYAQ ASİSTANI (eklenen satır)
+            "asst_k3zxZDIRRoJ12myGWMxSgpab": ["Enyaq"]
         }
 
         self.ASSISTANT_NAME_MAP = {
@@ -28,6 +31,9 @@ class Config:
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": "Fabia",
             "asst_njSG1NVgg4axJFmvVYAIXrpM": "Scala",
             "asst_SPrqRQcjUnjXGGKQQLy2l2d2": "Karoq",
+
+            # YENİ ENYAQ ASİSTANI (eklenen satır)
+            "asst_k3zxZDIRRoJ12myGWMxSgpab": "Enyaq"
         }
 
         # Bilinen renkler
