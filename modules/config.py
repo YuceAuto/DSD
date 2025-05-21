@@ -21,9 +21,10 @@ class Config:
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": ["Fabia"],
             "asst_njSG1NVgg4axJFmvVYAIXrpM": ["Scala"],
             "asst_SPrqRQcjUnjXGGKQQLy2l2d2": ["Karoq"],
+            "asst_k3zxZDIRRoJ12myGWMxSgpab": ["Enyaq"],
 
-            # YENİ ENYAQ ASİSTANI (eklenen satır)
-            "asst_k3zxZDIRRoJ12myGWMxSgpab": ["Enyaq"]
+            # YENİ: Elroq asistanını ekliyoruz
+            "asst_3SRL4QovcALZons7pnCdfkob": ["Elroq"]
         }
 
         self.ASSISTANT_NAME_MAP = {
@@ -31,9 +32,10 @@ class Config:
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": "Fabia",
             "asst_njSG1NVgg4axJFmvVYAIXrpM": "Scala",
             "asst_SPrqRQcjUnjXGGKQQLy2l2d2": "Karoq",
+            "asst_k3zxZDIRRoJ12myGWMxSgpab": "Enyaq",
 
-            # YENİ ENYAQ ASİSTANI (eklenen satır)
-            "asst_k3zxZDIRRoJ12myGWMxSgpab": "Enyaq"
+            # YENİ: Elroq asistanı adını haritalıyoruz
+            "asst_3SRL4QovcALZons7pnCdfkob": "Elroq"
         }
 
         # Bilinen renkler

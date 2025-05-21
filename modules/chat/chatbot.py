@@ -18,12 +18,15 @@ from modules.config import Config
 from modules.utils import Utils
 from modules.db import create_tables, save_to_db, send_email, get_db_connection, update_customer_answer
 
-# -- YENİ: Enyaq tablolarını import ediyoruz
+# -- ENYAQ tabloları:
 from modules.data.enyaq_data import (
     ENYAQ_E_PRESTIGE_60_MD,
     ENYAQ_COUPE_E_SPORTLINE_60_MD,
     ENYAQ_COUPE_E_SPORTLINE_85X_MD
 )
+
+# -- YENİ: ELROQ tablosu (elroq_data.py içindeki ELROQ_E_PRESTIGE_60_MD):
+from modules.data.elroq_data import ELROQ_E_PRESTIGE_60_MD
 
 import secrets
 
@@ -62,8 +65,10 @@ def normalize_trim_str(t: str) -> list:
 
 def extract_trims(text: str) -> set:
     text_lower = text.lower()
-    possible_trims = ["premium", "monte carlo", "elite", "prestige", "sportline",
-                      "e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"]
+    possible_trims = [
+        "premium", "monte carlo", "elite", "prestige", "sportline",
+        "e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"
+    ]
     found_trims = set()
 
     for t in possible_trims:
@@ -78,11 +83,10 @@ def extract_model_trim_pairs(text):
     """
     "Enyaq e prestige 60" vb. yakalayabilmek için regex'i güncelleyebilirsiniz.
     Burada örnek olarak:
-       pattern = (fabia|scala|kamiq|karoq|enyaq) (premium|monte carlo|... e prestige 60 ... )?
+       pattern = (fabia|scala|kamiq|karoq|enyaq|elroq) (premium|monte carlo|... e prestige 60 ... )?
     tarzı bir kullanım yapılabilir.
     """
-    # Basit versiyon:
-    pattern = r"(fabia|scala|kamiq|karoq|enyaq)\s*([a-zA-Z0-9\s]+)?"
+    pattern = r"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*([a-zA-Z0-9\s]+)?"
 
     pairs = []
     split_candidates = re.split(r"\b(?:ve|&|ile|,|and)\b", text.lower())
@@ -95,7 +99,6 @@ def extract_model_trim_pairs(text):
         for m in matches:
             model = m[0].strip()
             trim = m[1].strip() if m[1] else ""
-            # Örnek: "e prestige 60" vs "premium" vs "coupe e sportline 60"
             pairs.append((model, trim))
     return pairs
 
@@ -138,14 +141,16 @@ class ChatbotAPI:
 
         self.CACHE_EXPIRY_SECONDS = 86400
 
-        # Burada, Enyaq da dâhil olacak şekilde donanımlar (trim) listesi
-        # Ekledik: "enyaq": ["e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"]
+        # Burada, yeni modeller için de donanımlar (trim) listesi ekleyin
         self.MODEL_VALID_TRIMS = {
             "fabia": ["premium", "monte carlo"],
             "scala": ["elite", "premium", "monte carlo"],
             "kamiq": ["elite", "premium", "monte carlo"],
             "karoq": ["premium", "prestige", "sportline"],
-            "enyaq": ["e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"]
+            "enyaq": ["e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"],
+
+            # YENİ ELROQ:
+            "elroq": ["e prestige 60"]
         }
 
         self._define_routes()
@@ -287,7 +292,7 @@ class ChatbotAPI:
 
     def _correct_trim_typos(self, user_message: str) -> str:
         known_words = ["premium", "elite", "monte", "carlo", "prestige", "sportline",
-                       "e", "prestige", "60", "coupe"]  # Enyaq trim kelimeleri için ekleriz
+                       "e", "prestige", "60", "coupe"]
         splitted = user_message.split()
         new_tokens = []
         for token in splitted:
@@ -442,7 +447,6 @@ class ChatbotAPI:
             user_trims_in_msg.add("prestige")
         if "sportline" in lower_corrected:
             user_trims_in_msg.add("sportline")
-        # Enyaq trim kontrolleri
         if "e prestige 60" in lower_corrected:
             user_trims_in_msg.add("e prestige 60")
         if "coupe e sportline 60" in lower_corrected:
@@ -493,9 +497,6 @@ class ChatbotAPI:
         return self.app.response_class(caching_generator(), mimetype="text/plain")
 
     def _extract_models(self, text: str) -> set:
-        """
-        Burada Enyaq'ı yakalamak için "if 'enyaq' in lower_t:" ekliyoruz.
-        """
         lower_t = text.lower()
         models = set()
         if "fabia" in lower_t:
@@ -506,10 +507,12 @@ class ChatbotAPI:
             models.add("kamiq")
         if "karoq" in lower_t:
             models.add("karoq")
-
-        # YENİ ENYAQ:
         if "enyaq" in lower_t:
             models.add("enyaq")
+
+        # YENİ: Elroq
+        if "elroq" in lower_t:
+            models.add("elroq")
 
         return models
 
@@ -570,8 +573,10 @@ class ChatbotAPI:
         if not requested_trim:
             return image_list
 
-        all_trims = ["premium", "monte carlo", "elite", "prestige", "sportline",
-                     "e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"]
+        all_trims = [
+            "premium", "monte carlo", "elite", "prestige", "sportline",
+            "e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"
+        ]
         requested_variants = normalize_trim_str(requested_trim)
 
         filtered = []
@@ -808,7 +813,7 @@ class ChatbotAPI:
 
         # (B) Tekli "model + trim + görsel" pattern
         model_trim_image_pattern = (
-            r"(fabia|scala|kamiq|karoq|enyaq)"
+            r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
             r"(?:\s+(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x))?\s+"
             r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
         )
@@ -834,7 +839,7 @@ class ChatbotAPI:
         # (C) "model + trim + kategori" pattern
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
         cat_match = re.search(
-            fr"(fabia|scala|kamiq|karoq|enyaq)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x)?\s*({categories_pattern})",
+            fr"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x)?\s*({categories_pattern})",
             lower_msg
         )
         if cat_match:
@@ -868,8 +873,6 @@ class ChatbotAPI:
             user_trims_in_msg.add("prestige")
         if "sportline" in lower_msg:
             user_trims_in_msg.add("sportline")
-
-        # ENYAQ trim eklemeleri:
         if "e prestige 60" in lower_msg:
             user_trims_in_msg.add("e prestige 60")
         if "coupe e sportline 60" in lower_msg:
@@ -923,6 +926,9 @@ class ChatbotAPI:
                                                                       "coupe e sportline 60",
                                                                       "coupe e sportline 85x"])
                         return
+                    elif found_model == "elroq":
+                        yield from self._yield_trim_options("elroq", ["e prestige 60"])
+                        return
                     else:
                         yield f"'{found_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                         return
@@ -958,6 +964,9 @@ class ChatbotAPI:
                                                                       "coupe e sportline 60",
                                                                       "coupe e sportline 85x"])
                         return
+                    elif pending_ops_model.lower() == "elroq":
+                        yield from self._yield_trim_options("elroq", ["e prestige 60"])
+                        return
                     else:
                         yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                         return
@@ -978,6 +987,9 @@ class ChatbotAPI:
                     yield from self._yield_trim_options("enyaq", ["e prestige 60",
                                                                   "coupe e sportline 60",
                                                                   "coupe e sportline 85x"])
+                    return
+                elif pending_ops_model.lower() == "elroq":
+                    yield from self._yield_trim_options("elroq", ["e prestige 60"])
                     return
                 else:
                     yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
@@ -1009,7 +1021,7 @@ class ChatbotAPI:
                     save_to_db(user_id, user_message, f"{single_model.title()} fallback görselleri")
                     return
             else:
-                yield "Hangi modelin görsellerine bakmak istersiniz? (Fabia, Kamiq, Scala, Karoq, Enyaq vb.)<br>".encode("utf-8")
+                yield "Hangi modelin görsellerine bakmak istersiniz? (Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>".encode("utf-8")
                 save_to_db(user_id, user_message, "Model belirtilmediği için fallback sorusu")
                 return
 
@@ -1090,13 +1102,10 @@ class ChatbotAPI:
             yield link_html.encode("utf-8")
 
     def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
-        """
-        Enyaq tablolarını da ekliyoruz.
-        """
         time.sleep(2)
         table_yielded = False
 
-        # Fabia, Scala, Kamiq, Karoq blokları olduğu gibi:
+        # Fabia
         if model_name == "fabia":
             if "premium" in trim_name:
                 yield FABIA_PREMIUM_MD.encode("utf-8")
@@ -1107,6 +1116,7 @@ class ChatbotAPI:
             else:
                 yield "Fabia için geçerli donanımlar: Premium / Monte Carlo\n".encode("utf-8")
 
+        # Scala
         elif model_name == "scala":
             if "premium" in trim_name:
                 yield SCALA_PREMIUM_MD.encode("utf-8")
@@ -1120,6 +1130,7 @@ class ChatbotAPI:
             else:
                 yield "Scala için geçerli donanımlar: Premium / Monte Carlo / Elite\n".encode("utf-8")
 
+        # Kamiq
         elif model_name == "kamiq":
             if "elite" in trim_name:
                 yield KAMIQ_ELITE_MD.encode("utf-8")
@@ -1133,6 +1144,7 @@ class ChatbotAPI:
             else:
                 yield "Kamiq için geçerli donanımlar: Elite / Premium / Monte Carlo\n".encode("utf-8")
 
+        # Karoq
         elif model_name == "karoq":
             if "premium" in trim_name:
                 yield KAROQ_PREMIUM_MD.encode("utf-8")
@@ -1146,7 +1158,7 @@ class ChatbotAPI:
             else:
                 yield "Karoq için geçerli donanımlar: Premium / Prestige / Sportline\n".encode("utf-8")
 
-        # -- YENİ ENYAQ BLOĞU --
+        # Enyaq
         elif model_name == "enyaq":
             tr_lower = trim_name.lower()
             if "e prestige 60" in tr_lower:
@@ -1160,6 +1172,15 @@ class ChatbotAPI:
                 table_yielded = True
             else:
                 yield f"Enyaq için {trim_name.title()} opsiyonel tablosu bulunamadı.\n".encode("utf-8")
+
+        # YENİ: Elroq
+        elif model_name == "elroq":
+            tr_lower = trim_name.lower()
+            if "e prestige 60" in tr_lower:
+                yield ELROQ_E_PRESTIGE_60_MD.encode("utf-8")
+                table_yielded = True
+            else:
+                yield f"Elroq için {trim_name.title()} opsiyonel tablosu bulunamadı.\n".encode("utf-8")
 
         else:
             yield f"'{model_name}' modeli için opsiyonel tablo bulunamadı.\n".encode("utf-8")
@@ -1175,6 +1196,8 @@ class ChatbotAPI:
                 all_trims = ["premium", "prestige", "sportline"]
             elif model_name == "enyaq":
                 all_trims = ["e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"]
+            elif model_name == "elroq":
+                all_trims = ["e prestige 60"]
             else:
                 all_trims = []
 
