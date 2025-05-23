@@ -12,15 +12,30 @@ class MarkdownProcessor:
         transformed_lines = []
 
         for line in lines:
+            
+            
             stripped_line = line.strip()
 
             # Örnek düzeltmeler
             stripped_line = re.sub(r"(\d)''(\d)", r'\1"\2', stripped_line)
             stripped_line = stripped_line.replace("\\'", "'")
-
+            
             # **kalın** -> <b>...</b>
             stripped_line = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", stripped_line)
+            stripped_line = stripped_line.replace("###", "")
+            stripped_line = stripped_line.replace("##", "")
+            stripped_line = stripped_line.replace("#", "")
+            unwanted_patterns = [
+            "\\(",  # "\\(" yerine "(" isterseniz ikinci parametreyi "(" yapabilirsiniz
+            "\\)",
+            "\\\\,",  # Dikkat: Python string'inde "\\" karakteri için de kaçış yapmak lazım
+            "\\text",
+            "\\frac",
+            # vb. eklemek istediğiniz diğer semboller...
+            ]
 
+            for pattern in unwanted_patterns:
+                stripped_line = stripped_line.replace(pattern, "")
             # Örnek: PDF referanslarını temizleme
             stripped_line = re.sub(r"【.*?】", "", stripped_line).strip()
 
@@ -36,7 +51,7 @@ class MarkdownProcessor:
                 transformed_lines.append(f"&bull; {stripped_line[2:]}<br>")
             else:
                 transformed_lines.append(f"{stripped_line}<br>")
-
+            
         return ''.join(transformed_lines)
 
     def extract_markdown_tables_from_text(self, text):

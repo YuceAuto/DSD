@@ -12,23 +12,21 @@ from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
 from dotenv import load_dotenv
 
+# Aşağıdaki import'lar sizin projenizdeki dosya yollarına göre uyarlanmalıdır:
 from modules.managers.image_manager import ImageManager
 from modules.managers.markdown_utils import MarkdownProcessor
 from modules.config import Config
 from modules.utils import Utils
 from modules.db import create_tables, save_to_db, send_email, get_db_connection, update_customer_answer
 
-# -- ENYAQ tabloları:
+# -- ENYAQ tabloları
 from modules.data.enyaq_data import (
     ENYAQ_E_PRESTIGE_60_MD,
     ENYAQ_COUPE_E_SPORTLINE_60_MD,
     ENYAQ_COUPE_E_SPORTLINE_85X_MD
 )
-
-# -- YENİ: ELROQ tablosu (elroq_data.py içindeki ELROQ_E_PRESTIGE_60_MD):
+# -- ELROQ tablosu
 from modules.data.elroq_data import ELROQ_E_PRESTIGE_60_MD
-
-import secrets
 
 # Fabia, Kamiq, Scala tabloları
 from modules.data.scala_data import (
@@ -53,6 +51,8 @@ from modules.data.karoq_data import (
     KAROQ_SPORTLINE_MD
 )
 
+import secrets
+
 load_dotenv()
 
 
@@ -70,27 +70,22 @@ def extract_trims(text: str) -> set:
         "e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"
     ]
     found_trims = set()
-
     for t in possible_trims:
         variants = normalize_trim_str(t)
         if any(v in text_lower for v in variants):
             found_trims.add(t)
-
     return found_trims
 
 
 def extract_model_trim_pairs(text):
     """
-    "Enyaq e prestige 60" vb. yakalayabilmek için regex'i güncelleyebilirsiniz.
-    Burada örnek olarak:
-       pattern = (fabia|scala|kamiq|karoq|enyaq|elroq) (premium|monte carlo|... e prestige 60 ... )?
-    tarzı bir kullanım yapılabilir.
+    Örnek:
+       "Enyaq e prestige 60" gibi içerikleri yakalamak için basit bir regex kullanıyoruz.
     """
     pattern = r"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*([a-zA-Z0-9\s]+)?"
 
     pairs = []
     split_candidates = re.split(r"\b(?:ve|&|ile|,|and)\b", text.lower())
-
     for piece in split_candidates:
         piece = piece.strip()
         if not piece:
@@ -114,7 +109,7 @@ class ChatbotAPI:
         self.app.secret_key = secrets.token_hex(16)
 
         self.logger = logger if logger else self._setup_logger()
-        create_tables()
+        create_tables()  # DB tablolarını oluşturma
 
         openai.api_key = os.getenv("OPENAI_API_KEY")
         self.client = openai
@@ -122,6 +117,7 @@ class ChatbotAPI:
         self.config = Config()
         self.utils = Utils()
 
+        # ImageManager örneği:
         self.image_manager = ImageManager(images_folder=os.path.join(static_folder, "images"))
         self.image_manager.load_images()
 
@@ -139,19 +135,24 @@ class ChatbotAPI:
         self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
         self.worker_thread.start()
 
-        self.CACHE_EXPIRY_SECONDS = 86400
+        self.CACHE_EXPIRY_SECONDS = 43200
 
-        # Burada, yeni modeller için de donanımlar (trim) listesi ekleyin
+        # Model -> Donanım eşleşmeleri
         self.MODEL_VALID_TRIMS = {
             "fabia": ["premium", "monte carlo"],
             "scala": ["elite", "premium", "monte carlo"],
             "kamiq": ["elite", "premium", "monte carlo"],
             "karoq": ["premium", "prestige", "sportline"],
             "enyaq": ["e prestige 60", "coupe e sportline 60", "coupe e sportline 85x"],
-
-            # YENİ ELROQ:
             "elroq": ["e prestige 60"]
         }
+
+        # Örnek renk listesi
+        self.KNOWN_COLORS = [
+            "fabia premium gümüş", "yarış mavisi", "Renk kadife kırmızı", "metalik gümüş", "mavi" "mavisi", "beyazi", "beyaz", "gri", "büyülü siyah", "Kamiq gümüş", "Scala gümüş", "Scala_Gümüş"
+            "lacivert", "koyu", "timiano yeşil", "turuncu", "krem", "şimşek", "Fabia_Premium_Gümüş_Standart"
+             "e_Sportline_Coupe_60_Exclusive_Renk_Olibo_Yeşil", "gumus", "gümüs", "monte carlo gümüş", "elite gümüş"
+        ]
 
         self._define_routes()
 
@@ -177,7 +178,7 @@ class ChatbotAPI:
         @self.app.route("/check_session", methods=["GET"])
         def check_session():
             if 'last_activity' in session:
-                now = time.time()
+                _ = time.time()
             return jsonify({"active": True})
 
         @self.app.route("/like", methods=["POST"])
@@ -192,6 +193,7 @@ class ChatbotAPI:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        # YENİ EKLENDİ: Dislike mantığı (ikinci koddaki gibi)
         @self.app.route("/dislike", methods=["POST"])
         def dislike_endpoint():
             data = request.get_json()
@@ -199,11 +201,37 @@ class ChatbotAPI:
             if not conv_id:
                 return jsonify({"error": "No conversation_id provided"}), 400
             try:
+                # 1) Dislike olarak işaretle (customer_answer=2)
                 update_customer_answer(conv_id, 2)
+
+                # 2) In-memory cache’ten sil
+                self._remove_from_fuzzy_cache(conv_id)
+
+                # 3) cache_faq tablosundan da sil
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM cache_faq WHERE conversation_id=?", (conv_id,))
+                conn.commit()
+                conn.close()
+
                 return jsonify({"status": "ok"}), 200
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+    # YENİ EKLENDİ: In-memory cache’ten conversation_id bazlı silme
+    def _remove_from_fuzzy_cache(self, conversation_id):
+        """Belirtilen conversation_id'yi in-memory fuzzy_cache'ten siler."""
+        conv_id_int = int(conversation_id)
+        for user_id in list(self.fuzzy_cache.keys()):
+            for asst_id in list(self.fuzzy_cache[user_id].keys()):
+                original_list = self.fuzzy_cache[user_id][asst_id]
+                filtered_list = [
+                    item for item in original_list
+                    if item.get("conversation_id") != conv_id_int
+                ]
+                self.fuzzy_cache[user_id][asst_id] = filtered_list
+
+    # YENİ EKLENDİ: conversation_id de DB'ye yazılacak şekilde güncellendi
     def _background_db_writer(self):
         self.logger.info("Background DB writer thread started.")
         while not self.stop_worker:
@@ -211,20 +239,30 @@ class ChatbotAPI:
                 record = self.fuzzy_cache_queue.get(timeout=5.0)
                 if record is None:
                     continue
-                user_id, username, q_lower, ans_bytes, tstamp = record
+
+                # record tuple içinden conversation_id de alıyoruz
+                user_id, username, q_lower, ans_bytes, conversation_id, _ = record
 
                 conn = get_db_connection()
                 cursor = conn.cursor()
 
+                # conversation_id alanı da ekleniyor
                 sql = """
-                INSERT INTO cache_faq (user_id, username, question, answer, created_at)
-                VALUES (?, ?, ?, ?, GETDATE())
+                INSERT INTO cache_faq 
+                    (user_id, username, question, answer, conversation_id, created_at)
+                VALUES (?, ?, ?, ?, ?, GETDATE())
                 """
-                cursor.execute(sql, (user_id, username, q_lower, ans_bytes.decode("utf-8")))
+                cursor.execute(sql, (
+                    user_id,
+                    username,
+                    q_lower,
+                    ans_bytes.decode("utf-8"),
+                    conversation_id
+                ))
                 conn.commit()
                 conn.close()
 
-                self.logger.info(f"[BACKGROUND] Kaydedildi -> user_id={user_id}, username={username}, question={q_lower[:30]}...")
+                self.logger.info(f"[BACKGROUND] Kaydedildi -> user_id={user_id}, question={q_lower[:30]}...")
                 self.fuzzy_cache_queue.task_done()
 
             except queue.Empty:
@@ -235,14 +273,15 @@ class ChatbotAPI:
 
         self.logger.info("Background DB writer thread stopped.")
 
+    # YENİ: Eğer istersek uygulama ayağa kalkarken DB'deki cache_faq kayıtlarını da belleğe yükleyebiliriz
+    # (Projenizde buna ihtiyaç varsa kullanabilirsiniz.)
     def _load_cache_from_db(self):
         self.logger.info("[_load_cache_from_db] Cache verileri DB'den yükleniyor...")
 
         conn = get_db_connection()
         cursor = conn.cursor()
-
         sql = """
-        SELECT TOP 1000 user_id, username, question, answer
+        SELECT TOP 1000 user_id, username, question, answer, conversation_id
         FROM cache_faq
         ORDER BY id DESC
         """
@@ -255,6 +294,7 @@ class ChatbotAPI:
             db_username = row[1]
             q_lower = row[2]
             ans_txt = row[3]
+            conv_id = row[4]
             ans_bytes = ans_txt.encode("utf-8")
             assistant_id = "default"
 
@@ -264,6 +304,7 @@ class ChatbotAPI:
                 self.fuzzy_cache[user_id][assistant_id] = []
 
             self.fuzzy_cache[user_id][assistant_id].append({
+                "conversation_id": conv_id,
                 "question": q_lower,
                 "answer_bytes": ans_bytes,
                 "timestamp": time.time()
@@ -283,7 +324,7 @@ class ChatbotAPI:
         splitted = user_message.split()
         corrected_tokens = []
         for token in splitted:
-            best = self.utils.fuzzy_find(token, possible_image_words, threshold=0.7)
+            best = self.utils.fuzzy_find(token, possible_image_words, threshold=0.8)
             if best:
                 corrected_tokens.append(best)
             else:
@@ -291,12 +332,14 @@ class ChatbotAPI:
         return " ".join(corrected_tokens)
 
     def _correct_trim_typos(self, user_message: str) -> str:
-        known_words = ["premium", "elite", "monte", "carlo", "prestige", "sportline",
-                       "e", "prestige", "60", "coupe"]
+        known_words = [
+            "premium", "elite", "monte", "carlo", "prestige", "sportline",
+            "e", "prestige", "60", "coupe"
+        ]
         splitted = user_message.split()
         new_tokens = []
         for token in splitted:
-            best = self.utils.fuzzy_find(token, known_words, threshold=0.7)
+            best = self.utils.fuzzy_find(token, known_words, threshold=0.8)
             if best:
                 new_tokens.append(best)
             else:
@@ -353,7 +396,9 @@ class ChatbotAPI:
             return ans
         return None
 
-    def _store_in_fuzzy_cache(self, user_id: str, username: str, question: str, answer_bytes: bytes, assistant_id: str):
+    # YENİ: conversation_id parametresi eklendi
+    def _store_in_fuzzy_cache(self, user_id: str, username: str, question: str,
+                              answer_bytes: bytes, assistant_id: str, conversation_id: int):
         q_lower = question.strip().lower()
         if user_id not in self.fuzzy_cache:
             self.fuzzy_cache[user_id] = {}
@@ -361,12 +406,13 @@ class ChatbotAPI:
             self.fuzzy_cache[user_id][assistant_id] = []
 
         self.fuzzy_cache[user_id][assistant_id].append({
+            "conversation_id": conversation_id,
             "question": q_lower,
             "answer_bytes": answer_bytes,
             "timestamp": time.time()
         })
 
-        record = (user_id, username, q_lower, answer_bytes, time.time())
+        record = (user_id, username, q_lower, answer_bytes, conversation_id, time.time())
         self.fuzzy_cache_queue.put(record)
 
     def _ask(self, username):
@@ -391,7 +437,6 @@ class ChatbotAPI:
             session['last_activity'] = time.time()
 
         corrected_message = self._correct_all_typos(user_message)
-
         user_models_in_msg = self._extract_models(corrected_message)
 
         if user_id not in self.user_states:
@@ -399,7 +444,6 @@ class ChatbotAPI:
             self.user_states[user_id]["threads"] = {}
 
         last_models = self.user_states[user_id].get("last_models", set())
-
         if not user_models_in_msg and last_models:
             joined_models = " ve ".join(last_models)
             corrected_message = f"{joined_models} {corrected_message}".strip()
@@ -429,31 +473,16 @@ class ChatbotAPI:
         if not new_assistant_id:
             new_assistant_id = self._pick_least_busy_assistant()
             if not new_assistant_id:
-                save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
+                save_to_db(user_id, user_message, "Uygun asistan bulunamadı.", username=name_surname)
                 return self.app.response_class("Uygun bir asistan bulunamadı.\n", mimetype="text/plain")
 
         self.user_states[user_id]["assistant_id"] = new_assistant_id
 
         is_image_req = self.utils.is_image_request(corrected_message)
 
-        user_trims_in_msg = set()
-        if "premium" in lower_corrected:
-            user_trims_in_msg.add("premium")
-        if "monte carlo" in lower_corrected:
-            user_trims_in_msg.add("monte carlo")
-        if "elite" in lower_corrected:
-            user_trims_in_msg.add("elite")
-        if "prestige" in lower_corrected:
-            user_trims_in_msg.add("prestige")
-        if "sportline" in lower_corrected:
-            user_trims_in_msg.add("sportline")
-        if "e prestige 60" in lower_corrected:
-            user_trims_in_msg.add("e prestige 60")
-        if "coupe e sportline 60" in lower_corrected:
-            user_trims_in_msg.add("coupe e sportline 60")
-        if "coupe e sportline 85x" in lower_corrected:
-            user_trims_in_msg.add("coupe e sportline 85x")
+        user_trims_in_msg = extract_trims(lower_corrected)
 
+        # Önbellekten cevap
         cached_answer = None
         if not is_image_req:
             cached_answer = self._find_fuzzy_cached_answer(
@@ -463,6 +492,7 @@ class ChatbotAPI:
                 threshold=local_threshold
             )
             if cached_answer:
+                # Model/trim uyuşmazlığı varsa cache bypass.
                 answer_text = cached_answer.decode("utf-8")
                 models_in_answer = self._extract_models(answer_text)
                 if user_models_in_msg and not user_models_in_msg.issubset(models_in_answer):
@@ -481,18 +511,32 @@ class ChatbotAPI:
                             cached_answer = None
 
                 if cached_answer:
-                    self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt.")
+                    self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                     time.sleep(1)
                     return self.app.response_class(cached_answer, mimetype="text/plain")
 
         def caching_generator():
             chunks = []
-            for chunk in self._generate_response(corrected_message, user_id):
+            # Yanıtı parça parça üreten generator
+            for chunk in self._generate_response(corrected_message, user_id, name_surname):
                 chunks.append(chunk)
                 yield chunk
+
+            # Eğer bir görsel isteği yoksa, metinsel yanıtları cache'e kaydediyoruz
             if not is_image_req:
                 final_bytes = b"".join(chunks)
-                self._store_in_fuzzy_cache(user_id, name_surname, corrected_message, final_bytes, new_assistant_id)
+
+                # conversation_id'yi user_states içinden alıyoruz
+                conv_id = self.user_states[user_id].get("last_conversation_id")
+                if conv_id:
+                    self._store_in_fuzzy_cache(
+                        user_id,
+                        name_surname,
+                        corrected_message,
+                        final_bytes,
+                        new_assistant_id,
+                        conv_id
+                    )
 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
 
@@ -509,11 +553,8 @@ class ChatbotAPI:
             models.add("karoq")
         if "enyaq" in lower_t:
             models.add("enyaq")
-
-        # YENİ: Elroq
         if "elroq" in lower_t:
             models.add("elroq")
-
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
@@ -527,7 +568,6 @@ class ChatbotAPI:
     def _pick_least_busy_assistant(self):
         if not self.ASSISTANT_CONFIG:
             return None
-
         assistant_thread_counts = {}
         for asst_id in self.ASSISTANT_CONFIG.keys():
             count = 0
@@ -543,30 +583,22 @@ class ChatbotAPI:
             return None
         return random.choice(candidates)
 
-    def _show_categories_links(self, model, trim):
-        model_title = model.title()
-        trim_title = trim.title() if trim else ""
-        if trim_title:
-            base_cmd = f"{model} {trim}"
-            heading = f"<b>{model_title} {trim_title} Kategoriler</b><br>"
-        else:
-            base_cmd = f"{model}"
-            heading = f"<b>{model_title} Kategoriler</b><br>"
+    # Burada görsel gösterimleri (tekli rastgele renk, kategori vs.) yapılıyor
+    # İKİNCİ KODUN BASİT MANTIKLARI İLE BİRLEŞTİRİLMİŞ HALDE
 
-        categories = [
-            ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
-            ("Direksiyon Simidi", "direksiyon simidi"),
-            ("Döşeme", "döşeme"),
-            ("Jant", "jant"),
-            ("Multimedya", "multimedya"),
-            ("Renkler", "renkler"),
-        ]
-        html_snippet = heading
-        for label, keyw in categories:
-            link_cmd = f"{base_cmd} {keyw}".strip()
-            html_snippet += f"""&bull; <a href="#" onclick="sendMessage('{link_cmd}');return false;">{label}</a><br>"""
+    def _make_friendly_image_title(self, model: str, trim: str, filename: str) -> str:
+        base_name_no_ext = os.path.splitext(filename)[0]
+        base_name_no_ext = base_name_no_ext.replace("_", " ")
+        base_name_no_ext = base_name_no_ext.title()
 
-        return html_snippet
+        skip_words = [model.lower(), trim.lower()]
+        final_words = []
+        for w in base_name_no_ext.split():
+            if w.lower() not in skip_words:
+                final_words.append(w)
+
+        friendly_title = " ".join(final_words).strip()
+        return friendly_title if friendly_title else base_name_no_ext
 
     def _exclude_other_trims(self, image_list, requested_trim):
         requested_trim = requested_trim.lower().strip()
@@ -601,72 +633,23 @@ class ChatbotAPI:
 
         return filtered
 
-    def _show_multiple_image_cards(self, pairs):
-        html = (
-            '<div style="display: flex; flex-wrap: wrap; gap: 20px; '
-            'justify-content: space-around;">'
-        )
-        for (model, trim) in pairs:
-            img_html, base_name = self._get_single_random_color_image_html(model, trim)
-            friendly_title = self._make_friendly_image_title(model, trim, base_name)
-
-            cat_links_html = self._show_categories_links(model, trim)
-            card_block = f"""
-            <div style="width: 420px; border: 1px solid #ccc; border-radius: 8px;
-                        padding: 10px; text-align: center;">
-                <h4 style="margin-bottom:8px;">{model.title()} {trim.title()}</h4>
-                <hr style="margin:0 0 10px 0;">
-                <p><b>{friendly_title}</b></p>
-                <div style="margin-bottom:12px;">
-                    {img_html}
-                </div>
-                <hr>
-                {cat_links_html}
-            </div>
-            """
-            html += card_block
-
-        html += "</div>"
-        return html
-
-    def _make_friendly_image_title(self, model: str, trim: str, base_name: str) -> str:
-        parts = base_name.split("_")
-        skip_list = [model.lower(), trim.lower(), "renk"]
-
-        filtered = []
-        for p in parts:
-            if p.lower() not in skip_list:
-                filtered.append(p)
-
-        color_part = " ".join(filtered)
-        model_title = model.title()
-        trim_title = trim.title() if trim else ""
-
-        if trim:
-            return (
-                f"İşte aşağıda {model_title} {trim_title}'in "
-                f"özel renk paketinden {color_part} görselini bulabilirsin."
-            )
-        else:
-            return (
-                f"İşte aşağıda {model_title}'in "
-                f"özel renk paketinden {color_part} görselini bulabilirsin."
-            )
-
-    def _show_single_random_color_image(self, model, trim):
+    # Birinci koddaki gelişmiş tekli rastgele renk görseli (ortada gösterme)
+    def _show_single_random_color_image(self, model: str, trim: str):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
         found_any = False
 
-        for clr in self.config.KNOWN_COLORS:
+        # 1) model+trim+renk şeklinde arama
+        for clr in self.KNOWN_COLORS:
             filter_str = f"{model_trim_str} {clr}"
             results = self.image_manager.filter_images_multi_keywords(filter_str)
             if results:
                 all_color_images.extend(results)
                 found_any = True
 
+        # 2) Hiç bulunmadıysa, sadece model+renk
         if not found_any:
-            for clr in self.config.KNOWN_COLORS:
+            for clr in self.KNOWN_COLORS:
                 fallback_str = f"{model} {clr}"
                 results2 = self.image_manager.filter_images_multi_keywords(fallback_str)
                 if results2:
@@ -680,33 +663,27 @@ class ChatbotAPI:
 
         chosen_image = random.choice(all_color_images)
         img_url = f"/static/images/{chosen_image}"
-        base_name = os.path.splitext(os.path.basename(chosen_image))[0]
+        friendly_title = self._make_friendly_image_title(model, trim, os.path.basename(chosen_image))
 
-        popup_size = "normal"
-        if model.lower() in ["fabia", "scala", "kamiq"]:
-            low_name = base_name.lower()
-            if "jant" in low_name or "direksiyon" in low_name:
-                popup_size = "smaller"
-
-        friendly_title = self._make_friendly_image_title(model, trim, base_name)
-
+        # Görselin ortada gösterimi
         html_block = f"""
 <p><b>{friendly_title}</b></p>
 <div style="text-align: center; margin-bottom:20px;">
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}', '{popup_size}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 350px; cursor:pointer;" />
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}','normal')">
+    <img src="{img_url}" alt="{friendly_title}" style="max-width: 350px; cursor:pointer;" />
   </a>
 </div>
 """
         yield html_block.encode("utf-8")
 
-    def _show_category_images(self, model, trim, category):
+    def _show_category_images(self, model: str, trim: str, category: str):
         model_trim_str = f"{model} {trim}".strip().lower()
 
-        if category in ["renkler", "renk"]:
-            found_any = False
+        # "renkler" özel durumu
+        if category.lower() in ["renkler", "renk"]:
             all_color_images = []
-            for clr in self.config.KNOWN_COLORS:
+            found_any = False
+            for clr in self.KNOWN_COLORS:
                 flt = f"{model_trim_str} {clr}"
                 results = self.image_manager.filter_images_multi_keywords(flt)
                 if results:
@@ -714,14 +691,13 @@ class ChatbotAPI:
                     found_any = True
 
             if not found_any:
-                for clr in self.config.KNOWN_COLORS:
+                for clr in self.KNOWN_COLORS:
                     flt2 = f"{model} {clr}"
                     results2 = self.image_manager.filter_images_multi_keywords(flt2)
                     if results2:
                         all_color_images.extend(results2)
 
             all_color_images = self._exclude_other_trims(all_color_images, trim)
-
             heading = f"<b>{model.title()} {trim.title()} - Tüm Renk Görselleri</b><br>"
             yield heading.encode("utf-8")
 
@@ -732,20 +708,13 @@ class ChatbotAPI:
             yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
             for img_file in all_color_images:
                 img_url = f"/static/images/{img_file}"
-                just_filename = os.path.basename(img_file)
-                base_name = os.path.splitext(just_filename)[0].replace("_", " ")
-
-                popup_size = "normal"
-                if model.lower() in ["fabia", "scala", "kamiq"]:
-                    low_name = base_name.lower()
-                    if "jant" in low_name or "direksiyon" in low_name:
-                        popup_size = "smaller"
+                friendly_title = self._make_friendly_image_title(model, trim, os.path.basename(img_file))
 
                 block_html = f"""
 <div style="text-align: center; margin: 5px;">
-  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}', '{popup_size}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+  <div style="font-weight: bold; margin-bottom: 8px;">{friendly_title}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}','normal')">
+    <img src="{img_url}" alt="{friendly_title}" style="max-width: 300px; cursor:pointer;" />
   </a>
 </div>
 """
@@ -753,9 +722,9 @@ class ChatbotAPI:
             yield b"</div><br>"
             return
 
+        # Diğer kategoriler
         filter_str = f"{model_trim_str} {category}".strip().lower()
         found_images = self.image_manager.filter_images_multi_keywords(filter_str)
-
         found_images = self._exclude_other_trims(found_images, trim)
 
         heading = f"<b>{model.title()} {trim.title()} - {category.title()} Görselleri</b><br>"
@@ -768,27 +737,47 @@ class ChatbotAPI:
         yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
         for img_file in found_images:
             img_url = f"/static/images/{img_file}"
-            just_filename = os.path.basename(img_file)
-            base_name = os.path.splitext(just_filename)[0].replace("_", " ")
-
-            popup_size = "normal"
-            if model.lower() in ["fabia", "scala", "kamiq"]:
-                low_name = base_name.lower()
-                if "jant" in low_name or "direksiyon" in low_name:
-                    popup_size = "smaller"
+            friendly_title = self._make_friendly_image_title(model, trim, os.path.basename(img_file))
 
             block_html = f"""
 <div style="text-align: center; margin: 5px;">
-  <div style="font-weight: bold; margin-bottom: 8px;">{base_name}</div>
-  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}', '{popup_size}')">
-    <img src="{img_url}" alt="{base_name}" style="max-width: 300px; cursor:pointer;" />
+  <div style="font-weight: bold; margin-bottom: 8px;">{friendly_title}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}','normal')">
+    <img src="{img_url}" alt="{friendly_title}" style="max-width: 300px; cursor:pointer;" />
   </a>
 </div>
 """
             yield block_html.encode("utf-8")
         yield b"</div><br>"
 
-    def _generate_response(self, user_message, user_id):
+    def _show_categories_links(self, model, trim):
+        model_title = model.title()
+        trim_title = trim.title() if trim else ""
+        if trim_title:
+            base_cmd = f"{model} {trim}"
+            heading = f"<b>{model_title} {trim_title} Kategoriler</b><br>"
+        else:
+            base_cmd = f"{model}"
+            heading = f"<b>{model_title} Kategoriler</b><br>"
+
+        categories = [
+            ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
+            ("Direksiyon Simidi", "direksiyon simidi"),
+            ("Döşeme", "döşeme"),
+            ("Jant", "jant"),
+            ("Multimedya", "multimedya"),
+            ("Renkler", "renkler"),
+        ]
+        html_snippet = heading
+        for label, keyw in categories:
+            link_cmd = f"{base_cmd} {keyw}".strip()
+            html_snippet += f"""&bull; <a href="#" onclick="sendMessage('{link_cmd}');return false;">{label}</a><br>"""
+
+        return html_snippet
+
+    # ---------------------------------------------------------------
+
+    def _generate_response(self, user_message, user_id, username=""):
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         lower_msg = user_message.lower()
@@ -799,19 +788,19 @@ class ChatbotAPI:
         pairs = extract_model_trim_pairs(lower_msg)
         is_image_req = self.utils.is_image_request(lower_msg)
 
-        # (A) Birden fazla model + görsel isteği
+        # (A) Birden fazla model + görsel
         if len(pairs) >= 2 and is_image_req:
-            time.sleep(2)
+            time.sleep(1)
             for (model, trim) in pairs:
                 yield f"<b>{model.title()} Görselleri</b>".encode("utf-8")
                 yield from self._show_single_random_color_image(model, trim)
                 cat_links_html = self._show_categories_links(model, trim)
                 yield cat_links_html.encode("utf-8")
 
-            save_to_db(user_id, user_message, f"Çoklu görsel talebi: {pairs}")
+            save_to_db(user_id, user_message, f"Çoklu görsel talebi: {pairs}", username=username)
             return
 
-        # (B) Tekli "model + trim + görsel" pattern
+        # (B) Tekli "model + trim + görsel"
         model_trim_image_pattern = (
             r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
             r"(?:\s+(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x))?\s+"
@@ -819,7 +808,7 @@ class ChatbotAPI:
         )
         match = re.search(model_trim_image_pattern, lower_msg)
         if match:
-            time.sleep(2)
+            time.sleep(1)
             matched_model = match.group(1)
             matched_trim = match.group(2) or ""
 
@@ -833,17 +822,18 @@ class ChatbotAPI:
             yield cat_links_html.encode("utf-8")
 
             save_to_db(user_id, user_message,
-                       f"{matched_model.title()} {matched_trim.title()} -> tek renk + linkler")
+                       f"{matched_model.title()} {matched_trim.title()} -> tek renk + linkler",
+                       username=username)
             return
 
-        # (C) "model + trim + kategori" pattern
+        # (C) model + trim + kategori
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
         cat_match = re.search(
             fr"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x)?\s*({categories_pattern})",
             lower_msg
         )
         if cat_match:
-            time.sleep(2)
+            time.sleep(1)
             matched_model = cat_match.group(1)
             matched_trim = cat_match.group(2) or ""
             matched_category = cat_match.group(3)
@@ -858,28 +848,12 @@ class ChatbotAPI:
             yield cat_links_html.encode("utf-8")
 
             save_to_db(user_id, user_message,
-                       f"{matched_model.title()} {matched_trim} -> kategori: {matched_category}")
+                       f"{matched_model.title()} {matched_trim} -> kategori: {matched_category}",
+                       username=username)
             return
 
-        # (D) Opsiyonel tablo istekleri
-        user_trims_in_msg = set()
-        if "premium" in lower_msg:
-            user_trims_in_msg.add("premium")
-        if "monte carlo" in lower_msg:
-            user_trims_in_msg.add("monte carlo")
-        if "elite" in lower_msg:
-            user_trims_in_msg.add("elite")
-        if "prestige" in lower_msg:
-            user_trims_in_msg.add("prestige")
-        if "sportline" in lower_msg:
-            user_trims_in_msg.add("sportline")
-        if "e prestige 60" in lower_msg:
-            user_trims_in_msg.add("e prestige 60")
-        if "coupe e sportline 60" in lower_msg:
-            user_trims_in_msg.add("coupe e sportline 60")
-        if "coupe e sportline 85x" in lower_msg:
-            user_trims_in_msg.add("coupe e sportline 85x")
-
+        # (D) Opsiyonel tablo
+        user_trims_in_msg = extract_trims(lower_msg)
         pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
         if "opsiyonel" in lower_msg:
             found_model = None
@@ -903,30 +877,31 @@ class ChatbotAPI:
                         yield from self._yield_invalid_trim_message(found_model, found_trim)
                         return
 
-                    time.sleep(2)
+                    time.sleep(1)
                     save_to_db(user_id, user_message,
-                               f"{found_model.title()} {found_trim.title()} opsiyonel tablosu.")
+                               f"{found_model.title()} {found_trim.title()} opsiyonel tablosu.",
+                               username=username)
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
-                    if found_model == "fabia":
+                    if found_model.lower() == "fabia":
                         yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
                         return
-                    elif found_model == "scala":
+                    elif found_model.lower() == "scala":
                         yield from self._yield_trim_options("scala", ["elite", "premium", "monte carlo"])
                         return
-                    elif found_model == "kamiq":
+                    elif found_model.lower() == "kamiq":
                         yield from self._yield_trim_options("kamiq", ["elite", "premium", "monte carlo"])
                         return
-                    elif found_model == "karoq":
+                    elif found_model.lower() == "karoq":
                         yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
                         return
-                    elif found_model == "enyaq":
+                    elif found_model.lower() == "enyaq":
                         yield from self._yield_trim_options("enyaq", ["e prestige 60",
                                                                       "coupe e sportline 60",
                                                                       "coupe e sportline 85x"])
                         return
-                    elif found_model == "elroq":
+                    elif found_model.lower() == "elroq":
                         yield from self._yield_trim_options("elroq", ["e prestige 60"])
                         return
                     else:
@@ -941,9 +916,10 @@ class ChatbotAPI:
                         yield from self._yield_invalid_trim_message(pending_ops_model, found_trim)
                         return
 
-                    time.sleep(2)
+                    time.sleep(1)
                     save_to_db(user_id, user_message,
-                               f"{pending_ops_model.title()} {found_trim.title()} opsiyonel tablosu.")
+                               f"{pending_ops_model.title()} {found_trim.title()} opsiyonel tablosu.",
+                               username=username)
                     yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
                     return
                 else:
@@ -1009,7 +985,8 @@ class ChatbotAPI:
                         yield from self._show_single_random_color_image(m, "")
                         cat_links_html = self._show_categories_links(m, "")
                         yield cat_links_html.encode("utf-8")
-                    save_to_db(user_id, user_message, f"Birden çok model fallback: {user_models_in_msg2}")
+
+                    save_to_db(user_id, user_message, f"Birden çok model fallback: {user_models_in_msg2}", username=username)
                     return
                 else:
                     single_model = list(user_models_in_msg2)[0]
@@ -1018,16 +995,16 @@ class ChatbotAPI:
                     cat_links_html = self._show_categories_links(single_model, "")
                     yield cat_links_html.encode("utf-8")
 
-                    save_to_db(user_id, user_message, f"{single_model.title()} fallback görselleri")
+                    save_to_db(user_id, user_message, f"{single_model.title()} fallback görselleri", username=username)
                     return
             else:
                 yield "Hangi modelin görsellerine bakmak istersiniz? (Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>".encode("utf-8")
-                save_to_db(user_id, user_message, "Model belirtilmediği için fallback sorusu")
+                save_to_db(user_id, user_message, "Model belirtilmediği için fallback sorusu", username=username)
                 return
 
         # (E) Normal Chat (OpenAI)
         if not assistant_id:
-            save_to_db(user_id, user_message, "Uygun asistan bulunamadı.")
+            save_to_db(user_id, user_message, "Uygun asistan bulunamadı.", username=username)
             yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
             return
 
@@ -1070,22 +1047,24 @@ class ChatbotAPI:
                             yield content_md.encode("utf-8")
                     break
                 elif run.status == "failed":
-                    save_to_db(user_id, user_message, "Yanıt oluşturulamadı.")
+                    save_to_db(user_id, user_message, "Yanıt oluşturulamadı.", username=username)
                     yield "Yanıt oluşturulamadı.\n".encode("utf-8")
                     return
                 time.sleep(0.5)
 
             if not assistant_response:
-                save_to_db(user_id, user_message, "Zaman aşımı.")
+                save_to_db(user_id, user_message, "Zaman aşımı.", username=username)
                 yield "Yanıt alma zaman aşımına uğradı.\n".encode("utf-8")
                 return
 
-            conversation_id = save_to_db(user_id, user_message, assistant_response)
+            conversation_id = save_to_db(user_id, user_message, assistant_response, username=username)
+            self.user_states[user_id]["last_conversation_id"] = conversation_id
+
             yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
         except Exception as e:
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
-            save_to_db(user_id, user_message, f"Hata: {str(e)}")
+            save_to_db(user_id, user_message, f"Hata: {str(e)}", username=username)
             yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
 
     def _yield_invalid_trim_message(self, model, invalid_trim):
@@ -1102,10 +1081,10 @@ class ChatbotAPI:
             yield link_html.encode("utf-8")
 
     def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
-        time.sleep(2)
+        time.sleep(1)
         table_yielded = False
 
-        # Fabia
+        # -- Fabia
         if model_name == "fabia":
             if "premium" in trim_name:
                 yield FABIA_PREMIUM_MD.encode("utf-8")
@@ -1116,7 +1095,7 @@ class ChatbotAPI:
             else:
                 yield "Fabia için geçerli donanımlar: Premium / Monte Carlo\n".encode("utf-8")
 
-        # Scala
+        # -- Scala
         elif model_name == "scala":
             if "premium" in trim_name:
                 yield SCALA_PREMIUM_MD.encode("utf-8")
@@ -1130,7 +1109,7 @@ class ChatbotAPI:
             else:
                 yield "Scala için geçerli donanımlar: Premium / Monte Carlo / Elite\n".encode("utf-8")
 
-        # Kamiq
+        # -- Kamiq
         elif model_name == "kamiq":
             if "elite" in trim_name:
                 yield KAMIQ_ELITE_MD.encode("utf-8")
@@ -1144,7 +1123,7 @@ class ChatbotAPI:
             else:
                 yield "Kamiq için geçerli donanımlar: Elite / Premium / Monte Carlo\n".encode("utf-8")
 
-        # Karoq
+        # -- Karoq
         elif model_name == "karoq":
             if "premium" in trim_name:
                 yield KAROQ_PREMIUM_MD.encode("utf-8")
@@ -1158,7 +1137,7 @@ class ChatbotAPI:
             else:
                 yield "Karoq için geçerli donanımlar: Premium / Prestige / Sportline\n".encode("utf-8")
 
-        # Enyaq
+        # -- Enyaq
         elif model_name == "enyaq":
             tr_lower = trim_name.lower()
             if "e prestige 60" in tr_lower:
@@ -1173,7 +1152,7 @@ class ChatbotAPI:
             else:
                 yield f"Enyaq için {trim_name.title()} opsiyonel tablosu bulunamadı.\n".encode("utf-8")
 
-        # YENİ: Elroq
+        # -- Elroq
         elif model_name == "elroq":
             tr_lower = trim_name.lower()
             if "e prestige 60" in tr_lower:
