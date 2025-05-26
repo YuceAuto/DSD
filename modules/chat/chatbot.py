@@ -198,8 +198,10 @@ class ChatbotAPI:
         def dislike_endpoint():
             data = request.get_json()
             conv_id = data.get("conversation_id")
+
             if not conv_id:
                 return jsonify({"error": "No conversation_id provided"}), 400
+
             try:
                 # 1) Dislike olarak işaretle (customer_answer=2)
                 update_customer_answer(conv_id, 2)
@@ -214,9 +216,68 @@ class ChatbotAPI:
                 conn.commit()
                 conn.close()
 
-                return jsonify({"status": "ok"}), 200
+                # ✅ Include conv_id in the response
+                return jsonify({
+                    "status": "ok",
+                    "conversation_id": conv_id
+                }), 200
+
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
+            
+
+        @self.app.route("/feedback/<string:message_id>", methods=["POST"])
+        def feedback(message_id):
+            import pyodbc
+            from flask import request, jsonify
+
+            data = request.get_json()
+            feedback_value = data.get("feedback")
+
+            try:
+                conn = pyodbc.connect(
+                    "DRIVER={ODBC Driver 17 for SQL Server};"
+                    "SERVER=10.0.0.20\\SQLYC;"
+                    "DATABASE=SkodaBot;"
+                    "UID=skodabot;"
+                    "PWD=Skodabot.2024;"
+                )
+                cursor = conn.cursor()
+
+                # Perform the update
+                cursor.execute("""
+                    UPDATE [dbo].[conversations]
+                    SET [yorum] = ?
+                    WHERE id = ?
+                """, feedback_value, message_id)
+
+                conn.commit()
+                cursor.close()
+                conn.close()
+
+                # 1) Dislike olarak işaretle (customer_answer=2)
+                update_customer_answer(message_id, 2)
+
+                # 2) In-memory cache’ten sil
+                self._remove_from_fuzzy_cache(message_id)
+
+                # 3) cache_faq tablosundan da sil
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM cache_faq WHERE conversation_id=?", (message_id,))
+                conn.commit()
+                conn.close()
+
+                # ✅ Include conv_id in the response
+                return jsonify({
+                    "status": "ok",
+                    "conversation_id": message_id
+                }), 200
+
+                return jsonify({"status": "ok"}), 200
+
+            except Exception as e:
+                return jsonify({"status": "error", "message": str(e)}), 500
 
     # YENİ EKLENDİ: In-memory cache’ten conversation_id bazlı silme
     def _remove_from_fuzzy_cache(self, conversation_id):
