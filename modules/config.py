@@ -20,7 +20,7 @@ class Config:
             "asst_fw6RpRp8PbNiLUR1KB2XtAkK": ["Kamiq"],
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": ["Fabia"],
             "asst_njSG1NVgg4axJFmvVYAIXrpM": ["Scala"],
-            "asst_SPrqRQcjUnjXGGKQQLy2l2d2": ["Karoq"],
+            "asst_KORta8jxnz3RaCys53udYTZ5": ["Karoq"],
             "asst_k3zxZDIRRoJ12myGWMxSgpab": ["Enyaq"],
 
             # YENİ: Elroq asistanını ekliyoruz
@@ -31,7 +31,7 @@ class Config:
             "asst_fw6RpRp8PbNiLUR1KB2XtAkK": "Kamiq",
             "asst_yeDl2aiHy0uoGGjHRmr2dlYB": "Fabia",
             "asst_njSG1NVgg4axJFmvVYAIXrpM": "Scala",
-            "asst_SPrqRQcjUnjXGGKQQLy2l2d2": "Karoq",
+            "asst_KORta8jxnz3RaCys53udYTZ5": "Karoq",
             "asst_k3zxZDIRRoJ12myGWMxSgpab": "Enyaq",
 
             # YENİ: Elroq asistanı adını haritalıyoruz
