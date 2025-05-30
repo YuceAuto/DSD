@@ -56,20 +56,12 @@ import secrets
 load_dotenv()
 
 def normalize_trim_str(t: str) -> list:
-    """
-    Donanım isimlerinde (örn. "monte carlo", "coupe e sportline 60")
-    kullanıcı farklı yazsa da eşleşebilmeleri için çeşitli varyantlar üretiyor.
-    """
     t = t.lower().strip()
     with_underscore = t.replace(" ", "_")
     no_space = t.replace(" ", "")
     return [t, with_underscore, no_space]
 
 def extract_trims(text: str) -> set:
-    """
-    Kullanıcının mesajında hangi donanımları anmış olabileceğini yakalar.
-    Örn. "coupe e sportline 85x" veya "monte carlo" gibi.
-    """
     text_lower = text.lower()
     possible_trims = [
         "premium",
@@ -91,15 +83,9 @@ def extract_trims(text: str) -> set:
     return found_trims
 
 def extract_model_trim_pairs(text):
-    """
-    Kullanıcının metninde birden fazla model+donanım kombinasyonu geçebilir.
-    Örn. "Kamiq Elite ve Scala Premium görseller" gibi durumlarda
-    regex ile bunları yakalamaya çalışıyoruz.
-    """
     pattern = r"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*([a-zA-Z0-9\s]+)?"
 
     pairs = []
-    # "ve", "&", "ile", "," gibi bağlaçlarla ayrıştırma
     split_candidates = re.split(r"\b(?:ve|&|ile|,|and)\b", text.lower())
     for piece in split_candidates:
         piece = piece.strip()
@@ -122,46 +108,34 @@ class ChatbotAPI:
         CORS(self.app)
         self.app.secret_key = secrets.token_hex(16)
 
-        # Logger kurulum
         self.logger = logger if logger else self._setup_logger()
 
-        # DB tablolarını (varsa) oluştur
         create_tables()
 
-        # OpenAI anahtarı
         openai.api_key = os.getenv("OPENAI_API_KEY")
         self.client = openai
 
-        # Yardımcı sınıflar
         self.config = Config()
         self.utils = Utils()
 
-        # ImageManager
         self.image_manager = ImageManager(images_folder=os.path.join(static_folder, "images"))
         self.image_manager.load_images()
 
         self.markdown_processor = MarkdownProcessor()
 
-        # Config’teki asistan yapılandırmaları
         self.ASSISTANT_CONFIG = self.config.ASSISTANT_CONFIG
         self.ASSISTANT_NAME_MAP = self.config.ASSISTANT_NAME_MAP
 
-        # Kullanıcı durumu (session) tutmak için
         self.user_states = {}
-
-        # Basit bir fuzzy cache + DB için queue
         self.fuzzy_cache = {}
         self.fuzzy_cache_queue = queue.Queue()
 
-        # Arka plan thread
         self.stop_worker = False
         self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
         self.worker_thread.start()
 
-        # Cache ömrü
         self.CACHE_EXPIRY_SECONDS = 43200
 
-        # Model -> Donanım haritası
         self.MODEL_VALID_TRIMS = {
             "fabia": ["premium", "monte carlo"],
             "scala": ["elite", "premium", "monte carlo"],
@@ -177,7 +151,6 @@ class ChatbotAPI:
             "elroq": ["e prestige 60"]
         }
 
-        # Bilinen renklere örnek
         self.KNOWN_COLORS = [
             "fabia premium gümüş", "yarış mavisi", "Renk kadife kırmızı", "metalik gümüş",
             "mavi", "mavisi", "beyazi", "beyaz", "gri", "büyülü siyah", "Kamiq gümüş",
@@ -187,7 +160,6 @@ class ChatbotAPI:
             "monte carlo gümüş", "elite gümüş"
         ]
 
-        # Burada kodun gerçekten güncellenmiş sürümünün çalıştığını log’luyoruz
         self.logger.info("=== YENI VERSIYON KOD CALISIYOR ===")
 
         self._define_routes()
@@ -209,9 +181,6 @@ class ChatbotAPI:
 
         @self.app.route("/ask/<string:username>", methods=["POST"])
         def ask(username):
-            """
-            Kullanıcının sorusunu alan ana endpoint. user_id ya da nameSurname da gelebilir.
-            """
             return self._ask(username)
 
         @self.app.route("/check_session", methods=["GET"])
@@ -220,7 +189,6 @@ class ChatbotAPI:
                 _ = time.time()
             return jsonify({"active": True})
 
-        # Like & Dislike
         @self.app.route("/like", methods=["POST"])
         def like_endpoint():
             data = request.get_json()
@@ -242,12 +210,9 @@ class ChatbotAPI:
                 return jsonify({"error": "No conversation_id provided"}), 400
 
             try:
-                # Dislike işaretle
                 update_customer_answer(conv_id, 2)
-                # Cache'ten de sil
                 self._remove_from_fuzzy_cache(conv_id)
 
-                # DB cache tablosundan sil
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM cache_faq WHERE conversation_id=?", (conv_id,))
@@ -262,12 +227,8 @@ class ChatbotAPI:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
-        # Feedback (ayrı)
         @self.app.route("/feedback/<string:message_id>", methods=["POST"])
         def feedback(message_id):
-            """
-            Ayrıca bir feedback endpoint'i. Projede gerekliyse kullanılıyor.
-            """
             import pyodbc
             from flask import request, jsonify
 
@@ -372,7 +333,7 @@ class ChatbotAPI:
         splitted = user_message.split()
         corrected_tokens = []
         for token in splitted:
-            best = self.utils.fuzzy_find(token, possible_image_words, threshold=0.8)
+            best = self.utils.fuzzy_find(token, possible_image_words, threshold=0.9)
             if best:
                 corrected_tokens.append(best)
             else:
@@ -387,13 +348,12 @@ class ChatbotAPI:
         splitted = user_message.split()
         new_tokens = []
         for token in splitted:
-            best = self.utils.fuzzy_find(token, known_words, threshold=0.8)
+            best = self.utils.fuzzy_find(token, known_words, threshold=0.9)
             if best:
                 new_tokens.append(best)
             else:
                 new_tokens.append(token)
 
-        # "monte carlo" gibi iki kelimeyi birleştir
         combined_tokens = []
         skip_next = False
         for i in range(len(new_tokens)):
@@ -438,7 +398,7 @@ class ChatbotAPI:
 
         return None, None
 
-    def _find_fuzzy_cached_answer(self, user_id: str, new_question: str, assistant_id: str, threshold=0.8):
+    def _find_fuzzy_cached_answer(self, user_id: str, new_question: str, assistant_id: str, threshold=0.9):
         ans, ratio = self._search_in_assistant_cache(user_id, assistant_id, new_question, threshold)
         if ans:
             return ans
@@ -501,7 +461,7 @@ class ChatbotAPI:
             self.user_states[user_id]["last_models"] = user_models_in_msg
 
         word_count = len(corrected_message.strip().split())
-        local_threshold = 1.0 if word_count < 5 else 0.8
+        local_threshold = 1.0 if word_count < 5 else 0.9
 
         lower_corrected = corrected_message.lower().strip()
 
@@ -723,7 +683,6 @@ class ChatbotAPI:
     def _show_category_images(self, model: str, trim: str, category: str):
         model_trim_str = f"{model} {trim}".strip().lower()
 
-        # Renkler özel durumu
         if category.lower() in ["renkler", "renk"]:
             all_color_images = []
             found_any = False
@@ -765,7 +724,6 @@ class ChatbotAPI:
             yield b"</div><br>"
             return
 
-        # Diğer kategoriler
         filter_str = f"{model_trim_str} {category}".strip().lower()
         found_images = self.image_manager.filter_images_multi_keywords(filter_str)
         found_images = self._exclude_other_trims(found_images, trim)
@@ -910,13 +868,22 @@ class ChatbotAPI:
             if not found_model and assistant_id:
                 found_model = self.ASSISTANT_NAME_MAP.get(assistant_id, "").lower()
 
-            # Burada Elroq tek donanım, "elroq opsiyonel" dendiğinde direkt tablo
+            # Elroq tek donanım => doğrudan
             if found_model and found_model.lower() == "elroq":
-                the_trim = "e prestige 60"  # tek donanım
+                the_trim = "e prestige 60"
                 save_to_db(user_id, user_message,
                            f"{found_model.title()} {the_trim.title()} opsiyonel tablosu. (Auto)",
                            username=username)
                 yield from self._yield_opsiyonel_table(user_id, user_message, "elroq", the_trim)
+                return
+
+            # **Enyaq** => birden fazla tablo birlikte gösterme
+            if found_model and found_model.lower() == "enyaq":
+                save_to_db(user_id, user_message,
+                           "Enyaq için 3 tablo birlikte gösteriliyor. (Auto)",
+                           username=username)
+                # İşte burası, 3 tabloyu birlikte döndürüyoruz:
+                yield from self._yield_multi_enyaq_tables()
                 return
 
             if not found_model:
@@ -957,6 +924,8 @@ class ChatbotAPI:
                         yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
                         return
                     elif found_model.lower() == "enyaq":
+                        # Bu satıra normalde düşmemesi lazım, çünkü yukarıda yakaladık.
+                        # Ama yine de yedek olarak tek tek liste verebilirsiniz:
                         yield from self._yield_trim_options("enyaq", [
                             "e prestige 60",
                             "coupe e sportline 60",
@@ -1015,7 +984,6 @@ class ChatbotAPI:
                         yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
                         return
             else:
-                # Kullanıcı halen trim belirtmedi
                 if pending_ops_model.lower() == "fabia":
                     yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
                     return
@@ -1292,6 +1260,32 @@ class ChatbotAPI:
             msg += f"""&bull; <a href="#" onclick="sendMessage('{command_text}');return false;">{link_label}</a><br>"""
 
         yield msg.encode("utf-8")
+
+    #
+    # AŞAĞIDA YENI BIR FONKSIYON:
+    # Enyaq için e Prestige 60, Coupe e Sportline 60 ve Coupe e Sportline 85x
+    # tablolarını tek seferde döndürüyoruz.
+    #
+    def _yield_multi_enyaq_tables(self):
+        time.sleep(1)
+
+        # 1) e Prestige 60
+        yield b"<b>Enyaq e Prestige 60 - Opsiyonel Tablosu</b><br>"
+        yield ENYAQ_E_PRESTIGE_60_MD.encode("utf-8")
+
+        yield b"<hr style='margin:15px 0;'>"
+
+        # 2) Coupe e Sportline 60
+        yield b"<b>Enyaq Coupe e Sportline 60 - Opsiyonel Tablosu</b><br>"
+        yield ENYAQ_COUPE_E_SPORTLINE_60_MD.encode("utf-8")
+
+        yield b"<hr style='margin:15px 0;'>"
+
+        # 3) Coupe e Sportline 85x
+        yield b"<b>Enyaq Coupe e Sportline 85x - Opsiyonel Tablosu</b><br>"
+        yield ENYAQ_COUPE_E_SPORTLINE_85X_MD.encode("utf-8")
+
+        
 
     def run(self, debug=True):
         self.app.run(debug=debug)
