@@ -490,15 +490,16 @@ class ChatbotAPI:
         if not new_assistant_id:
             new_assistant_id = self._pick_least_busy_assistant()
             if not new_assistant_id:
+                # Tek seferlik DB kaydı
                 save_to_db(user_id, user_message, "Uygun asistan bulunamadı.", username=name_surname)
                 return self.app.response_class("Uygun bir asistan bulunamadı.\n", mimetype="text/plain")
 
         self.user_states[user_id]["assistant_id"] = new_assistant_id
 
         is_image_req = self.utils.is_image_request(corrected_message)
-
         user_trims_in_msg = extract_trims(lower_corrected)
 
+        # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
         cached_answer = None
         if not is_image_req:
             cached_answer = self._find_fuzzy_cached_answer(
@@ -528,26 +529,56 @@ class ChatbotAPI:
                 if cached_answer:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                     time.sleep(1)
+                    # Eğer cache'e uygunsa, bu cevabı döndürür ve biter
                     return self.app.response_class(cached_answer, mimetype="text/plain")
 
-        def caching_generator():
-            chunks = []
-            for chunk in self._generate_response(corrected_message, user_id, name_surname):
-                chunks.append(chunk)
-                yield chunk
+        #
+        # Burada, tüm chunk'ları toplayıp ekrana yollamak, 
+        # en sonda DB'ye kaydetmek için bir generator kullanıyoruz:
+        #
+        final_answer_parts = []
 
-            if not is_image_req:
-                final_bytes = b"".join(chunks)
-                conv_id = self.user_states[user_id].get("last_conversation_id")
-                if conv_id:
+        def caching_generator():
+            try:
+                # _generate_response bize parça parça yield döndürüyor:
+                for chunk in self._generate_response(corrected_message, user_id, name_surname):
+                    final_answer_parts.append(chunk)
+                    yield chunk
+            except Exception as ex:
+                # Hata olursa, DB'ye "hata" diye kaydedelim
+                error_text = f"Bir hata oluştu: {str(ex)}\n"
+                final_answer_parts.append(error_text.encode("utf-8"))
+                self.logger.error(f"caching_generator hata: {ex}")
+            finally:
+                # Generator bittiğinde, elimizdeki tüm parçaları birleştirip 
+                # tek seferde DB'ye kaydedeceğiz:
+                full_answer = b"".join(final_answer_parts).decode("utf-8", errors="ignore")
+
+                # Şimdi DB'ye kaydediyoruz:
+                # Burada tek seferlik "conversation_id" alalım:
+                conversation_id = save_to_db(
+                    user_id,
+                    user_message,
+                    full_answer,  # ekranda görülen tüm yanıt
+                    username=name_surname
+                )
+
+                # Bu conversation_id'yi state'e atayabilirsiniz:
+                self.user_states[user_id]["last_conversation_id"] = conversation_id
+
+                # Fuzzy cache için de (is_image_req değilse) kaydediyoruz
+                if not is_image_req:
                     self._store_in_fuzzy_cache(
                         user_id,
                         name_surname,
                         corrected_message,
-                        final_bytes,
+                        b"".join(final_answer_parts),
                         new_assistant_id,
-                        conv_id
+                        conversation_id
                     )
+
+                # Son olarak conversation_id'yi da client'a gösterelim:
+                yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
 
@@ -778,6 +809,12 @@ class ChatbotAPI:
     # ---------------- Görsel Mantığı Bitiş ----------------
 
     def _generate_response(self, user_message, user_id, username=""):
+        """
+        Bu fonksiyon parça parça (yield) yanıt üretiyor.
+        Daha önce 'save_to_db' çağrıları vardı; tek seferde kaydetmek istediğimizden 
+        bu çağrılar bu fonksiyondan çıkarıldı veya minimuma indirildi.
+        Artık nihai DB kaydı _ask() içindeki caching_generator finalize'ında yapılıyor.
+        """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         lower_msg = user_message.lower()
@@ -788,6 +825,9 @@ class ChatbotAPI:
         pairs = extract_model_trim_pairs(lower_msg)
         is_image_req = self.utils.is_image_request(lower_msg)
 
+        # -- Burada DB'ye parça parça kaydetmek yerine, 
+        #    sadece yield edip, en son caching_generator'da kaydediyoruz. --
+
         # Birden fazla model + görsel
         if len(pairs) >= 2 and is_image_req:
             time.sleep(1)
@@ -796,8 +836,6 @@ class ChatbotAPI:
                 yield from self._show_single_random_color_image(model, trim)
                 cat_links_html = self._show_categories_links(model, trim)
                 yield cat_links_html.encode("utf-8")
-
-            save_to_db(user_id, user_message, f"Çoklu görsel talebi: {pairs}", username=username)
             return
 
         # Tek model + trim + "görsel"
@@ -820,10 +858,6 @@ class ChatbotAPI:
             yield from self._show_single_random_color_image(matched_model, matched_trim)
             cat_links_html = self._show_categories_links(matched_model, matched_trim)
             yield cat_links_html.encode("utf-8")
-
-            save_to_db(user_id, user_message,
-                       f"{matched_model.title()} {matched_trim.title()} -> tek renk + linkler",
-                       username=username)
             return
 
         # model + trim + kategori
@@ -846,13 +880,9 @@ class ChatbotAPI:
             yield from self._show_category_images(matched_model, matched_trim, matched_category)
             cat_links_html = self._show_categories_links(matched_model, matched_trim)
             yield cat_links_html.encode("utf-8")
-
-            save_to_db(user_id, user_message,
-                       f"{matched_model.title()} {matched_trim} -> kategori: {matched_category}",
-                       username=username)
             return
 
-        # Opsiyonel tablo (kullanıcı "opsiyonel" kelimesi geçmiş mi?)
+        # Opsiyonel tablo
         user_trims_in_msg = extract_trims(lower_msg)
         pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
 
@@ -871,18 +901,11 @@ class ChatbotAPI:
             # Elroq tek donanım => doğrudan
             if found_model and found_model.lower() == "elroq":
                 the_trim = "e prestige 60"
-                save_to_db(user_id, user_message,
-                           f"{found_model.title()} {the_trim.title()} opsiyonel tablosu. (Auto)",
-                           username=username)
                 yield from self._yield_opsiyonel_table(user_id, user_message, "elroq", the_trim)
                 return
 
-            # **Enyaq** => birden fazla tablo birlikte gösterme
+            # Enyaq => birden fazla tablo birlikte
             if found_model and found_model.lower() == "enyaq":
-                save_to_db(user_id, user_message,
-                           "Enyaq için 3 tablo birlikte gösteriliyor. (Auto)",
-                           username=username)
-                # İşte burası, 3 tabloyu birlikte döndürüyoruz:
                 yield from self._yield_multi_enyaq_tables()
                 return
 
@@ -905,9 +928,6 @@ class ChatbotAPI:
                         yield from self._yield_invalid_trim_message(found_model, found_trim)
                         return
                     time.sleep(1)
-                    save_to_db(user_id, user_message,
-                               f"{found_model.title()} {found_trim.title()} opsiyonel tablosu.",
-                               username=username)
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
@@ -924,8 +944,6 @@ class ChatbotAPI:
                         yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
                         return
                     elif found_model.lower() == "enyaq":
-                        # Bu satıra normalde düşmemesi lazım, çünkü yukarıda yakaladık.
-                        # Ama yine de yedek olarak tek tek liste verebilirsiniz:
                         yield from self._yield_trim_options("enyaq", [
                             "e prestige 60",
                             "coupe e sportline 60",
@@ -950,9 +968,6 @@ class ChatbotAPI:
                         yield from self._yield_invalid_trim_message(pending_ops_model, found_trim)
                         return
                     time.sleep(1)
-                    save_to_db(user_id, user_message,
-                               f"{pending_ops_model.title()} {found_trim.title()} opsiyonel tablosu.",
-                               username=username)
                     yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
                     return
                 else:
@@ -1025,8 +1040,6 @@ class ChatbotAPI:
                         yield from self._show_single_random_color_image(m, "")
                         cat_links_html = self._show_categories_links(m, "")
                         yield cat_links_html.encode("utf-8")
-
-                    save_to_db(user_id, user_message, f"Birden çok model fallback: {user_models_in_msg2}", username=username)
                     return
                 else:
                     single_model = list(user_models_in_msg2)[0]
@@ -1034,19 +1047,16 @@ class ChatbotAPI:
                     yield from self._show_single_random_color_image(single_model, "")
                     cat_links_html = self._show_categories_links(single_model, "")
                     yield cat_links_html.encode("utf-8")
-
-                    save_to_db(user_id, user_message, f"{single_model.title()} fallback görselleri", username=username)
                     return
             else:
                 yield "Hangi modelin görsellerine bakmak istersiniz? (Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>".encode("utf-8")
-                save_to_db(user_id, user_message, "Model belirtilmediği için fallback sorusu", username=username)
                 return
 
         if not assistant_id:
-            save_to_db(user_id, user_message, "Uygun asistan bulunamadı.", username=username)
             yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
             return
 
+        # OpenAI API benzeri mantık
         try:
             threads_dict = self.user_states[user_id].get("threads", {})
             thread_id = threads_dict.get(assistant_id)
@@ -1086,30 +1096,25 @@ class ChatbotAPI:
                             yield content_md.encode("utf-8")
                     break
                 elif run.status == "failed":
-                    save_to_db(user_id, user_message, "Yanıt oluşturulamadı.", username=username)
+                    # Burada DB kaydını caching_generator'da yapacağız;
+                    # Sadece yield ile ekrana hata mesajı gösteriyoruz.
                     yield "Yanıt oluşturulamadı.\n".encode("utf-8")
                     return
                 time.sleep(0.5)
 
             if not assistant_response:
-                save_to_db(user_id, user_message, "Zaman aşımı.", username=username)
                 yield "Yanıt alma zaman aşımına uğradı.\n".encode("utf-8")
                 return
 
-            conversation_id = save_to_db(user_id, user_message, assistant_response, username=username)
-            self.user_states[user_id]["last_conversation_id"] = conversation_id
-
-            yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
-
         except Exception as e:
+            error_msg = f"Hata: {str(e)}"
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
-            save_to_db(user_id, user_message, f"Hata: {str(e)}", username=username)
-            yield f"Bir hata oluştu: {str(e)}\n".encode("utf-8")
+            yield f"{error_msg}\n".encode("utf-8")
 
     def _yield_invalid_trim_message(self, model, invalid_trim):
         msg = f"{model.title()} {invalid_trim.title()} modelimiz bulunmamaktadır.<br>"
-        msg += (f"{model.title()} {invalid_trim.title()} modelimiz yok. Aşağıdaki donanımlarımızı inceleyebilirsiniz:"
-                f"<br><br>")
+        msg += (f"{model.title()} {invalid_trim.title()} modelimiz yok. "
+                f"Aşağıdaki donanımlarımızı inceleyebilirsiniz:<br><br>")
         yield msg.encode("utf-8")
 
         valid_trims = self.MODEL_VALID_TRIMS.get(model, [])
@@ -1261,11 +1266,6 @@ class ChatbotAPI:
 
         yield msg.encode("utf-8")
 
-    #
-    # AŞAĞIDA YENI BIR FONKSIYON:
-    # Enyaq için e Prestige 60, Coupe e Sportline 60 ve Coupe e Sportline 85x
-    # tablolarını tek seferde döndürüyoruz.
-    #
     def _yield_multi_enyaq_tables(self):
         time.sleep(1)
 
@@ -1284,8 +1284,6 @@ class ChatbotAPI:
         # 3) Coupe e Sportline 85x
         yield b"<b>Enyaq Coupe e Sportline 85x - Opsiyonel Tablosu</b><br>"
         yield ENYAQ_COUPE_E_SPORTLINE_85X_MD.encode("utf-8")
-
-        
 
     def run(self, debug=True):
         self.app.run(debug=debug)
