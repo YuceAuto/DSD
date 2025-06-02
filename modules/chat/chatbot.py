@@ -151,13 +151,33 @@ class ChatbotAPI:
             "elroq": ["e prestige 60"]
         }
 
+        # Burada tek kelime ana renkler de eklendi:
         self.KNOWN_COLORS = [
-            "fabia premium gümüş", "Renk kadife kırmızı", "metalik gümüş",
-            "mavi", "beyazi", "beyaz", "gri", "büyülü siyah", "Kamiq gümüş",
-            "Scala gümüş", "lacivert", "koyu", "timiano yeşil",
-            "turuncu", "krem", "şimşek", 
+            "fabia premium gümüş", 
+            "Renk kadife kırmızı",
+            "metalik gümüş",
+            "mavi",
+            "beyazi",
+            "beyaz",
+            "gri",
+            "büyülü siyah",
+            "Kamiq gümüş",
+            "Scala gümüş",
+            "lacivert",
+            "koyu",
+            "timiano yeşil",
+            "turuncu",
+            "krem",
+            "şimşek",
             "e_Sportline_Coupe_60_Exclusive_Renk_Olibo_Yeşil",
-            "monte carlo gümüş", "elite gümüş"
+            "monte carlo gümüş",
+            "elite gümüş",
+
+            # Tek kelimelik ana renkler
+            "kırmızı",
+            "siyah",
+            "gümüş",
+            "yeşil",
         ]
 
         self.logger.info("=== YENI VERSIYON KOD CALISIYOR ===")
@@ -529,44 +549,31 @@ class ChatbotAPI:
                 if cached_answer:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                     time.sleep(1)
-                    # Eğer cache'e uygunsa, bu cevabı döndürür ve biter
                     return self.app.response_class(cached_answer, mimetype="text/plain")
 
-        #
-        # Burada, tüm chunk'ları toplayıp ekrana yollamak, 
-        # en sonda DB'ye kaydetmek için bir generator kullanıyoruz:
-        #
         final_answer_parts = []
 
         def caching_generator():
             try:
-                # _generate_response bize parça parça yield döndürüyor:
                 for chunk in self._generate_response(corrected_message, user_id, name_surname):
                     final_answer_parts.append(chunk)
                     yield chunk
             except Exception as ex:
-                # Hata olursa, DB'ye "hata" diye kaydedelim
                 error_text = f"Bir hata oluştu: {str(ex)}\n"
                 final_answer_parts.append(error_text.encode("utf-8"))
                 self.logger.error(f"caching_generator hata: {ex}")
             finally:
-                # Generator bittiğinde, elimizdeki tüm parçaları birleştirip 
-                # tek seferde DB'ye kaydedeceğiz:
                 full_answer = b"".join(final_answer_parts).decode("utf-8", errors="ignore")
 
-                # Şimdi DB'ye kaydediyoruz:
-                # Burada tek seferlik "conversation_id" alalım:
                 conversation_id = save_to_db(
                     user_id,
                     user_message,
-                    full_answer,  # ekranda görülen tüm yanıt
+                    full_answer,
                     username=name_surname
                 )
 
-                # Bu conversation_id'yi state'e atayabilirsiniz:
                 self.user_states[user_id]["last_conversation_id"] = conversation_id
 
-                # Fuzzy cache için de (is_image_req değilse) kaydediyoruz
                 if not is_image_req:
                     self._store_in_fuzzy_cache(
                         user_id,
@@ -577,7 +584,6 @@ class ChatbotAPI:
                         conversation_id
                     )
 
-                # Son olarak conversation_id'yi da client'a gösterelim:
                 yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
@@ -625,7 +631,9 @@ class ChatbotAPI:
             return None
         return random.choice(candidates)
 
-    # ---------------- Görsel Mantığı Başlangıç ----------------
+    # --------------------------------------------------------
+    #                   GÖRSEL MANTIĞI
+    # --------------------------------------------------------
 
     def _make_friendly_image_title(self, model: str, trim: str, filename: str) -> str:
         base_name_no_ext = os.path.splitext(filename)[0]
@@ -666,12 +674,15 @@ class ChatbotAPI:
                     break
             if conflict_found:
                 continue
+
             if not any(rv in lower_img for rv in requested_variants):
                 continue
             filtered.append(img_file)
 
         return filtered
 
+    # --- DEĞİŞİKLİK ---
+    # Bu fonksiyonda Karoq + Siyah aramasında "döşeme"/"koltuk" vb. görseller hariç tutuluyor
     def _show_single_random_color_image(self, model: str, trim: str):
         model_trim_str = f"{model} {trim}".strip().lower()
         all_color_images = []
@@ -691,7 +702,31 @@ class ChatbotAPI:
                 if results2:
                     all_color_images.extend(results2)
 
+        # TEKİLLEŞTİRME:
+        all_color_images = list(set(all_color_images))
+
+        # Trim eleme
         all_color_images = self._exclude_other_trims(all_color_images, trim)
+
+        # --- DEĞİŞİKLİK: Karoq + "siyah" görselleri için döşeme hariç tutma ---
+        if model.lower() == "karoq":
+            exclude_keywords = [
+                "döşeme",
+                "koltuk",
+                "tam deri",
+                "yarı deri",
+                "thermoflux"
+            ]
+            filtered = []
+            for img in all_color_images:
+                lower_img = img.lower()
+                # Eğer "siyah" arayan bir görsel dosya adında
+                # exclude_keywords geçiyorsa dahil etme
+                if "siyah" in lower_img and any(ek in lower_img for ek in exclude_keywords):
+                    continue
+                filtered.append(img)
+            all_color_images = filtered
+        # ---------------------------------------------------------------------
 
         if not all_color_images:
             yield f"{model.title()} {trim.title()} için renk görseli bulunamadı.<br>".encode("utf-8")
@@ -711,28 +746,42 @@ class ChatbotAPI:
 """
         yield html_block.encode("utf-8")
 
-    # -------------------------------------------------
-    #  Aşağıdaki fonksiyon, SPECIFIC (belirli) bir renge
-    #  ait görselleri getirmek için eklendi.
-    # -------------------------------------------------
+    # --- DEĞİŞİKLİK ---
+    # Bu fonksiyonda Karoq + Siyah aramasında "döşeme"/"koltuk" vb. görseller hariç tutuluyor
     def _show_single_specific_color_image(self, model: str, trim: str, color_keyword: str):
-        """
-        Kullanıcı "model + trim + color + görsel" şeklinde spesifik bir renk isterse:
-        'model trim color' ile image_manager.filter_images_multi_keywords çağırılır.
-        Sonuç yoksa fallback (trim'i çıkarıp sadece 'model + color').
-        Sonuçları HTML formatında döndürür.
-        """
         model_trim_str = f"{model} {trim}".strip().lower()
         search_str_1 = f"{model_trim_str} {color_keyword.lower()}"
         results = self.image_manager.filter_images_multi_keywords(search_str_1)
+        # TEKİLLEŞTİR:
+        results = list(set(results))
 
         results = self._exclude_other_trims(results, trim)
 
         if not results and trim:
             fallback_str_2 = f"{model} {color_keyword.lower()}"
             fallback_res = self.image_manager.filter_images_multi_keywords(fallback_str_2)
+            # TEKİLLEŞTİR:
+            fallback_res = list(set(fallback_res))
             fallback_res = self._exclude_other_trims(fallback_res, "")
             results = fallback_res
+
+        # --- DEĞİŞİKLİK: Karoq + "siyah" için döşeme görsellerini atla ---
+        if model.lower() == "karoq" and color_keyword.lower() == "siyah":
+            exclude_keywords = [
+                "döşeme",
+                "koltuk",
+                "tam deri",
+                "yarı deri",
+                "thermoflux"
+            ]
+            filtered = []
+            for img in results:
+                lower_img = img.lower()
+                if any(ex_kw in lower_img for ex_kw in exclude_keywords):
+                    continue
+                filtered.append(img)
+            results = filtered
+        # ------------------------------------------------------------------
 
         if not results:
             yield f"{model.title()} {trim.title()} - {color_keyword.title()} rengi için görsel bulunamadı.<br>".encode("utf-8")
@@ -775,6 +824,8 @@ class ChatbotAPI:
                     if results2:
                         all_color_images.extend(results2)
 
+            # TEKİLLEŞTİRME
+            all_color_images = list(set(all_color_images))
             all_color_images = self._exclude_other_trims(all_color_images, trim)
             heading = f"<b>{model.title()} {trim.title()} - Tüm Renk Görselleri</b><br>"
             yield heading.encode("utf-8")
@@ -801,8 +852,10 @@ class ChatbotAPI:
 
         filter_str = f"{model_trim_str} {category}".strip().lower()
         found_images = self.image_manager.filter_images_multi_keywords(filter_str)
-        found_images = self._exclude_other_trims(found_images, trim)
 
+        # TEKİLLEŞTİRME
+        found_images = list(set(found_images))
+        found_images = self._exclude_other_trims(found_images, trim)
         heading = f"<b>{model.title()} {trim.title()} - {category.title()} Görselleri</b><br>"
         yield heading.encode("utf-8")
 
@@ -850,20 +903,11 @@ class ChatbotAPI:
 
         return html_snippet
 
-    # ---------------- Görsel Mantığı Bitiş ----------------
+    # --------------------------------------------------------
+    #                  OPENAI BENZERİ CEVAP
+    # --------------------------------------------------------
 
     def _generate_response(self, user_message, user_id, username=""):
-        """
-        Bu fonksiyon parça parça (yield) yanıt üretiyor.
-        En spesifik pattern'ler (örn. model+trim+renk+görsel) en üstte yakalanır
-        ve match olursa orada return edilir.
-        
-        DİKKAT EDİLECEK HUSUSLAR:
-          - Trim opsiyoneldir, yoksa "" gelir.
-          - Renk eşleşmesi 'fuzzy' yapılabilir (ör. gumus -> gümüş).
-          - Bu pattern sıralamasını iyi ayarlamazsanız, diğer
-            genel pattern'ler önce yakalayabilir.
-        """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         lower_msg = user_message.lower()
@@ -873,15 +917,11 @@ class ChatbotAPI:
 
         # ----------------------------------------------------------
         # 1) Renkli görsel pattern (model + opsiyonel trim + renk + görsel)
-        #    Örneğin: "Fabia Premium Mavi Görsel" -> model=fabia, trim=premium, color=mavi
-        #    Bu pattern, en spesifik durumu yakaladığı için
-        #    diğer görsel pattern'lerinden önce kontrol ediyoruz.
         color_req_pattern = (
             r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
             r"\s*(premium|monte carlo|elite|prestige|sportline|"
             r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
             r"e sportline 60|e sportline 85x)?"
-            # Burada "renk" ifadesi opsiyonel hale geldi:
             r"\s+([a-zçığöşü]+)\s*(?:renk\s+)?"
             r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
         )
@@ -889,21 +929,18 @@ class ChatbotAPI:
         if clr_match:
             matched_model = clr_match.group(1)
             matched_trim = clr_match.group(2) or ""
-            matched_color = clr_match.group(3)  # Kullanıcının yazdığı renk ifadesi
+            matched_color = clr_match.group(3)
 
-            # Geçersiz trim kontrol
             if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
                 yield from self._yield_invalid_trim_message(matched_model, matched_trim)
                 return
 
-            # Renkte fuzzy arama (ör. "gumus" -> "gümüş")
+            # Biraz daha toleranslı eşleşme
             color_found = None
             possible_colors_lower = [c.lower() for c in self.KNOWN_COLORS]
-            # difflib.get_close_matches ile en yakın rengi bulalım
-            close_matches = difflib.get_close_matches(matched_color, possible_colors_lower, n=1, cutoff=0.7)
+            close_matches = difflib.get_close_matches(matched_color, possible_colors_lower, n=1, cutoff=0.6)
             if close_matches:
                 best_match_lower = close_matches[0]
-                # Orijinal liste içinde bulalım
                 for c in self.KNOWN_COLORS:
                     if c.lower() == best_match_lower:
                         color_found = c
@@ -920,7 +957,6 @@ class ChatbotAPI:
                 cat_links_html = self._show_categories_links(matched_model, matched_trim)
                 yield cat_links_html.encode("utf-8")
                 return
-        # ----------------------------------------------------------
 
         pairs = extract_model_trim_pairs(lower_msg)
         is_image_req = self.utils.is_image_request(lower_msg)
@@ -935,7 +971,7 @@ class ChatbotAPI:
                 yield cat_links_html.encode("utf-8")
             return
 
-        # Tek model + trim + "görsel" (genel, spesifik renk değil)
+        # Tek model + trim + "görsel"
         model_trim_image_pattern = (
             r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
             r"(?:\s+(premium|monte carlo|elite|prestige|sportline|"
@@ -981,7 +1017,7 @@ class ChatbotAPI:
             yield cat_links_html.encode("utf-8")
             return
 
-        # Opsiyonel tablo
+        # Opsiyonel tablo istekleri
         user_trims_in_msg = extract_trims(lower_msg)
         pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
 
@@ -1195,8 +1231,6 @@ class ChatbotAPI:
                             yield content_md.encode("utf-8")
                     break
                 elif run.status == "failed":
-                    # Burada DB kaydını caching_generator'da yapacağız;
-                    # Sadece yield ile ekrana hata mesajı gösteriyoruz.
                     yield "Yanıt oluşturulamadı.\n".encode("utf-8")
                     return
                 time.sleep(0.5)
