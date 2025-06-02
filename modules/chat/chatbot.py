@@ -152,11 +152,11 @@ class ChatbotAPI:
         }
 
         self.KNOWN_COLORS = [
-            "fabia premium gümüş", "yarış mavisi", "Renk kadife kırmızı", "metalik gümüş",
-            "mavi", "mavisi", "beyazi", "beyaz", "gri", "büyülü siyah", "Kamiq gümüş",
-            "Scala gümüş", "Scala_Gümüş", "lacivert", "koyu", "timiano yeşil",
-            "turuncu", "krem", "şimşek", "Fabia_Premium_Gümüş_Standart",
-            "e_Sportline_Coupe_60_Exclusive_Renk_Olibo_Yeşil", "gumus", "gümüs",
+            "fabia premium gümüş", "Renk kadife kırmızı", "metalik gümüş",
+            "mavi", "beyazi", "beyaz", "gri", "büyülü siyah", "Kamiq gümüş",
+            "Scala gümüş", "lacivert", "koyu", "timiano yeşil",
+            "turuncu", "krem", "şimşek", 
+            "e_Sportline_Coupe_60_Exclusive_Renk_Olibo_Yeşil",
             "monte carlo gümüş", "elite gümüş"
         ]
 
@@ -711,6 +711,50 @@ class ChatbotAPI:
 """
         yield html_block.encode("utf-8")
 
+    # -------------------------------------------------
+    #  Aşağıdaki fonksiyon, SPECIFIC (belirli) bir renge
+    #  ait görselleri getirmek için eklendi.
+    # -------------------------------------------------
+    def _show_single_specific_color_image(self, model: str, trim: str, color_keyword: str):
+        """
+        Kullanıcı "model + trim + color + görsel" şeklinde spesifik bir renk isterse:
+        'model trim color' ile image_manager.filter_images_multi_keywords çağırılır.
+        Sonuç yoksa fallback (trim'i çıkarıp sadece 'model + color').
+        Sonuçları HTML formatında döndürür.
+        """
+        model_trim_str = f"{model} {trim}".strip().lower()
+        search_str_1 = f"{model_trim_str} {color_keyword.lower()}"
+        results = self.image_manager.filter_images_multi_keywords(search_str_1)
+
+        results = self._exclude_other_trims(results, trim)
+
+        if not results and trim:
+            fallback_str_2 = f"{model} {color_keyword.lower()}"
+            fallback_res = self.image_manager.filter_images_multi_keywords(fallback_str_2)
+            fallback_res = self._exclude_other_trims(fallback_res, "")
+            results = fallback_res
+
+        if not results:
+            yield f"{model.title()} {trim.title()} - {color_keyword.title()} rengi için görsel bulunamadı.<br>".encode("utf-8")
+            return
+
+        yield f"<b>{model.title()} {trim.title()} - {color_keyword.title()} Rengi</b><br>".encode("utf-8")
+        yield b'<div style="display: flex; flex-wrap: wrap; gap: 20px;">'
+        for img_file in results:
+            img_url = f"/static/images/{img_file}"
+            friendly_title = self._make_friendly_image_title(model, trim, os.path.basename(img_file))
+            block_html = f"""
+<div style="text-align: center; margin: 5px;">
+  <div style="font-weight: bold; margin-bottom: 8px;">{friendly_title}</div>
+  <a href="#" data-toggle="modal" data-target="#imageModal" onclick="showPopupImage('{img_url}','normal')">
+    <img src="{img_url}" alt="{friendly_title}" style="max-width: 300px; cursor:pointer;" />
+  </a>
+</div>
+"""
+            yield block_html.encode("utf-8")
+
+        yield b"</div><br>"
+
     def _show_category_images(self, model: str, trim: str, category: str):
         model_trim_str = f"{model} {trim}".strip().lower()
 
@@ -811,9 +855,14 @@ class ChatbotAPI:
     def _generate_response(self, user_message, user_id, username=""):
         """
         Bu fonksiyon parça parça (yield) yanıt üretiyor.
-        Daha önce 'save_to_db' çağrıları vardı; tek seferde kaydetmek istediğimizden 
-        bu çağrılar bu fonksiyondan çıkarıldı veya minimuma indirildi.
-        Artık nihai DB kaydı _ask() içindeki caching_generator finalize'ında yapılıyor.
+        En spesifik pattern'ler (örn. model+trim+renk+görsel) en üstte yakalanır
+        ve match olursa orada return edilir.
+        
+        DİKKAT EDİLECEK HUSUSLAR:
+          - Trim opsiyoneldir, yoksa "" gelir.
+          - Renk eşleşmesi 'fuzzy' yapılabilir (ör. gumus -> gümüş).
+          - Bu pattern sıralamasını iyi ayarlamazsanız, diğer
+            genel pattern'ler önce yakalayabilir.
         """
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
@@ -822,11 +871,59 @@ class ChatbotAPI:
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
+        # ----------------------------------------------------------
+        # 1) Renkli görsel pattern (model + opsiyonel trim + renk + görsel)
+        #    Örneğin: "Fabia Premium Mavi Görsel" -> model=fabia, trim=premium, color=mavi
+        #    Bu pattern, en spesifik durumu yakaladığı için
+        #    diğer görsel pattern'lerinden önce kontrol ediyoruz.
+        color_req_pattern = (
+            r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
+            r"\s*(premium|monte carlo|elite|prestige|sportline|"
+            r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
+            r"e sportline 60|e sportline 85x)?"
+            # Burada "renk" ifadesi opsiyonel hale geldi:
+            r"\s+([a-zçığöşü]+)\s*(?:renk\s+)?"
+            r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
+        )
+        clr_match = re.search(color_req_pattern, lower_msg)
+        if clr_match:
+            matched_model = clr_match.group(1)
+            matched_trim = clr_match.group(2) or ""
+            matched_color = clr_match.group(3)  # Kullanıcının yazdığı renk ifadesi
+
+            # Geçersiz trim kontrol
+            if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
+                yield from self._yield_invalid_trim_message(matched_model, matched_trim)
+                return
+
+            # Renkte fuzzy arama (ör. "gumus" -> "gümüş")
+            color_found = None
+            possible_colors_lower = [c.lower() for c in self.KNOWN_COLORS]
+            # difflib.get_close_matches ile en yakın rengi bulalım
+            close_matches = difflib.get_close_matches(matched_color, possible_colors_lower, n=1, cutoff=0.7)
+            if close_matches:
+                best_match_lower = close_matches[0]
+                # Orijinal liste içinde bulalım
+                for c in self.KNOWN_COLORS:
+                    if c.lower() == best_match_lower:
+                        color_found = c
+                        break
+
+            if not color_found:
+                yield f"Üzgünüm, '{matched_color}' rengi için bir eşleşme bulamadım. Rastgele renk gösteriyorum...<br>".encode("utf-8")
+                yield from self._show_single_random_color_image(matched_model, matched_trim)
+                cat_links_html = self._show_categories_links(matched_model, matched_trim)
+                yield cat_links_html.encode("utf-8")
+                return
+            else:
+                yield from self._show_single_specific_color_image(matched_model, matched_trim, color_found)
+                cat_links_html = self._show_categories_links(matched_model, matched_trim)
+                yield cat_links_html.encode("utf-8")
+                return
+        # ----------------------------------------------------------
+
         pairs = extract_model_trim_pairs(lower_msg)
         is_image_req = self.utils.is_image_request(lower_msg)
-
-        # -- Burada DB'ye parça parça kaydetmek yerine, 
-        #    sadece yield edip, en son caching_generator'da kaydediyoruz. --
 
         # Birden fazla model + görsel
         if len(pairs) >= 2 and is_image_req:
@@ -838,10 +935,12 @@ class ChatbotAPI:
                 yield cat_links_html.encode("utf-8")
             return
 
-        # Tek model + trim + "görsel"
+        # Tek model + trim + "görsel" (genel, spesifik renk değil)
         model_trim_image_pattern = (
             r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
-            r"(?:\s+(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x|e sportline 60|e sportline 85x))?\s+"
+            r"(?:\s+(premium|monte carlo|elite|prestige|sportline|"
+            r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
+            r"e sportline 60|e sportline 85x))?\s+"
             r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
         )
         match = re.search(model_trim_image_pattern, lower_msg)
