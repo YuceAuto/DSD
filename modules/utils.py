@@ -31,7 +31,9 @@ class Utils:
             "resim",
             "resimler",
             "fotoğraf",
-            "fotoğraflar"
+            "fotoğraflar",
+            "görünüyor",
+            "görünüyo"
         ]
         return any(t in msg_lower for t in triggers)
 

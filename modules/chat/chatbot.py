@@ -348,7 +348,7 @@ class ChatbotAPI:
 
     def _correct_image_keywords(self, user_message: str) -> str:
         possible_image_words = [
-            "görsel", "görseller", "resim", "resimler", "fotoğraf", "fotoğraflar"
+            "görsel", "görseller", "resim", "resimler", "fotoğraf", "fotoğraflar", "görünüyor", "görünüyo"
         ]
         splitted = user_message.split()
         corrected_tokens = []
@@ -826,6 +826,12 @@ class ChatbotAPI:
 
             # TEKİLLEŞTİRME
             all_color_images = list(set(all_color_images))
+            if model.lower() == "karoq":
+                exclude_keywords = ["döşeme", "koltuk", "tam deri", "yarı deri", "thermoflux"]
+                all_color_images = [
+                    img for img in all_color_images
+                    if not any(ex_kw in img.lower() for ex_kw in exclude_keywords)
+    ]
             all_color_images = self._exclude_other_trims(all_color_images, trim)
             heading = f"<b>{model.title()} {trim.title()} - Tüm Renk Görselleri</b><br>"
             yield heading.encode("utf-8")
@@ -922,8 +928,8 @@ class ChatbotAPI:
             r"\s*(premium|monte carlo|elite|prestige|sportline|"
             r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
             r"e sportline 60|e sportline 85x)?"
-            r"\s+([a-zçığöşü]+)\s*(?:renk\s+)?"
-            r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?)"
+            r"\s+([a-zçığöşü]+)\s*(?:renk)?\s*"
+            r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?|nasıl\s+görün(?:üyo?r)?|görün(?:üyo?r)?|göster(?:ir)?\s*(?:misin)?|göster)"
         )
         clr_match = re.search(color_req_pattern, lower_msg)
         if clr_match:
