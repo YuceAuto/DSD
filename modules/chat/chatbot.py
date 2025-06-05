@@ -921,6 +921,28 @@ class ChatbotAPI:
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
+        # ✔✔✔ BU BLOĞU COLOR_REQ_PATTERN'DEN ÖNCE EKLEMELİSİN ✔✔✔
+        categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
+        cat_match = re.search(
+            fr"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x|e sportline 60|e sportline 85x)?\s*({categories_pattern})",
+            lower_msg
+        )
+        if cat_match:
+            time.sleep(1)
+            matched_model = cat_match.group(1)
+            matched_trim = cat_match.group(2) or ""
+            matched_category = cat_match.group(3)
+
+            if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
+                yield from self._yield_invalid_trim_message(matched_model, matched_trim)
+                return
+
+            self.user_states[user_id]["current_trim"] = matched_trim
+            yield from self._show_category_images(matched_model, matched_trim, matched_category)
+            cat_links_html = self._show_categories_links(matched_model, matched_trim)
+            yield cat_links_html.encode("utf-8")
+            return
+
         # ----------------------------------------------------------
         # 1) Renkli görsel pattern (model + opsiyonel trim + renk + görsel)
         color_req_pattern = (
@@ -941,7 +963,6 @@ class ChatbotAPI:
                 yield from self._yield_invalid_trim_message(matched_model, matched_trim)
                 return
 
-            # Biraz daha toleranslı eşleşme
             color_found = None
             possible_colors_lower = [c.lower() for c in self.KNOWN_COLORS]
             close_matches = difflib.get_close_matches(matched_color, possible_colors_lower, n=1, cutoff=0.6)
@@ -1002,10 +1023,11 @@ class ChatbotAPI:
             return
 
         # model + trim + kategori
+        # model + trim + kategori
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
         cat_match = re.search(
-            fr"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x|e sportline 60|e sportline 85x)?\s*({categories_pattern})",
-            lower_msg
+        fr"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x|e sportline 60|e sportline 85x)?\s*({categories_pattern})",
+        lower_msg
         )
         if cat_match:
             time.sleep(1)
@@ -1013,15 +1035,15 @@ class ChatbotAPI:
             matched_trim = cat_match.group(2) or ""
             matched_category = cat_match.group(3)
 
-            if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
-                yield from self._yield_invalid_trim_message(matched_model, matched_trim)
-                return
-
-            self.user_states[user_id]["current_trim"] = matched_trim
-            yield from self._show_category_images(matched_model, matched_trim, matched_category)
-            cat_links_html = self._show_categories_links(matched_model, matched_trim)
-            yield cat_links_html.encode("utf-8")
+        if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
+            yield from self._yield_invalid_trim_message(matched_model, matched_trim)
             return
+
+        self.user_states[user_id]["current_trim"] = matched_trim
+        yield from self._show_category_images(matched_model, matched_trim, matched_category)
+        cat_links_html = self._show_categories_links(matched_model, matched_trim)
+        yield cat_links_html.encode("utf-8")
+        return
 
         # Opsiyonel tablo istekleri
         user_trims_in_msg = extract_trims(lower_msg)
