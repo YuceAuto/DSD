@@ -917,6 +917,43 @@ class ChatbotAPI:
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         lower_msg = user_message.lower()
+        
+        self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
+        assistant_id = self.user_states[user_id].get("assistant_id", None)
+        lower_msg = user_message.lower()
+
+        if "current_trim" not in self.user_states[user_id]:
+            self.user_states[user_id]["current_trim"] = ""
+
+        # ✅ [RENK + MODEL + TRIM] sadece 3 öge varsa ve kelime sayısı azsa eşleşsin
+        lower_msg_clean = re.sub(r"[^\w\sçğıöşü]", "", lower_msg)
+        tokens = lower_msg_clean.split()
+        token_count = len(tokens)
+
+        colors_lower = [c.lower() for c in self.KNOWN_COLORS]
+        models = list(self.MODEL_VALID_TRIMS.keys())
+        trims_flat = [t for trims in self.MODEL_VALID_TRIMS.values() for t in trims]
+
+        found_color = next((c for c in colors_lower if c in tokens), None)
+        found_model = next((m for m in models if m in tokens), None)
+
+        def trim_match_in_tokens(trim):
+            norm_variants = normalize_trim_str(trim)
+            return any(v in " ".join(tokens) for v in norm_variants)
+
+        found_trim = next((t for t in trims_flat if trim_match_in_tokens(t)), None)
+
+        if found_color and found_model and found_trim and token_count <= 6:
+            self.logger.info("[RENK+MODEL+TRIM] Sadece 3 ögeli eşleşme tetiklendi.")
+            if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
+                yield from self._yield_invalid_trim_message(found_model, found_trim)
+                return
+
+            yield from self._show_single_specific_color_image(found_model, found_trim, found_color)
+            cat_links_html = self._show_categories_links(found_model, found_trim)
+            yield cat_links_html.encode("utf-8")
+            return
+
 
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
@@ -962,6 +999,77 @@ class ChatbotAPI:
             if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
                 yield from self._yield_invalid_trim_message(matched_model, matched_trim)
                 return
+
+            color_found = None
+            possible_colors_lower = [c.lower() for c in self.KNOWN_COLORS]
+            close_matches = difflib.get_close_matches(matched_color, possible_colors_lower, n=1, cutoff=0.6)
+            if close_matches:
+                best_match_lower = close_matches[0]
+                for c in self.KNOWN_COLORS:
+                    if c.lower() == best_match_lower:
+                        color_found = c
+                        break
+
+            if not color_found:
+                yield f"Üzgünüm, '{matched_color}' rengi için bir eşleşme bulamadım. Rastgele renk gösteriyorum...<br>".encode("utf-8")
+                yield from self._show_single_random_color_image(matched_model, matched_trim)
+                cat_links_html = self._show_categories_links(matched_model, matched_trim)
+                yield cat_links_html.encode("utf-8")
+                return
+            else:
+                yield from self._show_single_specific_color_image(matched_model, matched_trim, color_found)
+                cat_links_html = self._show_categories_links(matched_model, matched_trim)
+                yield cat_links_html.encode("utf-8")
+                return
+
+        # ✅ YENİ: ters sıradaki renk + model + görsel eşlemesi
+        reverse_color_pattern = (
+            r"([a-zçığöşü]+)\s+"
+            r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
+            r"(?:\s+(premium|monte carlo|elite|prestige|sportline|"
+            r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
+            r"e sportline 60|e sportline 85x))?"
+            r"\s*(?:renk)?\s*"
+            r"(?:görsel(?:er)?|resim(?:ler)?|foto(?:ğ|g)raf(?:lar)?|nasıl\s+görün(?:üyo?r)?|görün(?:üyo?r)?|göster(?:ir)?\s*(?:misin)?|göster)"
+        )
+        rev_match = re.search(reverse_color_pattern, lower_msg)
+        if rev_match:
+            matched_color = rev_match.group(1)
+            matched_model = rev_match.group(2)
+            matched_trim = rev_match.group(3) or ""
+
+            if matched_trim and (matched_trim not in self.MODEL_VALID_TRIMS[matched_model]):
+                yield from self._yield_invalid_trim_message(matched_model, matched_trim)
+                return
+            # ✅ Sadece renk + model + trim varsa ve toplamda 3-5 kelime arasıysa (örn. "karoq beyaz sportline")
+            lower_msg_clean = re.sub(r"[^\w\sçğıöşü]", "", lower_msg)
+            tokens = lower_msg_clean.split()
+            token_count = len(tokens)
+
+            colors_lower = [c.lower() for c in self.KNOWN_COLORS]
+            models = list(self.MODEL_VALID_TRIMS.keys())
+            trims_flat = [t for trims in self.MODEL_VALID_TRIMS.values() for t in trims]
+
+            found_color = next((c for c in colors_lower if c in tokens), None)
+            found_model = next((m for m in models if m in tokens), None)
+
+            def trim_match_in_tokens(trim):
+                norm_variants = normalize_trim_str(trim)
+                return any(v in " ".join(tokens) for v in norm_variants)
+
+            found_trim = next((t for t in trims_flat if trim_match_in_tokens(t)), None)
+
+            if found_color and found_model and found_trim and token_count <= 5:
+                self.logger.info("[RENK+MODEL+TRIM] Sadece 3 ögeli eşleşme tetiklendi.")
+                if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
+                    yield from self._yield_invalid_trim_message(found_model, found_trim)
+                    return
+
+                yield from self._show_single_specific_color_image(found_model, found_trim, found_color)
+                cat_links_html = self._show_categories_links(found_model, found_trim)
+                yield cat_links_html.encode("utf-8")
+                return
+
 
             color_found = None
             possible_colors_lower = [c.lower() for c in self.KNOWN_COLORS]
