@@ -22,9 +22,11 @@ class Config:
             "asst_njSG1NVgg4axJFmvVYAIXrpM": ["Scala"],
             "asst_KORta8jxnz3RaCys53udYTZ5": ["Karoq"],
             "asst_k3zxZDIRRoJ12myGWMxSgpab": ["Enyaq"],
-
-            # YENİ: Elroq asistanını ekliyoruz
-            "asst_3SRL4QovcALZons7pnCdfkob": ["Elroq"]
+            "asst_3SRL4QovcALZons7pnCdfkob": ["Elroq"],
+            "asst_AxGQpAY4w5bncZBWjkGFCZYc": ["Superb"],
+            # YENİ: KODIAQ
+            "asst_gehPjH2HUgNhUP8jraElGaxu": ["Kodiaq"],
+            "asst_zaIernYaaMWywxuSbs7A0wTE": ["Octavia"]
         }
 
         self.ASSISTANT_NAME_MAP = {
@@ -33,9 +35,11 @@ class Config:
             "asst_njSG1NVgg4axJFmvVYAIXrpM": "Scala",
             "asst_KORta8jxnz3RaCys53udYTZ5": "Karoq",
             "asst_k3zxZDIRRoJ12myGWMxSgpab": "Enyaq",
-
-            # YENİ: Elroq asistanı adını haritalıyoruz
-            "asst_3SRL4QovcALZons7pnCdfkob": "Elroq"
+            "asst_3SRL4QovcALZons7pnCdfkob": "Elroq",
+            "asst_AxGQpAY4w5bncZBWjkGFCZYc": "Superb",
+            # YENİ: KODIAQ
+            "asst_gehPjH2HUgNhUP8jraElGaxu": "Kodiaq",
+            "asst_zaIernYaaMWywxuSbs7A0wTE": "Octavia"
         }
 
         # Bilinen renkler
@@ -49,6 +53,12 @@ class Config:
             "yarış mavisi",
             "phoenix turuncu"
         ]
+        self.MODEL_VALID_TRIMS = {
+            # … mevcut modeller …
+            "kodiaq": ["premium", "prestige", "sportline", "rs"],
+            "superb": ["premium", "prestige", "l&k crystal", "sportline phev"],
+            "octavia": ["elite", "premium", "prestige", "sportline", "rs"]
+}
 
         # A) Monte Carlo listesi (12 adım)
         self.monte_carlo_12 = [

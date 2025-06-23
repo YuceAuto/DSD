@@ -50,7 +50,26 @@ from modules.data.karoq_data import (
     KAROQ_PRESTIGE_MD,
     KAROQ_SPORTLINE_MD
 )
+from modules.data.kodiaq_data import (
+    KODIAQ_PREMIUM_MD,
+    KODIAQ_PRESTIGE_MD,
+    KODIAQ_SPORTLINE_MD,
+    KODIAQ_RS_MD
+)
 
+from modules.data.octavia_data import (
+    OCTAVIA_ELITE_MD,
+    OCTAVIA_PREMIUM_MD,
+    OCTAVIA_PRESTIGE_MD,
+    OCTAVIA_SPORTLINE_MD,
+    OCTAVIA_RS_MD
+)
+from modules.data.superb_data import (
+    SUPERB_PREMIUM_MD,
+    SUPERB_PRESTIGE_MD,
+    SUPERB_LK_CRYSTAL_MD,
+    SUPERB_SPORTLINE_PHEV_MD
+)
 import secrets
 
 load_dotenv()
@@ -63,11 +82,14 @@ TRIM_VARIANTS = {
     "elite": ["elite"],
     "prestige": ["prestige"],
     "sportline": ["sportline", "sport_line", "sport-line", "sl"],
+    "rs": ["rs"],
     "e prestige 60": ["e prestige 60", "eprestige60"],
     "coupe e sportline 60": ["coupe e sportline 60", "ces60"],
     "coupe e sportline 85x": ["coupe e sportline 85x", "ces85x"],
     "e sportline 60": ["e sportline 60", "es60"],
     "e sportline 85x": ["e sportline 85x", "es85x"],
+    "l&k crystal": ["l&k crystal", "lk crystal", "crystal", "l n k crystal"],
+    "sportline phev": ["sportline phev", "e‑sportline", "phev", "Sportline Phev"],
 }
 VARIANT_TO_TRIM = {v: canon for canon, lst in TRIM_VARIANTS.items() for v in lst}
 # Yardımcı: Düz liste
@@ -86,17 +108,28 @@ def normalize_trim_str(t: str) -> list:
 def extract_trims(text: str) -> set:
     text_lower = text.lower()
     possible_trims = [
-        "premium",
-        "monte carlo",
-        "elite",
-        "prestige",
-        "sportline",
-        "e prestige 60",
-        "coupe e sportline 60",
-        "coupe e sportline 85x",
-        "e sportline 60",
-        "e sportline 85x"
+        "premium", "monte carlo", "elite", "prestige",
+        "sportline", "rs",
+        "e prestige 60", "coupe e sportline 60", "coupe e sportline 85x",
+        "e sportline 60", "e sportline 85x",
+        "l&k crystal", "sportline phev",
     ]
+    # 1) Ham eşleşmeleri topla
+    raw_hits = []
+    for t in possible_trims:
+        variants = normalize_trim_str(t)
+        if any(v in text_lower for v in variants):
+            raw_hits.append(t)
+
+    # 2) Birbirinin parçası olan kısa trimleri ele (örn. "sportline" < "sportline phev")
+    hits = set(raw_hits)
+    for t_short in raw_hits:
+        for t_long in raw_hits:
+            if t_short != t_long and t_short in t_long:
+                if len(t_long) > len(t_short):
+                    hits.discard(t_short)
+
+    return hits
     found_trims = set()
     for t in possible_trims:
         variants = normalize_trim_str(t)
@@ -105,7 +138,7 @@ def extract_trims(text: str) -> set:
     return found_trims
 
 def extract_model_trim_pairs(text):
-    pattern = r"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*([a-zA-Z0-9\s]+)?"
+    pattern = r"(fabia|scala|kamiq|karoq|kodiaq|octavia|enyaq|elroq|superb)\s*([a-zA-Z0-9\s]+)?"
 
     pairs = []
     split_candidates = re.split(r"\b(?:ve|&|ile|,|and)\b", text.lower())
@@ -164,6 +197,9 @@ class ChatbotAPI:
             "scala": ["elite", "premium", "monte carlo"],
             "kamiq": ["elite", "premium", "monte carlo"],
             "karoq": ["premium", "prestige", "sportline"],
+            "kodiaq": ["premium", "prestige", "sportline", "rs"],
+            "octavia": ["elite", "premium", "prestige", "sportline", "rs"],
+            "superb": ["premium", "prestige", "l&k crystal", "sportline phev"],
             "enyaq": [
                 "e prestige 60",
                 "coupe e sportline 60",
@@ -182,6 +218,8 @@ class ChatbotAPI:
             "mavi",
             "beyazi",
             "beyaz",
+            "bronz",
+            "altın",
             "gri",
             "büyülü siyah",
             "Kamiq gümüş",
@@ -192,10 +230,11 @@ class ChatbotAPI:
             "turuncu",
             "krem",
             "şimşek",
+            "bronz altın"
             "e_Sportline_Coupe_60_Exclusive_Renk_Olibo_Yeşil",
             "monte carlo gümüş",
             "elite gümüş",
-
+            "Kodiaq_Premium_Opsiyonel_Döşeme"
             # Tek kelimelik ana renkler
             "kırmızı",
             "siyah",
@@ -476,10 +515,16 @@ class ChatbotAPI:
             models.add("kamiq")
         if "karoq" in lower_t:
             models.add("karoq")
+        if "kodiaq" in lower_t:
+            models.add("kodiaq")
         if "enyaq" in lower_t:
             models.add("enyaq")
         if "elroq" in lower_t:
             models.add("elroq")
+        if "octavia" in lower_t:
+            models.add("octavia")
+        if "superb" in lower_t:
+            models.add("superb")
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
@@ -930,8 +975,8 @@ class ChatbotAPI:
         # 1) Kategori eşleşmesi
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
         cat_match = re.search(
-            fr"(fabia|scala|kamiq|karoq|enyaq|elroq)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x|e sportline 60|e sportline 85x)?\s*({categories_pattern})",
-            lower_msg
+            fr"(fabia|scala|kamiq|karoq|kodiaq|octavia|enyaq|elroq|superb)\s*(premium|monte carlo|elite|prestige|sportline|e prestige 60|coupe e sportline 60|coupe e sportline 85x|e sportline 60|e sportline 85x|rs)?\s*({categories_pattern})",
+             lower_msg
         )
         if cat_match:
             time.sleep(1)
@@ -951,7 +996,7 @@ class ChatbotAPI:
 
         # 2) Renkli görsel pattern
         color_req_pattern = (
-            r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
+            r"(fabia|scala|kamiq|karoq|kodiaq|octavia|enyaq|elroq|superb)"
             r"\s*(premium|monte carlo|elite|prestige|sportline|"
             r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
             r"e sportline 60|e sportline 85x)?"
@@ -1015,7 +1060,7 @@ class ChatbotAPI:
                 return
         
         model_color_trim_pattern = (
-            r"(fabia|scala|kamiq|karoq|enyaq|elroq)"            # model
+            r"(fabia|scala|kamiq|karoq|kodiaq|octavia|enyaq|elroq|superb)"            # model
             r"\s+([a-zçığöşü]+)"                               # renk kelimesi
             r"\s+(premium|monte carlo|elite|prestige|sportline|"
             r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
@@ -1058,7 +1103,7 @@ class ChatbotAPI:
         # 3) Ters sıra renk + model + görsel
         reverse_color_pattern = (
             r"([a-zçığöşü]+)\s+"
-            r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
+            r"(fabia|scala|kamiq|karoq|kodiaq|octavia|enyaq|elroq|superb)"
             r"(?:\s+(premium|monte carlo|elite|prestige|sportline|"
             r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
             r"e sportline 60|e sportline 85x))?"
@@ -1113,7 +1158,7 @@ class ChatbotAPI:
 
         # 5) Tek model + trim + “görsel”
         model_trim_image_pattern = (
-            r"(fabia|scala|kamiq|karoq|enyaq|elroq)"
+            r"(fabia|scala|kamiq|karoq|kodiaq|octavia|enyaq|elroq|superb)"
             r"(?:\s+(premium|monte carlo|elite|prestige|sportline|"
             r"e prestige 60|coupe e sportline 60|coupe e sportline 85x|"
             r"e sportline 60|e sportline 85x))?\s+"
@@ -1197,6 +1242,15 @@ class ChatbotAPI:
                     elif found_model.lower() == "karoq":
                         yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
                         return
+                    elif found_model.lower() == "kodiaq":
+                        yield from self._yield_trim_options("kodiaq", ["premium", "prestige", "sportline", "rs"])
+                        return
+                    elif found_model.lower() == "octavia":
+                        yield from self._yield_trim_options("octavia", ["elite", "premium", "prestige", "sportline", "rs"])
+                        return
+                    elif found_model.lower() == "superb":
+                        yield from self._yield_trim_options("superb", ["premium", "prestige", "l&k crystal", "sportline phev"])
+                        return
                     elif found_model.lower() == "enyaq":
                         yield from self._yield_trim_options("enyaq", [
                             "e prestige 60",
@@ -1238,6 +1292,15 @@ class ChatbotAPI:
                     elif pending_ops_model.lower() == "karoq":
                         yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
                         return
+                    elif pending_ops_model.lower() == "kodiaq":
+                        yield from self._yield_trim_options("kodiaq", ["premium", "prestige", "sportline", "rs"])
+                        return
+                    elif pending_ops_model.lower() == "octavia":
+                        yield from self._yield_trim_options("octavia", ["elite", "premium", "prestige", "sportline", "rs"])
+                        return
+                    elif pending_ops_model.lower() == "superb":
+                        yield from self._yield_trim_options("superb", ["premium", "prestige", "l&k crystal", "sportline phev"])
+                        return 
                     elif pending_ops_model.lower() == "enyaq":
                         yield from self._yield_trim_options("enyaq", [
                             "e prestige 60",
@@ -1266,6 +1329,11 @@ class ChatbotAPI:
                     return
                 elif pending_ops_model.lower() == "karoq":
                     yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
+                    return
+                elif pending_ops_model.lower() == "kodiaq":
+                   yield from self._yield_trim_options("kodiaq", ["premium", "prestige", "sportline", "rs"])                     
+                elif pending_ops_model.lower() == "octavia":
+                    yield from self._yield_trim_options("octavia", ["elite", "premium", "prestige", "sportline", "rs"])
                     return
                 elif pending_ops_model.lower() == "enyaq":
                     yield from self._yield_trim_options("enyaq", [
@@ -1342,7 +1410,7 @@ class ChatbotAPI:
             )
 
             start_time = time.time()
-            timeout = 30
+            timeout = 60
             assistant_response = ""
 
             # run tamamlanana veya fail olana kadar bekle
@@ -1442,6 +1510,33 @@ class ChatbotAPI:
             else:
                 yield "Karoq için geçerli donanımlar: Premium / Prestige / Sportline\n"
 
+                # Kodiaq  -----------------------------------------------------------------
+        elif model_name == "kodiaq":
+            if "premium" in trim_name:
+                yield KODIAQ_PREMIUM_MD.encode("utf-8")
+            elif "prestige" in trim_name:
+                yield KODIAQ_PRESTIGE_MD.encode("utf-8")
+            elif "sportline" in trim_name:
+                yield KODIAQ_SPORTLINE_MD.encode("utf-8")
+            elif "rs" in trim_name:
+                yield KODIAQ_RS_MD.encode("utf-8")
+            else:
+                yield "Kodiaq için geçerli donanımlar: Premium / Prestige / Sportline / RS\n"
+            table_yielded = True
+        elif model_name == "octavia":
+            if "elite" in trim_name:
+                yield OCTAVIA_ELITE_MD.encode("utf-8")
+            elif "premium" in trim_name:
+                yield OCTAVIA_PREMIUM_MD.encode("utf-8")
+            elif "prestige" in trim_name:
+                yield OCTAVIA_PRESTIGE_MD.encode("utf-8")
+            elif "sportline" in trim_name:
+                yield OCTAVIA_SPORTLINE_MD.encode("utf-8")
+            elif "rs" in trim_name:
+                yield OCTAVIA_RS_MD.encode("utf-8")
+            else:
+                yield "Octavia için geçerli donanımlar: Elite / Premium / Prestige / Sportline / RS\n"
+            table_yielded = True
         # Enyaq
         elif model_name == "enyaq":
             tr_lower = trim_name.lower()
@@ -1456,7 +1551,31 @@ class ChatbotAPI:
                 table_yielded = True
             else:
                 yield f"Enyaq için {trim_name.title()} opsiyonel tablosu bulunamadı.\n".encode("utf-8")
-
+        elif model_name == "octavia":
+            if "elite" in trim_name:
+                yield OCTAVIA_ELITE_MD.encode("utf-8"); table_yielded = True
+            elif "premium" in trim_name:
+                yield OCTAVIA_PREMIUM_MD.encode("utf-8"); table_yielded = True
+            elif "prestige" in trim_name:
+                yield OCTAVIA_PRESTIGE_MD.encode("utf-8"); table_yielded = True
+            elif "sportline" in trim_name:
+                yield OCTAVIA_SPORTLINE_MD.encode("utf-8"); table_yielded = True
+            elif "rs" in trim_name:
+                yield OCTAVIA_RS_MD.encode("utf-8"); table_yielded = True
+            else:
+                yield "Octavia için geçerli donanımlar: Elite / Premium / Prestige / Sportline / RS\n"
+        elif model_name == "superb":
+            if "premium" in trim_name:
+                yield SUPERB_PREMIUM_MD.encode("utf-8")
+            elif "prestige" in trim_name:
+                yield SUPERB_PRESTIGE_MD.encode("utf-8")
+            elif ("l&k" in trim_name) or ("crystal" in trim_name):
+                yield SUPERB_LK_CRYSTAL_MD.encode("utf-8")
+            elif "sportline" in trim_name:
+                yield SUPERB_SPORTLINE_PHEV_MD.encode("utf-8")
+            else:
+                yield "Superb için geçerli donanımlar: Premium / Prestige / L&K Crystal / Sportline PHEV\n"
+            table_yielded = True
         # Elroq
         elif model_name == "elroq":
             tr_lower = trim_name.lower()
@@ -1479,6 +1598,8 @@ class ChatbotAPI:
                 all_trims = ["elite", "premium", "monte carlo"]
             elif model_name == "karoq":
                 all_trims = ["premium", "prestige", "sportline"]
+            elif model_name == "kodiaq":
+                all_trims = ["premium", "prestige", "sportline", "rs"]
             elif model_name == "enyaq":
                 all_trims = [
                     "e prestige 60",
@@ -1489,6 +1610,10 @@ class ChatbotAPI:
                 ]
             elif model_name == "elroq":
                 all_trims = ["e prestige 60"]
+            elif model_name == "octavia":
+                all_trims = ["elite", "premium", "prestige", "sportline", "rs"]
+            elif model_name == "superb":
+                all_trims = ["premium", "prestige", "l&k crystal", "sportline phev"]
             else:
                 all_trims = []
 
