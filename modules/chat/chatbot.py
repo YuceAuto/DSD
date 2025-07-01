@@ -7,6 +7,7 @@ import difflib
 import queue
 import threading
 import random
+import requests
 
 from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
@@ -18,7 +19,10 @@ from modules.managers.markdown_utils import MarkdownProcessor
 from modules.config import Config
 from modules.utils import Utils
 from modules.db import create_tables, save_to_db, send_email, get_db_connection, update_customer_answer
-
+import time
+import math
+import requests
+from flask import Flask, request, jsonify, render_template, session
 # -- ENYAQ tabloları
 from modules.data.enyaq_data import (
     ENYAQ_E_PRESTIGE_60_MD,
@@ -70,8 +74,232 @@ from modules.data.superb_data import (
     SUPERB_LK_CRYSTAL_MD,
     SUPERB_SPORTLINE_PHEV_MD
 )
-import secrets
+from modules.data.test_data import (
+    TEST_E_PRESTIGE_60_MD,
+    TEST_PREMIUM_MD,
+    TEST_PRESTIGE_MD,
+    TEST_SPORTLINE_MD
+)
 
+from modules.data.fabia_teknik import(
+    FABIA_TEKNIK_MD
+)
+from modules.data.scala_teknik import(
+    SCALA_TEKNIK_MD
+)
+from modules.data.kamiq_teknik import(
+    KAMIQ_TEKNIK_MD
+)
+from modules.data.karoq_teknik import(
+    KAROQ_TEKNIK_MD
+)
+from modules.data.kodiaq_teknik import(
+    KODIAQ_TEKNIK_MD
+)
+from modules.data.octavia_teknik import(
+    OCTAVIA_TEKNIK_MD
+)
+from modules.data.superb_teknik import(
+    SUPERB_TEKNIK_MD
+)
+from modules.data.enyaq_teknik import(
+    ENYAQ_TEKNIK_MD
+)
+from modules.data.elroq_teknik import(
+    ELROQ_TEKNIK_MD
+)
+
+import math
+import secrets
+app = Flask(__name__)
+app.secret_key = "skoda_secret"  # oturum için
+
+ABRP_CAR_MODELS = {
+    # Fabia
+    "fabia_asistant_id":                  "skoda:fabia:21:9:all",
+    "fabia_premium_asistant_id":          "skoda:fabia:21:9:all",
+    "fabia_monte_carlo_asistant_id":      "skoda:fabia:21:9:all",
+
+    # Scala
+    "scala_asistant_id":                  "skoda:scala:19:9:all",
+    "scala_elite_asistant_id":            "skoda:scala:19:9:all",
+    "scala_premium_asistant_id":          "skoda:scala:19:9:all",
+    "scala_monte_carlo_asistant_id":      "skoda:scala:19:9:all",
+
+    # Kamiq
+    "kamiq_asistant_id":                  "skoda:kamiq:20:15:all",
+    "kamiq_elite_asistant_id":            "skoda:kamiq:20:15:all",
+    "kamiq_premium_asistant_id":          "skoda:kamiq:20:15:all",
+    "kamiq_monte_carlo_asistant_id":      "skoda:kamiq:20:15:all",
+
+    # Karoq
+    "karoq_asistant_id":                  "skoda:karoq:18:15:all",
+    "karoq_premium_asistant_id":          "skoda:karoq:18:15:all",
+    "karoq_prestige_asistant_id":         "skoda:karoq:18:15:all",
+    "karoq_sportline_asistant_id":        "skoda:karoq:18:15:all",
+
+    # Kodiaq
+    "kodiaq_asistant_id":                 "skoda:kodiaq:16:13:all",
+    "kodiaq_premium_asistant_id":         "skoda:kodiaq:16:13:all",
+    "kodiaq_prestige_asistant_id":        "skoda:kodiaq:16:13:all",
+    "kodiaq_sportline_asistant_id":       "skoda:kodiaq:16:13:all",
+    "kodiaq_rs_asistant_id":              "skoda:kodiaq:16:13:all",
+
+    # Octavia
+    "octavia_asistant_id":                "skoda:octaviaivphev:20:13:all",
+    "octavia_elite_asistant_id":          "skoda:octaviaivphev:20:13:all",
+    "octavia_premium_asistant_id":        "skoda:octaviaivphev:20:13:all",
+    "octavia_prestige_asistant_id":       "skoda:octaviaivphev:20:13:all",
+    "octavia_sportline_asistant_id":      "skoda:octaviarsivphev:20:13:all",
+    "octavia_rs_asistant_id":             "skoda:octaviarsivphev:20:13:all",
+
+    # Superb
+    "superb_asistant_id":                 "skoda:superbivphev:20:13:all",
+    "superb_premium_asistant_id":         "skoda:superbivphev:20:13:all",
+    "superb_prestige_asistant_id":        "skoda:superbivphev:20:13:all",
+    "superb_lk_crystal_asistant_id":      "skoda:superbivphev:20:13:all",
+    "superb_sportline_phev_asistant_id":  "skoda:superbivphev:20:13:all",
+
+    # Enyaq (Farklı batarya/donanım varyantları için genelde bu kodlar)
+    "enyaq_asistant_id":                  "skoda:enyaqiv80:21:77:all",
+    "enyaq_e_prestige_60_asistant_id":    "skoda:enyaqiv60:21:62:all",
+    "enyaq_coupe_e_sportline_60_asistant_id": "skoda:enyaqiv60:21:62:all",
+    "enyaq_coupe_e_sportline_85x_asistant_id": "skoda:enyaqiv85x:22:82:all",
+    "enyaq_e_sportline_60_asistant_id":   "skoda:enyaqiv60:21:62:all",
+    "enyaq_e_sportline_85x_asistant_id":  "skoda:enyaqiv85x:22:82:all",
+
+    # Elroq (henüz ABRP'de olmayabilir, varsa kodu ekle)
+    "elroq_asistant_id":                  "skoda:elroq:24:77:all",
+
+    
+}
+
+ABRP_API_KEY = "https://api.iternio.com/1/carlist?api_key=free"
+
+def get_osm_static_map_url(lat1, lon1, lat2, lon2):
+    # Güzergah için static map (OpenStreetMap)
+    center_lat = (lat1 + lat2) / 2
+    center_lon = (lon1 + lon2) / 2
+    return (
+        f"https://staticmap.openstreetmap.de/staticmap.php?"
+        f"center={center_lat},{center_lon}&zoom=7&size=600x300"
+        f"&markers={lat1},{lon1},red1|{lat2},{lon2},red2"
+    )
+
+def get_abrp_url(lat1, lon1, lat2, lon2):
+    return f"https://abetterrouteplanner.com/?plan_inline=true&from={lat1},{lon1}&to={lat2},{lon2}"
+def send_abrp_telemetry(api_key, car_model, soc, lat, lon, speed=0, is_charging=False, is_dcfc=False):
+    url = f"https://api.iternio.com/1/tlm/send?api_key={api_key}"
+    payload = {
+        "utc": int(time.time()),
+        "soc": soc,
+        "car_model": car_model,
+        "lat": lat,
+        "lon": lon,
+        "is_charging": is_charging,
+        "speed": speed,
+        "is_dcfc": is_dcfc
+    }
+    r = requests.post(url, json=payload)
+    return r.status_code, r.text
+def get_osm_directions_url(lat1, lon1, lat2, lon2):
+    return (
+        f"https://www.openstreetmap.org/directions"
+        f"?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
+    )
+
+def city_to_latlon(city_name):
+    url = 'https://nominatim.openstreetmap.org/search'
+    params = {'q': city_name, 'format': 'json', 'limit': 1, 'countrycodes': 'tr'}
+    response = requests.get(url, params=params, headers={'User-Agent': 'SkodaBot'})
+    if response.ok and response.json():
+        lat = response.json()[0]['lat']
+        lon = response.json()[0]['lon']
+        return float(lat), float(lon)
+    return None, None
+
+def get_route_osrm(from_city, to_city):
+    lat1, lon1 = city_to_latlon(from_city)
+    lat2, lon2 = city_to_latlon(to_city)
+    if not (lat1 and lon1 and lat2 and lon2):
+        return None
+    url = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
+    params = {'overview': 'false'}
+    response = requests.get(url, params=params)
+    if response.ok:
+        data = response.json()
+        if data['routes']:
+            distance = data['routes'][0]['distance'] / 1000  # km
+            duration = data['routes'][0]['duration'] / 3600  # saat
+            return distance, duration
+    return None
+
+MESAFE_PATTERNS = [
+    r"(.*?)\s*(?:ile|–|ve|,| - )\s*(.*?)\s*(?:arası|arasında)?\s*(kaç km|mesafe|kaç saat|sürer|menzil)",
+    r"(.*?)\s*dan\s*(.*?)\s*kaç km",
+    r"(.+?)\s*kaç km"
+]
+
+def parse_route_question(user_message):
+    user_message = user_message.lower()
+    for pattern in MESAFE_PATTERNS:
+        m = re.search(pattern, user_message)
+        if m:
+            groups = [g.strip() for g in m.groups() if g and len(g.strip()) > 1]
+            if len(groups) >= 2:
+                return groups[0], groups[1]
+    return None, None
+
+
+
+def fix_markdown_table(md_table: str) -> str:
+    lines = [line for line in md_table.strip().split('\n') if line.strip()]
+    table_lines = [line for line in lines if '|' in line]
+    if not table_lines:
+        return md_table
+    # Maksimum sütun sayısını bul
+    max_cols = max(line.count('|') for line in table_lines)
+    fixed_lines = []
+    for i, line in enumerate(table_lines):
+        clean = line.strip()
+        if not clean.startswith('|'):
+            clean = '|' + clean
+        if not clean.endswith('|'):
+            clean = clean + '|'
+        # Eksik sütunları tamamla
+        col_count = clean.count('|') - 1
+        if col_count < max_cols - 1:
+            clean = clean[:-1] + (' |' * (max_cols - col_count - 1)) + '|'
+        # Sadece başlık satırıysa (ilk satır) veya ayraç satırıysa (ikinci satır) bold yap
+        if i == 0:
+            # Başlık satırı -> Kalın
+            clean = "|" + "|".join([f" **{c.strip()}** " if c.strip() else "" for c in clean[1:-1].split('|')]) + "|"
+        fixed_lines.append(clean)
+    return '\n'.join(fixed_lines)
+
+
+CACHE_STOPWORDS = {
+    "evet", "evt", "lutfen", "lütfen", "ltfen", "evet lutfen", "evt lutfen", "evt ltfn","evet lütfen", "tabi", "tabii", "isterim", "olur", "elbette", "ok", "tamam",
+    "teşekkürler", "teşekkür ederim", "anladım", "sağol", "sağ olun", "sağolun", "yes", "yea", "yeah", "yep", "ok", "okey", "okay", "please", "yes please", "yeah please"
+}
+
+
+def is_non_sentence_short_reply(msg: str) -> bool:
+    """
+    Kısa, cümle olmayan, yalnızca onay/ret/klişe cevap mı kontrol eder.
+    Noktalama ve gereksiz boşlukları atar. Kelime sayısı 1-3 arasında ve yüklem yoksa da engeller.
+    """
+    msg = msg.strip().lower()
+    msg_clean = re.sub(r"[^\w\sçğıöşü]", "", msg)
+    # Tam eşleşme stoplist'te mi?
+    if msg_clean in CACHE_STOPWORDS:
+        return True
+    # Çok kısa (<=3 kelime), bariz cümle öznesi/yüklem yoksa
+    if len(msg_clean.split()) <= 3:
+        # Cümlede özne/yüklem (örn. istiyorum, yaparım, ben, var, yok...) yoksa
+        if not re.search(r"\b(ben|biz|sen|siz|o|yaparım|yapabilirim|alabilirim|istiyorum|olabilir|olacak|var|yok)\b", msg_clean):
+            return True
+    return False
 load_dotenv()
 # ----------------------------------------------------------------------
 # 0) YENİ: Trim varyant tabloları  ➜  “mc”, “ces60” v.b. kısaltmaları da
@@ -270,6 +498,71 @@ class ChatbotAPI:
             if 'last_activity' in session:
                 _ = time.time()
             return jsonify({"active": True})
+        def index():
+            return """
+            <h2>ABRP Telemetri Gönderimi</h2>
+            <form action="/abrp_telemetry" method="post">
+            Assistant ID (ör: kamiq_asistant_id): <input name="assistant_id" required><br>
+            Latitude: <input name="lat" required><br>
+            Longitude: <input name="lon" required><br>
+            Batarya Yüzdesi (SOC): <input name="soc" required><br>
+            Hız (km/h): <input name="speed" value="0"><br>
+            <input type="submit" value="Canlı Telemetri Gönder ve Rota Oluştur">
+            </form>
+            <br>
+            <b>Not:</b> <i>Assistant id'niz uygulama içindeki gerçek id olmalı (ör: kamiq_asistant_id, fabia_asistant_id...)</i>
+            """
+        @app.route("/abrp_telemetry", methods=["POST"])
+        def abrp_telemetry():
+            try:
+                # Kullanıcıdan gelen veriler
+                assistant_id = request.form.get("assistant_id")
+                lat = float(request.form.get("lat"))
+                lon = float(request.form.get("lon"))
+                soc = int(request.form.get("soc"))
+                speed = int(request.form.get("speed") or 0)
+                # Model kodunu assistant_id'ye göre otomatik bul
+                car_model = ABRP_CAR_MODELS.get(assistant_id, "skoda:enyaqiv80:21:77:all")  # Bulamazsa varsayılan
+
+                # Örnek varış noktası (şu an +1 derece yukarı) - test amaçlı
+                dest_lat = lat + 1.0
+                dest_lon = lon + 1.0
+
+                # 1) ABRP'ye canlı telemetri gönder
+                status, resp = send_abrp_telemetry(
+                    api_key=ABRP_API_KEY,
+                    car_model=car_model,
+                    soc=soc,
+                    lat=lat,
+                    lon=lon,
+                    speed=speed,
+                    is_charging=False,
+                    is_dcfc=False
+                )
+
+                # 2) Güzergah harita ve linkleri hazırla
+                abrp_url = get_abrp_url(lat, lon, dest_lat, dest_lon)
+                map_img_url = get_osm_static_map_url(lat, lon, dest_lat, dest_lon)
+
+                # 3) Kullanıcıya bilgi mesajı + harita + link + telemetri cevabı göster
+                html = f"""
+                <h3>ABRP Telemetri Sonucu</h3>
+                <b>Kullandığın Asistan Model:</b> {assistant_id} <br>
+                <b>ABRP car_model kodu:</b> {car_model} <br>
+                <b>API Yanıtı:</b> {status} - {resp}<br><br>
+                <b>Rota Haritası:</b><br>
+                <a href="{abrp_url}" target="_blank">
+                    <img src="{map_img_url}" style="max-width:600px">
+                </a>
+                <br>
+                Haritayı ve ABRP güzergahını görmek için görsele tıklayın.<br>
+                <br>
+                <b>Live Car Data kullanıyorsan:</b> ABRP uygulamasındaki "Car" sekmesinden canlı takibi başlatabilirsin.<br>
+                """
+                return html
+            except Exception as e:
+                return f"Hata: {str(e)}"
+
 
         @self.app.route("/like", methods=["POST"])
         def like_endpoint():
@@ -410,7 +703,7 @@ class ChatbotAPI:
 
     def _correct_image_keywords(self, user_message: str) -> str:
         possible_image_words = [
-            "görsel", "görseller", "resim", "resimler", "fotoğraf", "fotoğraflar", "görünüyor", "görünüyo"
+            "görsel", "görseller", "resim", "resimler", "fotoğraf", "fotoğraflar", "görünüyor", "görünüyo", "image", "img"
         ]
         splitted = user_message.split()
         corrected_tokens = []
@@ -525,6 +818,8 @@ class ChatbotAPI:
             models.add("octavia")
         if "superb" in lower_t:
             models.add("superb")
+        if "test" in lower_t:
+            models.add("test")
         return models
 
     def _assistant_id_from_model_name(self, model_name: str):
@@ -596,10 +891,47 @@ class ChatbotAPI:
         local_threshold = 1.0 if word_count < 5 else 0.9
 
         lower_corrected = corrected_message.lower().strip()
-
+        is_image_req = self.utils.is_image_request(corrected_message)
+        user_trims_in_msg = extract_trims(lower_corrected)
         old_assistant_id = self.user_states[user_id].get("assistant_id")
         new_assistant_id = None
+        if is_non_sentence_short_reply(corrected_message):
+            self.logger.info("Kısa/cümle olmayan cevap: cache devre dışı.")
+            cached_answer = None
+        else:
+            # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
+            cached_answer = None
+            if not is_image_req:
+                cached_answer = self._find_fuzzy_cached_answer(
+                    user_id,
+                    corrected_message,
+                    new_assistant_id,
+                    threshold=local_threshold
+                )
+                # ... (model/trim uyum kontrollerin burada devam ediyor) ...
+                if cached_answer:
+                    answer_text = cached_answer.decode("utf-8")
+                    models_in_answer = self._extract_models(answer_text)
+                    if user_models_in_msg and not user_models_in_msg.issubset(models_in_answer):
+                        self.logger.info("Model uyuşmazlığı -> cache bypass.")
+                        cached_answer = None
+                    else:
+                        trims_in_answer = extract_trims(answer_text)
+                        if len(user_trims_in_msg) == 1:
+                            single_trim = list(user_trims_in_msg)[0]
+                            if (single_trim not in trims_in_answer) or (len(trims_in_answer) > 1):
+                                self.logger.info("Trim uyuşmazlığı -> cache bypass.")
+                                cached_answer = None
+                        elif len(user_trims_in_msg) > 1:
+                            if user_trims_in_msg != trims_in_answer:
+                                self.logger.info("Trim uyuşmazlığı (çoklu) -> cache bypass.")
+                                cached_answer = None
 
+                    if cached_answer:
+                        self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
+                        time.sleep(1)
+                        return self.app.response_class(cached_answer, mimetype="text/plain")
+        # --- YENİ SON ---
         # Model tespitinden asistan ID'si seç
         if len(user_models_in_msg) == 1:
             found_model = list(user_models_in_msg)[0]
@@ -630,8 +962,7 @@ class ChatbotAPI:
 
         self.user_states[user_id]["assistant_id"] = new_assistant_id
 
-        is_image_req = self.utils.is_image_request(corrected_message)
-        user_trims_in_msg = extract_trims(lower_corrected)
+        
 
         # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
         cached_answer = None
@@ -678,7 +1009,10 @@ class ChatbotAPI:
                 final_answer_parts.append(error_text.encode("utf-8"))
                 self.logger.error(f"caching_generator hata: {ex}")
             finally:
-                full_answer = b"".join(final_answer_parts).decode("utf-8", errors="ignore")
+                full_answer = b"".join(
+                    p if isinstance(p, bytes) else p.encode("utf-8")
+                    for p in final_answer_parts
+                ).decode("utf-8", errors="ignore")
 
                 conversation_id = save_to_db(
                     user_id,
@@ -689,7 +1023,8 @@ class ChatbotAPI:
 
                 self.user_states[user_id]["last_conversation_id"] = conversation_id
 
-                if not is_image_req:
+                 # --- YENİ BAŞLANGIÇ: Cache'e kısa/klişe yanıtı hiç kaydetme! ---
+                if not is_image_req and not is_non_sentence_short_reply(corrected_message):
                     self._store_in_fuzzy_cache(
                         user_id,
                         name_surname,
@@ -698,6 +1033,7 @@ class ChatbotAPI:
                         new_assistant_id,
                         conversation_id
                     )
+                # --- YENİ SON ---
 
                 yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
@@ -939,24 +1275,39 @@ class ChatbotAPI:
     def _show_categories_links(self, model, trim):
         model_title = model.title()
         trim_title = trim.title() if trim else ""
+        
         if trim_title:
             base_cmd = f"{model} {trim}"
             heading = f"<b>{model_title} {trim_title} Kategoriler</b><br>"
         else:
             base_cmd = f"{model}"
             heading = f"<b>{model_title} Kategoriler</b><br>"
-
-        categories = [
-            ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
-            ("Direksiyon Simidi", "direksiyon simidi"),
-            ("Döşeme", "döşeme"),
-            ("Jant", "jant"),
-            ("Multimedya", "multimedya"),
-            ("Renkler", "renkler"),
-        ]
+        
+        if model.lower() == "elroq":
+            # Sadece Elroq için İngilizce göster
+            heading = f"<b>{model_title} {trim_title} Categories</b><br>" if trim_title else f"<b>{model_title} Categories</b><br>"
+            categories = [
+                ("Digital Instrument Panel", "dijital gösterge paneli"),
+                ("Steering Wheel", "direksiyon simidi"),
+                ("Upholstery", "döşeme"),
+                ("Wheel", "jant"),
+                ("Multimedia", "multimedya"),
+                ("Colors", "renkler"),
+            ]
+        else:
+            # Diğer tüm modeller için Türkçe
+            heading = f"<b>{model_title} {trim_title} Kategoriler</b><br>" if trim_title else f"<b>{model_title} Kategoriler</b><br>"
+            categories = [
+                ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
+                ("Direksiyon Simidi", "direksiyon simidi"),
+                ("Döşeme", "döşeme"),
+                ("Jant", "jant"),
+                ("Multimedya", "multimedya"),
+                ("Renkler", "renkler"),
+            ]
         html_snippet = heading
         for label, keyw in categories:
-            link_cmd = f"{base_cmd} {keyw}".strip()
+            link_cmd = f"{model} {trim} {keyw}".strip()
             html_snippet += f"""&bull; <a href="#" onclick="sendMessage('{link_cmd}');return false;">{label}</a><br>"""
 
         return html_snippet
@@ -965,12 +1316,151 @@ class ChatbotAPI:
     #                 OPENAI BENZERİ CEVAP
     # --------------------------------------------------------
     def _generate_response(self, user_message, user_id, username=""):
+        from_city, to_city = parse_route_question(user_message)
+        if from_city and to_city:
+            route = get_route_osrm(from_city, to_city)
+            assistant_id = self.user_states[user_id].get("assistant_id", None)
+            if not assistant_id:
+                yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
+                return
+
+            lat1, lon1 = city_to_latlon(from_city)
+            lat2, lon2 = city_to_latlon(to_city)
+            harita_gosterildi = False
+
+            if route and lat1 and lon1 and lat2 and lon2:
+                # 1) Harita görseli & linkini ekle
+                map_img_url = get_osm_static_map_url(lat1, lon1, lat2, lon2)
+                map_link_url = get_osm_directions_url(lat1, lon1, lat2, lon2)
+                html_block = f"""
+    <p><b>{from_city.title()} - {to_city.title()} Güzergahı</b></p>
+    <a href="{map_link_url}" target="_blank">
+    <img src="{map_img_url}" alt="Güzergah haritası" style="max-width: 600px; border-radius: 10px; box-shadow: 0 2px 6px #888;">
+    </a>
+    <br>
+    Haritayı büyütmek için görsele tıklayın.<br><br>
+    """
+                yield html_block.encode("utf-8")
+                harita_gosterildi = True
+
+                # 2) Km ve süre hesapla
+                distance, duration = route
+                distance = math.ceil(distance)  # Her zaman yukarı yuvarla
+                duration = round(duration, 1)
+
+                # 3) GPT'ye prompt ile aktar (doğal anlatım iste)
+                gpt_message = (
+                    f"{from_city.title()} ile {to_city.title()} arası yaklaşık {distance} kilometredir ve ortalama {duration} saat sürer. "
+                    f"Kullanıcıya bu bilgiyi kısa ve anlaşılır şekilde açıkla. Yolun durumu, uzun yol önerisi gibi kısa ek bilgi verebilirsin."
+                )
+            else:
+                # Navigasyon başarısızsa: Sadece şehir adlarıyla GPT'ye sor
+                gpt_message = (
+                    f"{from_city.title()} ile {to_city.title()} arası kaç kilometredir, araba ile ortalama yolculuk süresi nedir? "
+                    "Bilgin yoksa tahmini değerle cevap ver."
+                )
+            # ---- GPT'ye sor (senin OpenAI akışın) ----
+            try:
+                threads_dict = self.user_states[user_id].get("threads", {})
+                thread_id = threads_dict.get(assistant_id)
+                if not thread_id:
+                    new_thread = self.client.beta.threads.create(
+                        messages=[{"role": "user", "content": gpt_message}]
+                    )
+                    thread_id = new_thread.id
+                    threads_dict[assistant_id] = thread_id
+                    self.user_states[user_id]["threads"] = threads_dict
+                else:
+                    self.client.beta.threads.messages.create(
+                        thread_id=thread_id,
+                        role="user",
+                        content=gpt_message
+                    )
+                run = self.client.beta.threads.runs.create(
+                    thread_id=thread_id,
+                    assistant_id=assistant_id
+                )
+                start_time = time.time()
+                timeout = 60
+                while time.time() - start_time < timeout:
+                    run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
+                    if run.status == "completed":
+                        msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
+                        for msg in msg_response.data:
+                            if msg.role == "assistant":
+                                content = str(msg.content)
+                                content_md = self.markdown_processor.transform_text_to_markdown(content)
+                                yield content_md.encode("utf-8")
+                        break
+                    elif run.status == "failed":
+                        yield "Yanıt oluşturulamadı.\n".encode("utf-8")
+                        return
+                    time.sleep(0.5)
+            except Exception as e:
+                error_msg = f"Hata: {str(e)}"
+                self.logger.error(f"Yanıt oluşturma hatası (navigasyon+gpt): {str(e)}")
+                yield f"{error_msg}\n".encode("utf-8")
+            return
+
+        # --- Aşağısı tamamen aynı, eski kodun devamı ---
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
 
         lower_msg = user_message.lower()
+        teknik_keywords = [
+            "teknik özellik", "teknik veriler", "teknik veri", "motor özellik", "motor donanım", "motor teknik", "teknik tablo", "teknik", "motor", "performans"
+        ]
+
+        if any(kw in lower_msg for kw in teknik_keywords):
+            user_models_in_msg2 = self._extract_models(user_message)
+            found_model = None
+            if len(user_models_in_msg2) == 1:
+                found_model = list(user_models_in_msg2)[0]
+            elif len(user_models_in_msg2) > 1:
+                found_model = list(user_models_in_msg2)[0]
+
+            if not found_model and assistant_id:
+                found_model = self.ASSISTANT_NAME_MAP.get(assistant_id, "").lower()
+
+            if found_model and found_model.lower() == "fabia":
+                yield "<b>Fabia Teknik Özellikleri</b><br>"
+                yield FABIA_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "scala":
+                yield "<b>Scala Teknik Özellikleri</b><br>"
+                yield SCALA_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "kamiq":
+                yield "<b>Kamiq Teknik Özellikleri</b><br>"
+                yield KAMIQ_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "karoq":
+                yield "<b>Karoq Teknik Özellikleri</b><br>"
+                yield KAROQ_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "kodiaq":
+                yield "<b>Kodiaq Teknik Özellikleri</b><br>"
+                yield KODIAQ_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "enyaq":
+                yield "<b>Enyaq Teknik Özellikleri</b><br>"
+                yield ENYAQ_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "elroq":
+                yield "<b>Elroq Teknik Özellikleri</b><br>"
+                yield ELROQ_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "octavia":
+                yield "<b>Octavia Teknik Özellikleri</b><br>"
+                yield OCTAVIA_TEKNIK_MD.encode("utf-8")
+                return
+            if found_model and found_model.lower() == "superb":
+                yield "<b>Superb Teknik Özellikleri</b><br>"
+                yield SUPERB_TEKNIK_MD.encode("utf-8")
+                return
+            
 
         # 1) Kategori eşleşmesi
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
@@ -1047,8 +1537,8 @@ class ChatbotAPI:
                         break
 
             if not color_found:
-                yield (f"Üzgünüm, '{matched_color}' rengi için bir eşleşme bulamadım. "
-                       f"Rastgele renk gösteriyorum...<br>").encode("utf-8")
+                #yield (f"Üzgünüm, '{matched_color}' rengi için bir eşleşme bulamadım. "
+                       #f"Rastgele renk gösteriyorum...<br>").encode("utf-8")
                 yield from self._show_single_random_color_image(matched_model, matched_trim)
                 cat_links_html = self._show_categories_links(matched_model, matched_trim)
                 yield cat_links_html.encode("utf-8")
@@ -1357,25 +1847,36 @@ class ChatbotAPI:
             if not user_models_in_msg2 and "last_models" in self.user_states[user_id]:
                 user_models_in_msg2 = self.user_states[user_id]["last_models"]
 
-            if user_models_in_msg2:
-                if len(user_models_in_msg2) > 1:
-                    yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>"
-                    for m in user_models_in_msg2:
-                        yield f"<b>{m.title()} Görselleri</b><br>".encode("utf-8")
-                        yield from self._show_single_random_color_image(m, "")
-                        cat_links_html = self._show_categories_links(m, "")
-                        yield cat_links_html.encode("utf-8")
-                    return
-                else:
-                    single_model = list(user_models_in_msg2)[0]
-                    yield f"<b>{single_model.title()} için rastgele görseller</b><br>".encode("utf-8")
-                    yield from self._show_single_random_color_image(single_model, "")
-                    cat_links_html = self._show_categories_links(single_model, "")
+            # Kullanıcı model yazmadıysa, rastgele bir modelden görsel göster!
+            if not user_models_in_msg2:
+                possible_models = [
+                    "fabia", "scala", "kamiq", "karoq",
+                    "kodiaq", "octavia", "enyaq", "elroq", "superb"
+                ]
+                selected_model = random.choice(possible_models)
+                yield f"<b>{selected_model.title()} için rastgele görseller</b><br>".encode("utf-8")
+                yield from self._show_single_random_color_image(selected_model, "")
+                cat_links_html = self._show_categories_links(selected_model, "")
+                yield cat_links_html.encode("utf-8")
+                return
+
+            # Çoklu model varsa hepsinden göster
+            elif len(user_models_in_msg2) > 1:
+                yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>"
+                for m in user_models_in_msg2:
+                    yield f"<b>{m.title()} Görselleri</b><br>".encode("utf-8")
+                    yield from self._show_single_random_color_image(m, "")
+                    cat_links_html = self._show_categories_links(m, "")
                     yield cat_links_html.encode("utf-8")
-                    return
+                return
+
+            # Tek model varsa ondan göster
             else:
-                yield ("Hangi modelin görsellerine bakmak istersiniz? "
-                       "(Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>")
+                single_model = list(user_models_in_msg2)[0]
+                yield f"<b>{single_model.title()} için rastgele görseller</b><br>".encode("utf-8")
+                yield from self._show_single_random_color_image(single_model, "")
+                cat_links_html = self._show_categories_links(single_model, "")
+                yield cat_links_html.encode("utf-8")
                 return
 
         # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
@@ -1422,6 +1923,9 @@ class ChatbotAPI:
                         if msg.role == "assistant":
                             content = str(msg.content)
                             content_md = self.markdown_processor.transform_text_to_markdown(content)
+                            # --- YENİ EK: Tablo fix'i burada uygula ---
+                            if '|' in content_md and '\n' in content_md:
+                                content_md = fix_markdown_table(content_md)
                             assistant_response = content
                             yield content_md.encode("utf-8")
                     break
@@ -1537,6 +2041,18 @@ class ChatbotAPI:
             else:
                 yield "Octavia için geçerli donanımlar: Elite / Premium / Prestige / Sportline / RS\n"
             table_yielded = True
+        elif model_name == "test":
+            if "e prestige 60" in trim_name:
+                yield TEST_E_PRESTIGE_60_MD.encode("utf-8")
+            elif "premium" in trim_name:
+                yield TEST_PREMIUM_MD.encode("utf-8")
+            elif "prestige" in trim_name:
+                yield TEST_PRESTIGE_MD.encode("utf-8")
+            elif "sportline" in trim_name:
+                yield TEST_SPORTLINE_MD.encode("utf-8")
+            else:
+                yield "Test için geçerli donanımlar: E-prestige 60 / Premium / Prestige / Sportline\n"
+            table_yielded = True
         # Enyaq
         elif model_name == "enyaq":
             tr_lower = trim_name.lower()
@@ -1564,6 +2080,18 @@ class ChatbotAPI:
                 yield OCTAVIA_RS_MD.encode("utf-8"); table_yielded = True
             else:
                 yield "Octavia için geçerli donanımlar: Elite / Premium / Prestige / Sportline / RS\n"
+        elif model_name == "test":
+            if "e prestige 60" in trim_name:
+                yield TEST_E_PRESTIGE_60_MD.encode("utf-8"); table_yielded = True
+            elif "premium" in trim_name:
+                yield TEST_PREMIUM_MD.encode("utf-8"); table_yielded = True
+            elif "prestige" in trim_name:
+                yield TEST_PRESTIGE_MD.encode("utf-8"); table_yielded = True
+            elif "sportline" in trim_name:
+                yield TEST_SPORTLINE_MD.encode("utf-8"); table_yielded = True
+            else:
+                yield "Test için geçerli donanımlar: E-prestige 60 / Premium / Prestige / Sportline / RS\n"
+        
         elif model_name == "superb":
             if "premium" in trim_name:
                 yield SUPERB_PREMIUM_MD.encode("utf-8")
@@ -1612,6 +2140,8 @@ class ChatbotAPI:
                 all_trims = ["e prestige 60"]
             elif model_name == "octavia":
                 all_trims = ["elite", "premium", "prestige", "sportline", "rs"]
+            elif model_name == "test":
+                all_trims = ["e prestige 60", "premium", "prestige", "sportline"]
             elif model_name == "superb":
                 all_trims = ["premium", "prestige", "l&k crystal", "sportline phev"]
             else:
