@@ -19,10 +19,7 @@ from modules.managers.markdown_utils import MarkdownProcessor
 from modules.config import Config
 from modules.utils import Utils
 from modules.db import create_tables, save_to_db, send_email, get_db_connection, update_customer_answer
-import time
-import math
-import requests
-from flask import Flask, request, jsonify, render_template, session
+
 # -- ENYAQ tabloları
 from modules.data.enyaq_data import (
     ENYAQ_E_PRESTIGE_60_MD,
@@ -108,76 +105,12 @@ from modules.data.enyaq_teknik import(
 from modules.data.elroq_teknik import(
     ELROQ_TEKNIK_MD
 )
-
 import math
+
+
 import secrets
-app = Flask(__name__)
-app.secret_key = "skoda_secret"  # oturum için
-
-ABRP_CAR_MODELS = {
-    # Fabia
-    "fabia_asistant_id":                  "skoda:fabia:21:9:all",
-    "fabia_premium_asistant_id":          "skoda:fabia:21:9:all",
-    "fabia_monte_carlo_asistant_id":      "skoda:fabia:21:9:all",
-
-    # Scala
-    "scala_asistant_id":                  "skoda:scala:19:9:all",
-    "scala_elite_asistant_id":            "skoda:scala:19:9:all",
-    "scala_premium_asistant_id":          "skoda:scala:19:9:all",
-    "scala_monte_carlo_asistant_id":      "skoda:scala:19:9:all",
-
-    # Kamiq
-    "kamiq_asistant_id":                  "skoda:kamiq:20:15:all",
-    "kamiq_elite_asistant_id":            "skoda:kamiq:20:15:all",
-    "kamiq_premium_asistant_id":          "skoda:kamiq:20:15:all",
-    "kamiq_monte_carlo_asistant_id":      "skoda:kamiq:20:15:all",
-
-    # Karoq
-    "karoq_asistant_id":                  "skoda:karoq:18:15:all",
-    "karoq_premium_asistant_id":          "skoda:karoq:18:15:all",
-    "karoq_prestige_asistant_id":         "skoda:karoq:18:15:all",
-    "karoq_sportline_asistant_id":        "skoda:karoq:18:15:all",
-
-    # Kodiaq
-    "kodiaq_asistant_id":                 "skoda:kodiaq:16:13:all",
-    "kodiaq_premium_asistant_id":         "skoda:kodiaq:16:13:all",
-    "kodiaq_prestige_asistant_id":        "skoda:kodiaq:16:13:all",
-    "kodiaq_sportline_asistant_id":       "skoda:kodiaq:16:13:all",
-    "kodiaq_rs_asistant_id":              "skoda:kodiaq:16:13:all",
-
-    # Octavia
-    "octavia_asistant_id":                "skoda:octaviaivphev:20:13:all",
-    "octavia_elite_asistant_id":          "skoda:octaviaivphev:20:13:all",
-    "octavia_premium_asistant_id":        "skoda:octaviaivphev:20:13:all",
-    "octavia_prestige_asistant_id":       "skoda:octaviaivphev:20:13:all",
-    "octavia_sportline_asistant_id":      "skoda:octaviarsivphev:20:13:all",
-    "octavia_rs_asistant_id":             "skoda:octaviarsivphev:20:13:all",
-
-    # Superb
-    "superb_asistant_id":                 "skoda:superbivphev:20:13:all",
-    "superb_premium_asistant_id":         "skoda:superbivphev:20:13:all",
-    "superb_prestige_asistant_id":        "skoda:superbivphev:20:13:all",
-    "superb_lk_crystal_asistant_id":      "skoda:superbivphev:20:13:all",
-    "superb_sportline_phev_asistant_id":  "skoda:superbivphev:20:13:all",
-
-    # Enyaq (Farklı batarya/donanım varyantları için genelde bu kodlar)
-    "enyaq_asistant_id":                  "skoda:enyaqiv80:21:77:all",
-    "enyaq_e_prestige_60_asistant_id":    "skoda:enyaqiv60:21:62:all",
-    "enyaq_coupe_e_sportline_60_asistant_id": "skoda:enyaqiv60:21:62:all",
-    "enyaq_coupe_e_sportline_85x_asistant_id": "skoda:enyaqiv85x:22:82:all",
-    "enyaq_e_sportline_60_asistant_id":   "skoda:enyaqiv60:21:62:all",
-    "enyaq_e_sportline_85x_asistant_id":  "skoda:enyaqiv85x:22:82:all",
-
-    # Elroq (henüz ABRP'de olmayabilir, varsa kodu ekle)
-    "elroq_asistant_id":                  "skoda:elroq:24:77:all",
-
-    
-}
-
-ABRP_API_KEY = "https://api.iternio.com/1/carlist?api_key=free"
 
 def get_osm_static_map_url(lat1, lon1, lat2, lon2):
-    # Güzergah için static map (OpenStreetMap)
     center_lat = (lat1 + lat2) / 2
     center_lon = (lon1 + lon2) / 2
     return (
@@ -186,27 +119,12 @@ def get_osm_static_map_url(lat1, lon1, lat2, lon2):
         f"&markers={lat1},{lon1},red1|{lat2},{lon2},red2"
     )
 
-def get_abrp_url(lat1, lon1, lat2, lon2):
-    return f"https://abetterrouteplanner.com/?plan_inline=true&from={lat1},{lon1}&to={lat2},{lon2}"
-def send_abrp_telemetry(api_key, car_model, soc, lat, lon, speed=0, is_charging=False, is_dcfc=False):
-    url = f"https://api.iternio.com/1/tlm/send?api_key={api_key}"
-    payload = {
-        "utc": int(time.time()),
-        "soc": soc,
-        "car_model": car_model,
-        "lat": lat,
-        "lon": lon,
-        "is_charging": is_charging,
-        "speed": speed,
-        "is_dcfc": is_dcfc
-    }
-    r = requests.post(url, json=payload)
-    return r.status_code, r.text
 def get_osm_directions_url(lat1, lon1, lat2, lon2):
     return (
         f"https://www.openstreetmap.org/directions"
         f"?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
     )
+
 
 def city_to_latlon(city_name):
     url = 'https://nominatim.openstreetmap.org/search'
@@ -253,14 +171,19 @@ def parse_route_question(user_message):
 
 
 def fix_markdown_table(md_table: str) -> str:
+    """
+    Markdown tablolarda tüm satırlarda eşit sütun olmasını ve kaymaların önlenmesini sağlar.
+    """
     lines = [line for line in md_table.strip().split('\n') if line.strip()]
+    # Sadece | içeren satırları al
     table_lines = [line for line in lines if '|' in line]
     if not table_lines:
         return md_table
     # Maksimum sütun sayısını bul
     max_cols = max(line.count('|') for line in table_lines)
     fixed_lines = []
-    for i, line in enumerate(table_lines):
+    for line in table_lines:
+        # Satır başı/sonu boşluk ve | temizle
         clean = line.strip()
         if not clean.startswith('|'):
             clean = '|' + clean
@@ -270,10 +193,6 @@ def fix_markdown_table(md_table: str) -> str:
         col_count = clean.count('|') - 1
         if col_count < max_cols - 1:
             clean = clean[:-1] + (' |' * (max_cols - col_count - 1)) + '|'
-        # Sadece başlık satırıysa (ilk satır) veya ayraç satırıysa (ikinci satır) bold yap
-        if i == 0:
-            # Başlık satırı -> Kalın
-            clean = "|" + "|".join([f" **{c.strip()}** " if c.strip() else "" for c in clean[1:-1].split('|')]) + "|"
         fixed_lines.append(clean)
     return '\n'.join(fixed_lines)
 
@@ -301,6 +220,25 @@ def is_non_sentence_short_reply(msg: str) -> bool:
             return True
     return False
 load_dotenv()
+if __name__ == "__main__":
+    from_city = input("Başlangıç şehri: ").strip()
+    to_city = input("Varış şehri: ").strip()
+
+    lat1, lon1 = city_to_latlon(from_city)
+    lat2, lon2 = city_to_latlon(to_city)
+    print(f"{from_city.title()} koordinatları:", lat1, lon1)
+    print(f"{to_city.title()} koordinatları:", lat2, lon2)
+
+    route = get_route_osrm(from_city, to_city)
+    if route:
+        km, saat = route
+        print(f"{from_city.title()} ile {to_city.title()} arası yaklaşık {km:.1f} km ve {saat:.1f} saat sürer.")
+        map_url = get_osm_static_map_url(lat1, lon1, lat2, lon2)
+        directions_url = get_osm_directions_url(lat1, lon1, lat2, lon2)
+        print("Harita (statik resim):", map_url)
+        print("OSM rota linki:", directions_url)
+    else:
+        print("Rota veya koordinatlar alınamadı!")
 # ----------------------------------------------------------------------
 # 0) YENİ: Trim varyant tabloları  ➜  “mc”, “ces60” v.b. kısaltmaları da
 # ----------------------------------------------------------------------
@@ -498,71 +436,6 @@ class ChatbotAPI:
             if 'last_activity' in session:
                 _ = time.time()
             return jsonify({"active": True})
-        def index():
-            return """
-            <h2>ABRP Telemetri Gönderimi</h2>
-            <form action="/abrp_telemetry" method="post">
-            Assistant ID (ör: kamiq_asistant_id): <input name="assistant_id" required><br>
-            Latitude: <input name="lat" required><br>
-            Longitude: <input name="lon" required><br>
-            Batarya Yüzdesi (SOC): <input name="soc" required><br>
-            Hız (km/h): <input name="speed" value="0"><br>
-            <input type="submit" value="Canlı Telemetri Gönder ve Rota Oluştur">
-            </form>
-            <br>
-            <b>Not:</b> <i>Assistant id'niz uygulama içindeki gerçek id olmalı (ör: kamiq_asistant_id, fabia_asistant_id...)</i>
-            """
-        @app.route("/abrp_telemetry", methods=["POST"])
-        def abrp_telemetry():
-            try:
-                # Kullanıcıdan gelen veriler
-                assistant_id = request.form.get("assistant_id")
-                lat = float(request.form.get("lat"))
-                lon = float(request.form.get("lon"))
-                soc = int(request.form.get("soc"))
-                speed = int(request.form.get("speed") or 0)
-                # Model kodunu assistant_id'ye göre otomatik bul
-                car_model = ABRP_CAR_MODELS.get(assistant_id, "skoda:enyaqiv80:21:77:all")  # Bulamazsa varsayılan
-
-                # Örnek varış noktası (şu an +1 derece yukarı) - test amaçlı
-                dest_lat = lat + 1.0
-                dest_lon = lon + 1.0
-
-                # 1) ABRP'ye canlı telemetri gönder
-                status, resp = send_abrp_telemetry(
-                    api_key=ABRP_API_KEY,
-                    car_model=car_model,
-                    soc=soc,
-                    lat=lat,
-                    lon=lon,
-                    speed=speed,
-                    is_charging=False,
-                    is_dcfc=False
-                )
-
-                # 2) Güzergah harita ve linkleri hazırla
-                abrp_url = get_abrp_url(lat, lon, dest_lat, dest_lon)
-                map_img_url = get_osm_static_map_url(lat, lon, dest_lat, dest_lon)
-
-                # 3) Kullanıcıya bilgi mesajı + harita + link + telemetri cevabı göster
-                html = f"""
-                <h3>ABRP Telemetri Sonucu</h3>
-                <b>Kullandığın Asistan Model:</b> {assistant_id} <br>
-                <b>ABRP car_model kodu:</b> {car_model} <br>
-                <b>API Yanıtı:</b> {status} - {resp}<br><br>
-                <b>Rota Haritası:</b><br>
-                <a href="{abrp_url}" target="_blank">
-                    <img src="{map_img_url}" style="max-width:600px">
-                </a>
-                <br>
-                Haritayı ve ABRP güzergahını görmek için görsele tıklayın.<br>
-                <br>
-                <b>Live Car Data kullanıyorsan:</b> ABRP uygulamasındaki "Car" sekmesinden canlı takibi başlatabilirsin.<br>
-                """
-                return html
-            except Exception as e:
-                return f"Hata: {str(e)}"
-
 
         @self.app.route("/like", methods=["POST"])
         def like_endpoint():
@@ -1275,39 +1148,24 @@ class ChatbotAPI:
     def _show_categories_links(self, model, trim):
         model_title = model.title()
         trim_title = trim.title() if trim else ""
-        
         if trim_title:
             base_cmd = f"{model} {trim}"
             heading = f"<b>{model_title} {trim_title} Kategoriler</b><br>"
         else:
             base_cmd = f"{model}"
             heading = f"<b>{model_title} Kategoriler</b><br>"
-        
-        if model.lower() == "elroq":
-            # Sadece Elroq için İngilizce göster
-            heading = f"<b>{model_title} {trim_title} Categories</b><br>" if trim_title else f"<b>{model_title} Categories</b><br>"
-            categories = [
-                ("Digital Instrument Panel", "dijital gösterge paneli"),
-                ("Steering Wheel", "direksiyon simidi"),
-                ("Upholstery", "döşeme"),
-                ("Wheel", "jant"),
-                ("Multimedia", "multimedya"),
-                ("Colors", "renkler"),
-            ]
-        else:
-            # Diğer tüm modeller için Türkçe
-            heading = f"<b>{model_title} {trim_title} Kategoriler</b><br>" if trim_title else f"<b>{model_title} Kategoriler</b><br>"
-            categories = [
-                ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
-                ("Direksiyon Simidi", "direksiyon simidi"),
-                ("Döşeme", "döşeme"),
-                ("Jant", "jant"),
-                ("Multimedya", "multimedya"),
-                ("Renkler", "renkler"),
-            ]
+
+        categories = [
+            ("Dijital Gösterge Paneli", "dijital gösterge paneli"),
+            ("Direksiyon Simidi", "direksiyon simidi"),
+            ("Döşeme", "döşeme"),
+            ("Jant", "jant"),
+            ("Multimedya", "multimedya"),
+            ("Renkler", "renkler"),
+        ]
         html_snippet = heading
         for label, keyw in categories:
-            link_cmd = f"{model} {trim} {keyw}".strip()
+            link_cmd = f"{base_cmd} {keyw}".strip()
             html_snippet += f"""&bull; <a href="#" onclick="sendMessage('{link_cmd}');return false;">{label}</a><br>"""
 
         return html_snippet
@@ -1316,6 +1174,7 @@ class ChatbotAPI:
     #                 OPENAI BENZERİ CEVAP
     # --------------------------------------------------------
     def _generate_response(self, user_message, user_id, username=""):
+         # --- Mesafe/Menzil fallback'lı sorgu ---
         from_city, to_city = parse_route_question(user_message)
         if from_city and to_city:
             route = get_route_osrm(from_city, to_city)
@@ -1537,8 +1396,8 @@ class ChatbotAPI:
                         break
 
             if not color_found:
-                #yield (f"Üzgünüm, '{matched_color}' rengi için bir eşleşme bulamadım. "
-                       #f"Rastgele renk gösteriyorum...<br>").encode("utf-8")
+                yield (f"Üzgünüm, '{matched_color}' rengi için bir eşleşme bulamadım. "
+                       f"Rastgele renk gösteriyorum...<br>").encode("utf-8")
                 yield from self._show_single_random_color_image(matched_model, matched_trim)
                 cat_links_html = self._show_categories_links(matched_model, matched_trim)
                 yield cat_links_html.encode("utf-8")
@@ -1847,36 +1706,25 @@ class ChatbotAPI:
             if not user_models_in_msg2 and "last_models" in self.user_states[user_id]:
                 user_models_in_msg2 = self.user_states[user_id]["last_models"]
 
-            # Kullanıcı model yazmadıysa, rastgele bir modelden görsel göster!
-            if not user_models_in_msg2:
-                possible_models = [
-                    "fabia", "scala", "kamiq", "karoq",
-                    "kodiaq", "octavia", "enyaq", "elroq", "superb"
-                ]
-                selected_model = random.choice(possible_models)
-                yield f"<b>{selected_model.title()} için rastgele görseller</b><br>".encode("utf-8")
-                yield from self._show_single_random_color_image(selected_model, "")
-                cat_links_html = self._show_categories_links(selected_model, "")
-                yield cat_links_html.encode("utf-8")
-                return
-
-            # Çoklu model varsa hepsinden göster
-            elif len(user_models_in_msg2) > 1:
-                yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>"
-                for m in user_models_in_msg2:
-                    yield f"<b>{m.title()} Görselleri</b><br>".encode("utf-8")
-                    yield from self._show_single_random_color_image(m, "")
-                    cat_links_html = self._show_categories_links(m, "")
+            if user_models_in_msg2:
+                if len(user_models_in_msg2) > 1:
+                    yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>"
+                    for m in user_models_in_msg2:
+                        yield f"<b>{m.title()} Görselleri</b><br>".encode("utf-8")
+                        yield from self._show_single_random_color_image(m, "")
+                        cat_links_html = self._show_categories_links(m, "")
+                        yield cat_links_html.encode("utf-8")
+                    return
+                else:
+                    single_model = list(user_models_in_msg2)[0]
+                    yield f"<b>{single_model.title()} için rastgele görseller</b><br>".encode("utf-8")
+                    yield from self._show_single_random_color_image(single_model, "")
+                    cat_links_html = self._show_categories_links(single_model, "")
                     yield cat_links_html.encode("utf-8")
-                return
-
-            # Tek model varsa ondan göster
+                    return
             else:
-                single_model = list(user_models_in_msg2)[0]
-                yield f"<b>{single_model.title()} için rastgele görseller</b><br>".encode("utf-8")
-                yield from self._show_single_random_color_image(single_model, "")
-                cat_links_html = self._show_categories_links(single_model, "")
-                yield cat_links_html.encode("utf-8")
+                yield ("Hangi modelin görsellerine bakmak istersiniz? "
+                       "(Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>")
                 return
 
         # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
