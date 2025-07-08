@@ -110,65 +110,6 @@ import math
 
 import secrets
 
-def get_osm_static_map_url(lat1, lon1, lat2, lon2):
-    center_lat = (lat1 + lat2) / 2
-    center_lon = (lon1 + lon2) / 2
-    return (
-        f"https://staticmap.openstreetmap.de/staticmap.php?"
-        f"center={center_lat},{center_lon}&zoom=7&size=600x300"
-        f"&markers={lat1},{lon1},red1|{lat2},{lon2},red2"
-    )
-
-def get_osm_directions_url(lat1, lon1, lat2, lon2):
-    return (
-        f"https://www.openstreetmap.org/directions"
-        f"?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
-    )
-
-
-def city_to_latlon(city_name):
-    url = 'https://nominatim.openstreetmap.org/search'
-    params = {'q': city_name, 'format': 'json', 'limit': 1, 'countrycodes': 'tr'}
-    response = requests.get(url, params=params, headers={'User-Agent': 'SkodaBot'})
-    if response.ok and response.json():
-        lat = response.json()[0]['lat']
-        lon = response.json()[0]['lon']
-        return float(lat), float(lon)
-    return None, None
-
-def get_route_osrm(from_city, to_city):
-    lat1, lon1 = city_to_latlon(from_city)
-    lat2, lon2 = city_to_latlon(to_city)
-    if not (lat1 and lon1 and lat2 and lon2):
-        return None
-    url = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
-    params = {'overview': 'false'}
-    response = requests.get(url, params=params)
-    if response.ok:
-        data = response.json()
-        if data['routes']:
-            distance = data['routes'][0]['distance'] / 1000  # km
-            duration = data['routes'][0]['duration'] / 3600  # saat
-            return distance, duration
-    return None
-
-MESAFE_PATTERNS = [
-    r"(.*?)\s*(?:ile|–|ve|,| - )\s*(.*?)\s*(?:arası|arasında)?\s*(kaç km|mesafe|kaç saat|sürer|menzil)",
-    r"(.*?)\s*dan\s*(.*?)\s*kaç km",
-    r"(.+?)\s*kaç km"
-]
-
-def parse_route_question(user_message):
-    user_message = user_message.lower()
-    for pattern in MESAFE_PATTERNS:
-        m = re.search(pattern, user_message)
-        if m:
-            groups = [g.strip() for g in m.groups() if g and len(g.strip()) > 1]
-            if len(groups) >= 2:
-                return groups[0], groups[1]
-    return None, None
-
-
 
 def fix_markdown_table(md_table: str) -> str:
     """
@@ -220,25 +161,7 @@ def is_non_sentence_short_reply(msg: str) -> bool:
             return True
     return False
 load_dotenv()
-if __name__ == "__main__":
-    from_city = input("Başlangıç şehri: ").strip()
-    to_city = input("Varış şehri: ").strip()
 
-    lat1, lon1 = city_to_latlon(from_city)
-    lat2, lon2 = city_to_latlon(to_city)
-    print(f"{from_city.title()} koordinatları:", lat1, lon1)
-    print(f"{to_city.title()} koordinatları:", lat2, lon2)
-
-    route = get_route_osrm(from_city, to_city)
-    if route:
-        km, saat = route
-        print(f"{from_city.title()} ile {to_city.title()} arası yaklaşık {km:.1f} km ve {saat:.1f} saat sürer.")
-        map_url = get_osm_static_map_url(lat1, lon1, lat2, lon2)
-        directions_url = get_osm_directions_url(lat1, lon1, lat2, lon2)
-        print("Harita (statik resim):", map_url)
-        print("OSM rota linki:", directions_url)
-    else:
-        print("Rota veya koordinatlar alınamadı!")
 # ----------------------------------------------------------------------
 # 0) YENİ: Trim varyant tabloları  ➜  “mc”, “ces60” v.b. kısaltmaları da
 # ----------------------------------------------------------------------
@@ -1174,93 +1097,7 @@ class ChatbotAPI:
     #                 OPENAI BENZERİ CEVAP
     # --------------------------------------------------------
     def _generate_response(self, user_message, user_id, username=""):
-         # --- Mesafe/Menzil fallback'lı sorgu ---
-        from_city, to_city = parse_route_question(user_message)
-        if from_city and to_city:
-            route = get_route_osrm(from_city, to_city)
-            assistant_id = self.user_states[user_id].get("assistant_id", None)
-            if not assistant_id:
-                yield "Uygun bir asistan bulunamadı.\n".encode("utf-8")
-                return
-
-            lat1, lon1 = city_to_latlon(from_city)
-            lat2, lon2 = city_to_latlon(to_city)
-            harita_gosterildi = False
-
-            if route and lat1 and lon1 and lat2 and lon2:
-                # 1) Harita görseli & linkini ekle
-                map_img_url = get_osm_static_map_url(lat1, lon1, lat2, lon2)
-                map_link_url = get_osm_directions_url(lat1, lon1, lat2, lon2)
-                html_block = f"""
-    <p><b>{from_city.title()} - {to_city.title()} Güzergahı</b></p>
-    <a href="{map_link_url}" target="_blank">
-    <img src="{map_img_url}" alt="Güzergah haritası" style="max-width: 600px; border-radius: 10px; box-shadow: 0 2px 6px #888;">
-    </a>
-    <br>
-    Haritayı büyütmek için görsele tıklayın.<br><br>
-    """
-                yield html_block.encode("utf-8")
-                harita_gosterildi = True
-
-                # 2) Km ve süre hesapla
-                distance, duration = route
-                distance = math.ceil(distance)  # Her zaman yukarı yuvarla
-                duration = round(duration, 1)
-
-                # 3) GPT'ye prompt ile aktar (doğal anlatım iste)
-                gpt_message = (
-                    f"{from_city.title()} ile {to_city.title()} arası yaklaşık {distance} kilometredir ve ortalama {duration} saat sürer. "
-                    f"Kullanıcıya bu bilgiyi kısa ve anlaşılır şekilde açıkla. Yolun durumu, uzun yol önerisi gibi kısa ek bilgi verebilirsin."
-                )
-            else:
-                # Navigasyon başarısızsa: Sadece şehir adlarıyla GPT'ye sor
-                gpt_message = (
-                    f"{from_city.title()} ile {to_city.title()} arası kaç kilometredir, araba ile ortalama yolculuk süresi nedir? "
-                    "Bilgin yoksa tahmini değerle cevap ver."
-                )
-            # ---- GPT'ye sor (senin OpenAI akışın) ----
-            try:
-                threads_dict = self.user_states[user_id].get("threads", {})
-                thread_id = threads_dict.get(assistant_id)
-                if not thread_id:
-                    new_thread = self.client.beta.threads.create(
-                        messages=[{"role": "user", "content": gpt_message}]
-                    )
-                    thread_id = new_thread.id
-                    threads_dict[assistant_id] = thread_id
-                    self.user_states[user_id]["threads"] = threads_dict
-                else:
-                    self.client.beta.threads.messages.create(
-                        thread_id=thread_id,
-                        role="user",
-                        content=gpt_message
-                    )
-                run = self.client.beta.threads.runs.create(
-                    thread_id=thread_id,
-                    assistant_id=assistant_id
-                )
-                start_time = time.time()
-                timeout = 60
-                while time.time() - start_time < timeout:
-                    run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
-                    if run.status == "completed":
-                        msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
-                        for msg in msg_response.data:
-                            if msg.role == "assistant":
-                                content = str(msg.content)
-                                content_md = self.markdown_processor.transform_text_to_markdown(content)
-                                yield content_md.encode("utf-8")
-                        break
-                    elif run.status == "failed":
-                        yield "Yanıt oluşturulamadı.\n".encode("utf-8")
-                        return
-                    time.sleep(0.5)
-            except Exception as e:
-                error_msg = f"Hata: {str(e)}"
-                self.logger.error(f"Yanıt oluşturma hatası (navigasyon+gpt): {str(e)}")
-                yield f"{error_msg}\n".encode("utf-8")
-            return
-
+        
         # --- Aşağısı tamamen aynı, eski kodun devamı ---
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
