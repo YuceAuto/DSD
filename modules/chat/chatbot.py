@@ -110,6 +110,42 @@ import math
 
 import secrets
 
+MESAFE_PATTERNS = [
+    r"(.*?)\s*(?:ile|–|ve|,| - )\s*(.*?)\s*(?:arası|arasında)?\s*(kaç km|mesafe|kaç saat|sürer|menzil)",
+    r"(.*?)\s*dan\s*(.*?)\s*kaç km",
+    r"(.+?)\s*kaç km"
+]
+
+def parse_route_question(user_message):
+    user_message = user_message.lower()
+    user_message = user_message.lower()
+    patterns = [
+        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+kaç\s+km",
+        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+kaç\s+km",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+arası\s+kaç\s+km",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+kaç\s+km",
+        # Yeni patternler - süre, sürer, kaç saat, ne kadar sürer
+        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+ne\s+kadar\s+sürer",
+        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+kaç\s+saat",
+        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+ne\s+kadar\s+sürer",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+arası\s+ne\s+kadar\s+sürer",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+kaç\s+saat",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+ne\s+kadar\s+sürer",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+sürer",
+        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+arası\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
+        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
+  
+    ]
+    for pat in patterns:
+        m = re.search(pat, user_message)
+        if m:
+            return m.group(1).strip().title(), m.group(2).strip().title()
+    return None, None
+
+
+
 
 def fix_markdown_table(md_table: str) -> str:
     """
@@ -241,6 +277,26 @@ def extract_model_trim_pairs(text):
             trim = m[1].strip() if m[1] else ""
             pairs.append((model, trim))
     return pairs
+def remove_latex_and_formulas(text):
+    # LaTeX blocklarını kaldır: \[ ... \] veya $$ ... $$
+    text = re.sub(r'\\\[.*?\\\]', '', text, flags=re.DOTALL)
+    text = re.sub(r'\$\$.*?\$\$', '', text, flags=re.DOTALL)
+    # Inline LaTeX: $...$
+    text = re.sub(r'\$.*?\$', '', text)
+    # Süslü parantez ve içeriği { ... }
+    text = re.sub(r'\{.*?\}', '', text)
+    # \times, \div gibi kaçan matematiksel ifadeler
+    text = text.replace('\\times', 'x')
+    text = text.replace('\\div', '/')
+    text = text.replace('\\cdot', '*')
+    # Diğer olası kaçan karakterler (\approx, vb.)
+    text = re.sub(r'\\[a-zA-Z]+', '', text)
+    # Gereksiz çift boşlukları düzelt
+    text = re.sub(r'\s{2,}', ' ', text)
+    # Baş ve son boşluk
+    text = text.strip()
+    return text
+
 
 class ChatbotAPI:
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
@@ -1097,7 +1153,9 @@ class ChatbotAPI:
     #                 OPENAI BENZERİ CEVAP
     # --------------------------------------------------------
     def _generate_response(self, user_message, user_id, username=""):
+            # --- Mapbox ile Mesafe/Menzil fallback'lı sorgu ---
         
+
         # --- Aşağısı tamamen aynı, eski kodun devamı ---
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
@@ -1106,7 +1164,7 @@ class ChatbotAPI:
 
         lower_msg = user_message.lower()
         teknik_keywords = [
-            "teknik özellik", "teknik veriler", "teknik veri", "motor özellik", "motor donanım", "motor teknik", "teknik tablo", "teknik", "motor", "performans"
+            "teknik özellik", "teknik veriler", "teknik veri", "motor özellik", "motor donanım", "motor teknik", "teknik tablo", "teknik", "performans"
         ]
 
         if any(kw in lower_msg for kw in teknik_keywords):
@@ -1886,4 +1944,4 @@ class ChatbotAPI:
     def shutdown(self):
         self.stop_worker = True
         self.worker_thread.join(5.0)
-        self.logger.info("ChatbotAPI shutdown complete.")
+        self.logger.info("ChatbotAPI shutdown complete.") 
