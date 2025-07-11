@@ -1215,10 +1215,80 @@ class ChatbotAPI:
             if error:
                 yield error.encode("utf-8")
                 return
-            yield f"<b>{from_city} ile {to_city} arası:</b><br>Mesafe: <b>{distance_km:.1f} km</b><br>Süre: <b>{duration_min:.0f} dakika</b><br>".encode("utf-8")
-            # Harita URL
+
             map_url = google_static_map_with_route(polyline, from_city, to_city)
-            yield f'<img src="{map_url}" alt="{from_city} - {to_city} harita" style="max-width: 600px; margin: 10px 0;"><br>'.encode("utf-8")
+            msg_html = (
+                f"<b>{from_city} ile {to_city} arası:</b><br>"
+                f"Mesafe: <b>{distance_km:.1f} km</b><br>"
+                f"Süre: <b>{duration_min:.0f} dakika</b><br>"
+                f'<img src="{map_url}" alt="{from_city} - {to_city} harita" style="max-width: 600px; margin: 10px 0;"><br>'
+            )
+            # 2. GPT promptunu hazırla
+            gpt_prompt = (
+                f"Kullanıcı şu soruyu sordu: '{user_message}'.\n"
+                f"Google API'dan alınan rota bilgileri:\n"
+                f"{from_city} ile {to_city} arası mesafe: {distance_km:.1f} km, "
+                f"süre: {duration_min:.0f} dakika. "
+                f"Harita: {map_url}\n"
+                f"Lütfen bu bilgileri kullanarak Türkçe, açıklayıcı ve kullanıcıya dostça bir yanıt ver."
+            )
+
+            # 3. Asistan thread+run mantığı ile GPT'ye sor ve cevabı al
+            assistant_id = self.user_states[user_id].get("assistant_id")
+            if not assistant_id:
+                yield msg_html.encode("utf-8")
+                return
+
+            # Thread bul veya oluştur
+            threads_dict = self.user_states[user_id].get("threads", {})
+            thread_id = threads_dict.get(assistant_id)
+            if not thread_id:
+                new_thread = self.client.beta.threads.create(
+                    messages=[
+                        {"role": "user", "content": gpt_prompt}
+                    ]
+                )
+                thread_id = new_thread.id
+                threads_dict[assistant_id] = thread_id
+                self.user_states[user_id]["threads"] = threads_dict
+            else:
+                self.client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=gpt_prompt
+                )
+
+            run = self.client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=assistant_id
+            )
+            start_time = time.time()
+            timeout = 60
+            assistant_response = ""
+
+            while time.time() - start_time < timeout:
+                run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
+                if run.status == "completed":
+                    msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
+                    for msg in msg_response.data:
+                        if msg.role == "assistant":
+                            content_md = self.markdown_processor.transform_text_to_markdown(str(msg.content))
+                            assistant_response = content_md
+                            break
+                    break
+                elif run.status == "failed":
+                    assistant_response = "Yanıt oluşturulamadı."
+                    break
+                time.sleep(0.5)
+
+            # 4. Kullanıcıya hem haritalı bilgi hem GPT yanıtını tek seferde gönder
+            reply_html = (
+                msg_html +
+                "<div style='margin-top:10px;'>" +
+                (assistant_response or "Yanıt alınamadı.") +
+                "</div>"
+            )
+            yield reply_html.encode("utf-8")
             return
 
 
