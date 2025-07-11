@@ -8,7 +8,7 @@ import queue
 import threading
 import random
 import requests
-
+import urllib.parse
 from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -109,12 +109,67 @@ import math
 
 
 import secrets
+GOOGLE_API_KEY = "AIzaSyAy3vtaMa62ikEYJ0Dy9-XiSh_we3Or640"
+
+def get_google_route_info(from_city, to_city):
+    # 1. Directions API'den rota çek
+    directions_url = (
+        f"https://maps.googleapis.com/maps/api/directions/json?"
+        f"origin={urllib.parse.quote(from_city+',Türkiye')}"
+        f"&destination={urllib.parse.quote(to_city+',Türkiye')}"
+        f"&mode=driving"
+        f"&language=tr"
+        f"&region=tr"
+        f"&key={GOOGLE_API_KEY}"
+    )
+    resp = requests.get(directions_url)
+    data = resp.json()
+
+    if not data["routes"]:
+        return None, f"Rota bulunamadı: {data.get('status','?')}", None, None
+
+    route = data["routes"][0]
+    # Mesafe ve süre (ilk güzergah)
+    distance_m = route["legs"][0]["distance"]["value"]
+    duration_s = route["legs"][0]["duration"]["value"]
+    polyline = route["overview_polyline"]["points"]
+    return distance_m / 1000, duration_s / 60, polyline, None  # km, dakika, polyline, error yok
 
 MESAFE_PATTERNS = [
     r"(.*?)\s*(?:ile|–|ve|,| - )\s*(.*?)\s*(?:arası|arasında)?\s*(kaç km|mesafe|kaç saat|sürer|menzil)",
     r"(.*?)\s*dan\s*(.*?)\s*kaç km",
     r"(.+?)\s*kaç km"
 ]
+
+def google_static_map_with_route(polyline, from_city, to_city):
+    # İki şehir için marker ve rota çizimi
+    base = "https://maps.googleapis.com/maps/api/staticmap?"
+    params = {
+        "size": "600x300",
+        "maptype": "roadmap",
+        "markers": [
+            f"color:green|label:A|{from_city},Türkiye",
+            f"color:red|label:B|{to_city},Türkiye",
+        ],
+        "path": f"color:0x0000ff|weight:5|enc:{polyline}",
+        "key": GOOGLE_API_KEY
+    }
+
+    # markers paramı birden çok ise stringle birleştir
+    url = (base +
+        "size={size}&maptype={maptype}&markers={m1}&markers={m2}&path={path}&key={key}".format(
+            size=params["size"],
+            maptype=params["maptype"],
+            m1=urllib.parse.quote(params["markers"][0]),
+            m2=urllib.parse.quote(params["markers"][1]),
+            path=urllib.parse.quote(params["path"]),
+            key=params["key"]
+        )
+    )
+    return url
+
+
+
 
 def parse_route_question(user_message):
     user_message = user_message.lower()
@@ -1154,7 +1209,18 @@ class ChatbotAPI:
     # --------------------------------------------------------
     def _generate_response(self, user_message, user_id, username=""):
             # --- Mapbox ile Mesafe/Menzil fallback'lı sorgu ---
-        
+        from_city, to_city = parse_route_question(user_message)
+        if from_city and to_city:
+            distance_km, duration_min, polyline, error = get_google_route_info(from_city, to_city)
+            if error:
+                yield error.encode("utf-8")
+                return
+            yield f"<b>{from_city} ile {to_city} arası:</b><br>Mesafe: <b>{distance_km:.1f} km</b><br>Süre: <b>{duration_min:.0f} dakika</b><br>".encode("utf-8")
+            # Harita URL
+            map_url = google_static_map_with_route(polyline, from_city, to_city)
+            yield f'<img src="{map_url}" alt="{from_city} - {to_city} harita" style="max-width: 600px; margin: 10px 0;"><br>'.encode("utf-8")
+            return
+
 
         # --- Aşağısı tamamen aynı, eski kodun devamı ---
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
