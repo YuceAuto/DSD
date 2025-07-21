@@ -1207,46 +1207,18 @@ class ChatbotAPI:
     # --------------------------------------------------------
     #                 OPENAI BENZERİ CEVAP
     # --------------------------------------------------------
-    def _generate_response(self, user_message, user_id, username=""):
-            # --- Mapbox ile Mesafe/Menzil fallback'lı sorgu ---
-        from_city, to_city = parse_route_question(user_message)
-        if from_city and to_city:
-            distance_km, duration_min, polyline, error = get_google_route_info(from_city, to_city)
-            if error:
-                yield error.encode("utf-8")
-                return
-
-            map_url = google_static_map_with_route(polyline, from_city, to_city)
-            msg_html = (
-                f"<b>{from_city} ile {to_city} arası:</b><br>"
-                f"Mesafe: <b>{distance_km:.1f} km</b><br>"
-                f"Süre: <b>{duration_min:.0f} dakika</b><br>"
-                f'<img src="{map_url}" alt="{from_city} - {to_city} harita" style="max-width: 600px; margin: 10px 0;"><br>'
-            )
-            # 2. GPT promptunu hazırla
-            gpt_prompt = (
-                f"Kullanıcı şu soruyu sordu: '{user_message}'.\n"
-                f"Google API'dan alınan rota bilgileri:\n"
-                f"{from_city} ile {to_city} arası mesafe: {distance_km:.1f} km, "
-                f"süre: {duration_min:.0f} dakika. "
-                f"Harita: {map_url}\n"
-                f"Lütfen bu bilgileri kullanarak Türkçe, açıklayıcı ve kullanıcıya dostça bir yanıt ver."
-            )
-
-            # 3. Asistan thread+run mantığı ile GPT'ye sor ve cevabı al
-            assistant_id = self.user_states[user_id].get("assistant_id")
+    def _get_gpt_answer_for_route(self, from_city, to_city, user_message, user_id):
+        """Aynı rota sorusunu GPT'ye tekrar sorup daha genel açıklama/gpt yanıtı döner.
+        """
+        try:
+            assistant_id = self.user_states[user_id].get("assistant_id", None)
             if not assistant_id:
-                yield msg_html.encode("utf-8")
-                return
-
-            # Thread bul veya oluştur
+                return None
             threads_dict = self.user_states[user_id].get("threads", {})
             thread_id = threads_dict.get(assistant_id)
             if not thread_id:
                 new_thread = self.client.beta.threads.create(
-                    messages=[
-                        {"role": "user", "content": gpt_prompt}
-                    ]
+                    messages=[{"role": "user", "content": user_message}]
                 )
                 thread_id = new_thread.id
                 threads_dict[assistant_id] = thread_id
@@ -1255,7 +1227,7 @@ class ChatbotAPI:
                 self.client.beta.threads.messages.create(
                     thread_id=thread_id,
                     role="user",
-                    content=gpt_prompt
+                    content=user_message
                 )
 
             run = self.client.beta.threads.runs.create(
@@ -1264,34 +1236,85 @@ class ChatbotAPI:
             )
             start_time = time.time()
             timeout = 60
-            assistant_response = ""
-
             while time.time() - start_time < timeout:
                 run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
                 if run.status == "completed":
                     msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
                     for msg in msg_response.data:
                         if msg.role == "assistant":
-                            content_md = self.markdown_processor.transform_text_to_markdown(str(msg.content))
-                            assistant_response = content_md
-                            break
+                            content = str(msg.content)
+                            content_md = self.markdown_processor.transform_text_to_markdown(content)
+                            if '|' in content_md and '\n' in content_md:
+                                content_md = fix_markdown_table(content_md)
+                            return content_md
                     break
                 elif run.status == "failed":
-                    assistant_response = "Yanıt oluşturulamadı."
-                    break
+                    return "GPT yanıtı alınamadı."
                 time.sleep(0.5)
+            return "GPT yanıtı zaman aşımına uğradı."
+        except Exception as e:
+            return f"GPT yanıtı alınamadı: {str(e)}"
 
-            # 4. Kullanıcıya hem haritalı bilgi hem GPT yanıtını tek seferde gönder
-            reply_html = (
-                msg_html +
-                "<div style='margin-top:10px;'>" +
-                (assistant_response or "Yanıt alınamadı.") +
-                "</div>"
+    def _get_route_data(self, from_city: str, to_city: str) -> dict:
+        distance_km, duration_min, polyline, error = get_google_route_info(from_city, to_city)
+        return {
+            "from": from_city, "to": to_city,
+            "distance_km": distance_km, "duration_min": duration_min,
+            "polyline": polyline, "error": error
+        }
+
+    def _yield_route_map(self, rd: dict):
+        map_url = google_static_map_with_route(rd["polyline"],
+                                           rd["from"], rd["to"])
+        html = (
+            '<div style="text-align:center;margin-bottom:12px;">'
+            f'  <img src="{map_url}" alt="{rd["from"]} ‑ {rd["to"]} rota" '
+            '       style="max-width:600px;width:100%;height:auto;display:block;">'
+            '</div>'
+        )
+        yield html.encode("utf-8")
+    def _route_prompt(self, rd: dict) -> str:
+            """GPT’ye verilecek özet bilgi + talimat."""
+            return (
+                f"Kullanıcı {rd['from']} ile {rd['to']} kara yolu mesafesini sordu.\n"
+                f"- Mesafe: {rd['distance_km']:.1f} km\n"
+                f"- Süre: {rd['duration_min']:.0f} dakika\n\n"
+                "Bu veriyi samimi, akıcı ve tek paragrafta özetle; "
+                "istersen kısaca yol tavsiyesi ekle."
             )
-            yield reply_html.encode("utf-8")
+    def _get_gpt_route_brief(self, rd):
+        prompt = (
+            f"{rd['from']} ile {rd['to']} arasındaki kara yolu mesafesi "
+            f"{rd['distance_km']:.1f} km, ortalama sürüş süresi "
+            f"{rd['duration_min']:.0f} dakikadır. "
+            f"Kullanıcıya samimi bir dille tek/paragraf hâlinde özetle."
+        )
+        rsp = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return rsp.choices[0].message.content.strip()
+
+    ##############################################################################
+# ChatbotAPI._generate_response
+##############################################################################
+    def _generate_response(self, user_message: str, user_id: str, username: str = ""):
+        from_city, to_city = parse_route_question(user_message)
+        if from_city and to_city:
+            rd = self._get_route_data(from_city, to_city)
+            if rd["error"]:
+                yield rd["error"].encode("utf-8");  return
+
+            # — AŞAMA 1 : yalnızca harita —
+            yield from self._yield_route_map(rd)
+
+            # Front‑end iki cevabı ayırmak isterse yorum satırı/ayraç:
+            yield b"<!-- SPLIT -->"
+
+            # — AŞAMA 2 : GPT’den özet —
+            brief_txt = self._get_gpt_route_brief(rd)
+            yield brief_txt.encode("utf-8")
             return
-
-
         # --- Aşağısı tamamen aynı, eski kodun devamı ---
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
