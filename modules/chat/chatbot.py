@@ -109,6 +109,11 @@ import math
 
 
 import secrets
+ASSISTANT_NAMES = {
+    "fabia", "scala", "kamiq", "karoq", "kodiaq",
+    "octavia", "superb", "elroq", "enyaq"
+}
+
 GOOGLE_API_KEY = "AIzaSyAy3vtaMa62ikEYJ0Dy9-XiSh_we3Or640"
 
 def get_google_route_info(from_city, to_city):
@@ -172,31 +177,53 @@ def google_static_map_with_route(polyline, from_city, to_city):
 
 
 def parse_route_question(user_message):
-    user_message = user_message.lower()
-    user_message = user_message.lower()
+    """
+    Rota sorularında <şehir1>, <şehir2> ikilisini döndürür.
+    • Mesajın değişmeyen kopyası üzerinde çalışır.
+    • Eğer ilk kelime bir asistan adı ise o kelimeyi geçer.
+    • Eşleşme sonrasında hâlâ asistan adı yakalanmışsa sonuç geçersiz sayılır.
+    Dönen değer: (from_city, to_city)  — hiç eşleşme yoksa (None, None)
+    """
+    if not user_message:
+        return None, None
+
+    # 0) Küçük harfe çevir, baş‑son boşlukları temizle
+    msg = user_message.lower().strip()
+
+    # 1) İlk kelime asistan adı mı?  → Sil ve devam et
+    words = msg.split()
+    if words and words[0] in ASSISTANT_NAMES:
+        msg = " ".join(words[1:]).lstrip()
+
+    # 2) Rota kalıpları (mevcut listenizden kopyalandı)
     patterns = [
         r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+kaç\s+km",
         r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+kaç\s+km",
         r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+arası\s+kaç\s+km",
         r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+kaç\s+km",
-        # Yeni patternler - süre, sürer, kaç saat, ne kadar sürer
+        # Süre / saat varyantları
         r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+ne\s+kadar\s+sürer",
         r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+kaç\s+saat",
-        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+ne\s+kadar\s+sürer",
-        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+arası\s+ne\s+kadar\s+sürer",
-        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+kaç\s+saat",
         r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+ne\s+kadar\s+sürer",
-        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+sürer",
-        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+arası\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
-        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+arası\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
-        r"([a-zçğıöşü\s]+?)\s+ile\s+([a-zçğıöşü\s]+?)\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
-        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+(kaç\s+km|mesafe|kaç\s+saat|ne\s+kadar\s+sürer|sürer|süre|menzil)",
-  
+        r"([a-zçğıöşü\s]+?)\s+([a-zçğıöşü\s]+?)\s+kaç\s+saat",
     ]
+
+    # 3) Desenleri sırayla dene
     for pat in patterns:
-        m = re.search(pat, user_message)
-        if m:
-            return m.group(1).strip().title(), m.group(2).strip().title()
+        m = re.search(pat, msg)
+        if not m:
+            continue
+
+        city1 = m.group(1).strip().title()
+        city2 = m.group(2).strip().title()
+
+        # 3a) Yakalanan kelimeler hâlâ asistan adıysa bu eşleşmeyi geç
+        if city1.lower() in ASSISTANT_NAMES or city2.lower() in ASSISTANT_NAMES:
+            continue
+
+        return city1, city2  # Geçerli sonuç
+
+    # Hiçbir desen tutmadı
     return None, None
 
 
