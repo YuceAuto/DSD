@@ -1282,19 +1282,72 @@ class ChatbotAPI:
                 "Bu veriyi samimi, akıcı ve tek paragrafta özetle; "
                 "istersen kısaca yol tavsiyesi ekle."
             )
-    def _get_gpt_route_brief(self, rd):
+    def _get_gpt_route_brief(self, rd: dict, user_id: str) -> str:
+        assistant_id = self.user_states[user_id].get("assistant_id")
+        if not assistant_id:
+            assistant_id = self._pick_least_busy_assistant()
+            self.user_states[user_id]["assistant_id"] = assistant_id
+
         prompt = (
+            "'from' hiçbir zaman mevcut asistan adı olmasın örneğin: Fabia, scala, kamiq, karoq, kodiaq, octavia, superb, elroq, enyaq." 
             f"{rd['from']} ile {rd['to']} arasındaki kara yolu mesafesi "
             f"{rd['distance_km']:.1f} km, ortalama sürüş süresi "
             f"{rd['duration_min']:.0f} dakikadır. "
-            f"Kullanıcıya samimi bir dille tek/paragraf hâlinde özetle."
+            "Kullanıcıya bunu samimi ve tek paragraf hâlinde özetle. Mevcut asistan adını konum olarak asla alma."
         )
-        rsp = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return rsp.choices[0].message.content.strip()
+        return self._ask_assistant(user_id, assistant_id, prompt)
+        
+    def _ensure_thread(self, user_id: str, assistant_id: str) -> str:
+        """Kullanıcının bu asistana ait thread’ini oluşturur veya döndürür."""
+        threads = self.user_states[user_id].setdefault("threads", {})
+        thread_id = threads.get(assistant_id)
 
+        if not thread_id:
+            t = self.client.beta.threads.create()      # boş thread
+            thread_id = t.id
+            threads[assistant_id] = thread_id
+        return thread_id    
+    def _ask_assistant(self,
+                   user_id: str,
+                   assistant_id: str,
+                   content: str,
+                   timeout: float = 60.0) -> str:
+        """Verilen içeriği thread’e yazar, run’ı başlatır, cevabı döner."""
+        thread_id = self._ensure_thread(user_id, assistant_id)
+
+        # 1) Kullanıcı mesajını ekle
+        self.client.beta.threads.messages.create(
+            thread_id=thread_id,
+            role="user",
+            content=content
+        )
+
+        # 2) Run başlat
+        run = self.client.beta.threads.runs.create(
+            thread_id=thread_id,
+            assistant_id=assistant_id
+        )
+
+        # 3) Tamamlanana kadar bekle
+        start = time.time()
+        while time.time() - start < timeout:
+            run = self.client.beta.threads.runs.retrieve(
+                thread_id=thread_id, run_id=run.id
+            )
+            if run.status == "completed":
+                break
+            if run.status == "failed":
+                raise RuntimeError(run.last_error["message"])
+            time.sleep(0.5)
+
+        # 4) Son asistan mesajını al
+        msgs = self.client.beta.threads.messages.list(
+            thread_id=thread_id, order="desc", limit=5
+        )
+        for m in msgs.data:
+            if m.role == "assistant":
+                return m.content[0].text.value
+        return "Yanıt bulunamadı."
     ##############################################################################
 # ChatbotAPI._generate_response
 ##############################################################################
@@ -1312,7 +1365,7 @@ class ChatbotAPI:
             yield b"<!-- SPLIT -->"
 
             # — AŞAMA 2 : GPT’den özet —
-            brief_txt = self._get_gpt_route_brief(rd)
+            brief_txt = self._get_gpt_route_brief(rd, user_id)
             yield brief_txt.encode("utf-8")
             return
         # --- Aşağısı tamamen aynı, eski kodun devamı ---
@@ -2103,4 +2156,4 @@ class ChatbotAPI:
     def shutdown(self):
         self.stop_worker = True
         self.worker_thread.join(5.0)
-        self.logger.info("ChatbotAPI shutdown complete.") 
+        self.logger.info("ChatbotAPI shutdown complete.")
