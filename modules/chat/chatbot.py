@@ -381,6 +381,32 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+    def _get_gpt_journey_with_model(self, rd: dict, user_id: str) -> str:
+        """
+        rd        : _get_route_data() çıktısı
+        user_id   : aktif kullanıcı
+        DÖNÜŞ     : 3‑4 cümlelik dilimizde (MD) paragraf
+        """
+        assistant_id = self.user_states[user_id].get("assistant_id")
+        if not assistant_id:
+            return ""
+
+        model_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "").title()
+        trim_name  = self.user_states[user_id].get("current_trim", "").title()
+
+        if not model_name:
+            return ""
+
+        car_label = f"{model_name} {trim_name}".strip()
+
+        prompt = (
+            f"Kullanıcı {rd['from']}‑{rd['to']} yolculuğunu **{car_label}** ile yapacak. "
+            f"Mesafe {rd['distance_km']:.1f} km, ortalama süre {rd['duration_min']:.0f} dakika.\n\n"
+            "• Bu aracın sürüş konforu, yakıt/enerji verimliliği, güvenlik ve sürücü destek sistemlerinden "
+            "bahsederek yolculuğun nasıl geçeceğini 3‑4 cümlelik samimi, akıcı bir paragrafta anlat. "
+            "Teknik terimleri basitleştir, satış dili yerine dostça bir ton kullan."
+        )
+        return self._ask_assistant(user_id, assistant_id, prompt)
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
         self.app = Flask(
             __name__,
@@ -1379,23 +1405,30 @@ class ChatbotAPI:
 # ChatbotAPI._generate_response
 ##############################################################################
     def _generate_response(self, user_message: str, user_id: str, username: str = ""):
+    # ------------------------------------------------------------------
+    #  ROTA / MESAFE SORGUSU
+    # ------------------------------------------------------------------
         from_city, to_city = parse_route_question(user_message)
         if from_city and to_city:
             rd = self._get_route_data(from_city, to_city)
             if rd["error"]:
-                yield rd["error"].encode("utf-8");  return
+                yield rd["error"].encode("utf-8")
+                return
 
-            # — AŞAMA 1 : yalnızca harita —
+            # AŞAMA 1 – Statik harita resmi
             yield from self._yield_route_map(rd)
+            yield b"<!-- SPLIT -->"                 # front‑end ayraç
 
-            # Front‑end iki cevabı ayırmak isterse yorum satırı/ayraç:
-            yield b"<!-- SPLIT -->"
-
-            # — AŞAMA 2 : GPT’den özet —
+            # AŞAMA 2 – Mesafe & süre özeti
             brief_txt = self._get_gpt_route_brief(rd, user_id)
             yield brief_txt.encode("utf-8")
-            return
-        # --- Aşağısı tamamen aynı, eski kodun devamı ---
+
+            # AŞAMA 3 – Mevcut modelle yolculuk hissi
+            journey_txt = self._get_gpt_journey_with_model(rd, user_id)
+            if journey_txt:
+                yield b"\n\n"
+                yield journey_txt.encode("utf-8")
+            return                     # rota sorusu tamamlandı
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         if "current_trim" not in self.user_states[user_id]:
