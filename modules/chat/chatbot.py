@@ -106,13 +106,52 @@ from modules.data.elroq_teknik import(
     ELROQ_TEKNIK_MD
 )
 import math
-
+from modules.data.ev_specs import EV_RANGE_KM   # 1. adımda oluşturduk
+import math
 
 import secrets
 ASSISTANT_NAMES = {
     "fabia", "scala", "kamiq", "karoq", "kodiaq",
     "octavia", "superb", "elroq", "enyaq"
 }
+
+# Yeni: Kaç şarj sorularını ayrıştır
+def parse_charging_question(user_message):
+    """
+    İstanbul’dan Hakkari’ye Elroq’la kaç şarjla giderim?  ➜
+    ('İstanbul', 'Hakkari', 'elroq', '')
+    """
+    if not user_message:
+        return (None, None, None, None)
+
+    msg = user_message.lower()
+
+    pat = (
+        r"([a-zçğıöşü\s]+?)['’]d[ae]n\s+"          # çıkış şehri  ('dan'/'den')
+        r"([a-zçğıöşü\s]+?)['’]y?[ae]\s+"          # varış şehri  ('ya'/'ye')
+        r"([a-zçğıöşü]+)"                          # model adı
+        r"(?:['’]?(?:la|le|yla|yle))?\s*"          #  ← yeni: 'la / 'le ekleri
+        r"([a-z0-9çğıöşü\s]*)?\s*"                # opsiyonel trim
+        r".*?kaç\s+şarj"                           # soru kısmı
+    )
+    m = re.search(pat, msg, re.DOTALL)
+    if not m:
+        return (None, None, None, None)
+
+    from_city = m.group(1).strip().title()
+    to_city   = m.group(2).strip().title()
+    model     = m.group(3).strip()
+    trim      = (m.group(4) or "").strip()
+
+    # Trim normalizasyonu (varsa)
+    if trim:
+        trim = VARIANT_TO_TRIM.get(trim.lower(), trim).lower()
+
+    return (from_city, to_city, model, trim)
+
+
+
+
 
 GOOGLE_API_KEY = "AIzaSyAy3vtaMa62ikEYJ0Dy9-XiSh_we3Or640"
 
@@ -381,6 +420,34 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+
+    def _get_ev_range_km(self, model: str, trim: str) -> float | None:
+        """
+        Eldeki model‑trim ikilisi için menzil döndürür (km).
+        Trim gelmemişse yalnızca modele bakar.
+        """
+        key_exact = (model.lower(), trim.lower())
+        key_model_only = (model.lower(), "")
+        return (
+            EV_RANGE_KM.get(key_exact) or
+            EV_RANGE_KM.get(key_model_only) or
+            None
+        )
+
+    def _charges_needed(self, distance_km: float, range_km: float) -> int:
+        """
+        Kaç defa şarj etmem gerektiğini kaba olarak hesaplar.
+        Varsayım: %100 dolu batarya ile başlanıyor.
+        Tam sayıya yuvarlanırken route riskini azaltmak için daima yukarı yuvarlarız.
+        """
+        if range_km <= 0:
+            return -1
+        # İlk batarya ile katedilen mesafe ➜ (distance / range) - 1
+        required_full_cycles = distance_km / range_km
+        # Başlangıç şarjı zaten dolu; geriye gereken ekstra şarj sayısı:
+        extra_charges = math.ceil(required_full_cycles) - 1
+        return max(extra_charges, 0)
+
     def _get_gpt_journey_with_model(self, rd: dict, user_id: str) -> str:
         """
         rd        : _get_route_data() çıktısı
@@ -820,7 +887,7 @@ class ChatbotAPI:
         user_message = data.get("question", "")
         user_id = data.get("user_id", username)
         name_surname = data.get("nam_surnam", username)
-
+        
         if not user_message:
             return jsonify({"response": "Please enter a question."})
 
@@ -1408,6 +1475,45 @@ class ChatbotAPI:
     # ------------------------------------------------------------------
     #  ROTA / MESAFE SORGUSU
     # ------------------------------------------------------------------
+        c1, c2, ev_model, ev_trim = parse_charging_question(user_message)
+        if c1 and c2 and ev_model:
+            rd = self._get_route_data(c1, c2)
+            if rd["error"]:
+                yield rd["error"].encode("utf-8")
+                return
+
+            range_km = self._get_ev_range_km(ev_model, ev_trim or "")
+            if not range_km:
+                msg = (f"{ev_model.title()} {ev_trim.title() if ev_trim else ''} için "
+                    "tanımlı bir menzil bilgisi bulamadım.")
+                yield msg.encode("utf-8")
+                return
+
+            charges = self._charges_needed(rd["distance_km"], range_km)
+
+            # Harita
+            yield from self._yield_route_map(rd)
+            yield b"<!-- SPLIT -->"
+
+            # Sonuç paragrafı
+            summary = (
+                f"**{c1} – {c2}** güzergâhı yaklaşık **{rd['distance_km']:.0f} km**. "
+                f"{ev_model.title()} {ev_trim.title() if ev_trim else ''} modelinin "
+                f"tek şarj menzili kabaca **{range_km} km** kabul edildiğinde, "
+                f"yola tam şarjla çıktığınızda **{charges} kez** hızlı/AC şarj molası "
+                f"vermeniz gerekir.\n\n"
+                "_Gerçek ihtiyaç; sürüş stili, hava şartı, yük ve hızınıza göre değişebilir._"
+            )
+            yield summary.encode("utf-8")
+
+            # İsterseniz yolculuk deneyimi / GPT yorumu ekleyin:
+            journey_txt = self._get_gpt_journey_with_model(rd, user_id)
+            if journey_txt:
+                yield b"\n\n"
+                yield journey_txt.encode("utf-8")
+            return
+
+
         from_city, to_city = parse_route_question(user_message)
         if from_city and to_city:
             rd = self._get_route_data(from_city, to_city)
