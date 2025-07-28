@@ -114,41 +114,65 @@ ASSISTANT_NAMES = {
     "fabia", "scala", "kamiq", "karoq", "kodiaq",
     "octavia", "superb", "elroq", "enyaq"
 }
+import re
+TWO_LOC_PAT = (
+    r"([a-zçğıöşü\s]+?)\s*"                       # konum‑1
+    r"(?:ile|ve|,|-|dan|den)?\s+"                 # bağlaçlar
+    r"([a-zçğıöşü\s]+?)\s+"                       # konum‑2
+    r"(?:arası|arasında)?\s*"                     # opsiyonel "arası"
+    r"(?:kaç\s+km|kaç\s+saat|ne\s+kadar\s+sürer|mesafe|sürer)"
+)
+
+def parse_distance_question(msg: str):
+    """
+    “Çankaya ile Buca arası kaç km?” ➞ ('Çankaya', 'Buca')
+    """
+    msg = msg.lower()
+    m = re.search(TWO_LOC_PAT, msg)
+    if not m:
+        return (None, None)
+    return (m.group(1).strip().title(), m.group(2).strip().title())
 
 # Yeni: Kaç şarj sorularını ayrıştır
-def parse_charging_question(user_message):
-    """
-    İstanbul’dan Hakkari’ye Elroq’la kaç şarjla giderim?  ➜
-    ('İstanbul', 'Hakkari', 'elroq', '')
-    """
-    if not user_message:
+# utils/parsers.py  (veya mevcut dosyanız neredeyse)
+import re
+
+MODELS = r"(fabia|scala|kamiq|karoq|kodiaq|octavia|superb|enyaq|elroq)"
+
+def parse_charging_question(msg: str):
+    """'Elroq ile kaç şarjla Manisa’dan Iğdır’a giderim?' → 
+       ('Manisa', 'Iğdır', 'elroq', None)"""
+    if not msg:
         return (None, None, None, None)
 
-    msg = user_message.lower()
+    msg = msg.lower()
 
-    pat = (
-        r"([a-zçğıöşü\s]+?)['’]d[ae]n\s+"          # çıkış şehri  ('dan'/'den')
-        r"([a-zçğıöşü\s]+?)['’]y?[ae]\s+"          # varış şehri  ('ya'/'ye')
-        r"([a-zçğıöşü]+)"                          # model adı
-        r"(?:['’]?(?:la|le|yla|yle))?\s*"          #  ← yeni: 'la / 'le ekleri
-        r"([a-z0-9çğıöşü\s]*)?\s*"                # opsiyonel trim
-        r".*?kaç\s+şarj"                           # soru kısmı
+    # 1) Orijinal (şehir‑>şehir … kaç şarj) kalıbınız aynen kalabilir
+    pat1 = (
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)\s+"
+        r"(?:(" + MODELS + r")\s*(?:['’]?l[ae])?\s*)?"
+        r".*?kaç\s+şarj\w*"
     )
-    m = re.search(pat, msg, re.DOTALL)
-    if not m:
-        return (None, None, None, None)
+    m = re.search(pat1, msg, re.DOTALL)
+    if m:
+        return (m.group(1).title(), m.group(2).title(), m.group(3), None)
 
-    from_city = m.group(1).strip().title()
-    to_city   = m.group(2).strip().title()
-    model     = m.group(3).strip()
-    trim      = (m.group(4) or "").strip()
+    # 2) ***Model‑ilk*** varyant
+    pat2 = (
+        r"(" + MODELS + r")\s*(?:ile|la|le)?\s*.*?"
+        r"kaç\s+şarj\w*\s*"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)"
+    )
+    m2 = re.search(pat2, msg, re.DOTALL)
+    if m2:
+        model   = m2.group(1)
+        frm     = m2.group(2)
+        dest    = m2.group(3)
+        return (frm.title(), dest.title(), model, None)
 
-    # Trim normalizasyonu (varsa)
-    if trim:
-        trim = VARIANT_TO_TRIM.get(trim.lower(), trim).lower()
-
-    return (from_city, to_city, model, trim)
-
+    return (None, None, None, None)
 
 
 
@@ -1476,6 +1500,20 @@ class ChatbotAPI:
     #  ROTA / MESAFE SORGUSU
     # ------------------------------------------------------------------
         c1, c2, ev_model, ev_trim = parse_charging_question(user_message)
+        if c1 and c2:                    # eşleşme varsa model olmayabilir
+    # ▸ model yoksa oturumdan/fallback
+            if not ev_model:
+                asst_id  = self.user_states[user_id].get("assistant_id")
+                ev_model = (
+                    self.ASSISTANT_NAME_MAP.get(asst_id, "").lower() 
+                    if asst_id else None
+                ) or next(iter(self.user_states[user_id].get("last_models", [])), None)
+
+            if not ev_model:
+                yield ("Hangi modeli kullandığınızı da belirtir misiniz? "
+                    "(örn. *enyaq*, *kodiaq* …)").encode("utf-8")
+                return
+
         if c1 and c2 and ev_model:
             rd = self._get_route_data(c1, c2)
             if rd["error"]:
