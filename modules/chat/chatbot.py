@@ -140,74 +140,145 @@ import re
 MODELS = r"(fabia|scala|kamiq|karoq|kodiaq|octavia|superb|enyaq|elroq)"
 
 def parse_charging_question(msg: str):
-    """'Elroq ile kaç şarjla Manisa’dan Iğdır’a giderim?' → 
-       ('Manisa', 'Iğdır', 'elroq', None)"""
+    """
+    Örnek: “milas bodrum arasında elroq ile kaç şarj” → ('Milas', 'Bodrum', 'elroq', None)
+    """
     if not msg:
         return (None, None, None, None)
 
     msg = msg.lower()
 
-    # 1) Orijinal (şehir‑>şehir … kaç şarj) kalıbınız aynen kalabilir
+    # 1) <şehir‑1> … <şehir‑2> … kaç şarj
     pat1 = (
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)\s+"
-        r"(?:(" + MODELS + r")\s*(?:['’]?l[ae])?\s*)?"
+        rf"(?:({MODELS})\s*(?:['’]?l[ae])?\s*)?"
         r".*?kaç\s+şarj\w*"
     )
-    m = re.search(pat1, msg, re.DOTALL)
-    if m:
-        return (m.group(1).title(), m.group(2).title(), m.group(3), None)
+    m1 = re.search(pat1, msg, re.DOTALL)
+    if m1:
+        return (m1.group(1).title(), m1.group(2).title(), m1.group(3), None)
 
-    # 2) ***Model‑ilk*** varyant
+    # 2) model … kaç şarj … <şehir‑1> … <şehir‑2>
     pat2 = (
-        r"(" + MODELS + r")\s*(?:ile|la|le)?\s*.*?"
+        rf"({MODELS})\s*(?:ile|la|le)?\s*.*?"
         r"kaç\s+şarj\w*\s*"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)"
     )
     m2 = re.search(pat2, msg, re.DOTALL)
     if m2:
-        model   = m2.group(1)
-        frm     = m2.group(2)
-        dest    = m2.group(3)
-        return (frm.title(), dest.title(), model, None)
+        return (m2.group(2).title(), m2.group(3).title(), m2.group(1), None)
+
+    # 3) model … <şehir‑1> … <şehir‑2> … kaç şarj
+    pat3 = (
+        rf"({MODELS})\s*(?:ile|la|le)?\s*"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)\s+"
+        r".*?kaç\s+şarj\w*"
+    )
+    m3 = re.search(pat3, msg, re.DOTALL)
+    if m3:
+        return (m3.group(2).title(), m3.group(3).title(), m3.group(1), None)
+
+    # 4) “<şehir‑1> <şehir‑2> arası … kaç şarj”
+    pat4 = (
+        r"([a-zçğıöşü\s]+?)\s+"          # şehir‑1
+        r"([a-zçğıöşü\s]+?)\s+"          # şehir‑2
+        r"(?:arası|arasında)\s*"
+        rf"(?:({MODELS})\s*(?:ile|la|le)?\s*)?"
+        r".*?kaç\s+şarj\w*"
+    )
+    m4 = re.search(pat4, msg, re.DOTALL)
+    if m4:
+        return (m4.group(1).title(), m4.group(2).title(), m4.group(3), None)
 
     return (None, None, None, None)
 
 
 
-
 GOOGLE_API_KEY = "AIzaSyAy3vtaMa62ikEYJ0Dy9-XiSh_we3Or640"
 
-def get_google_route_info(from_city, to_city):
-    # 1. Directions API'den rota çek
-    directions_url = (
-        f"https://maps.googleapis.com/maps/api/directions/json?"
-        f"origin={urllib.parse.quote(from_city+',Türkiye')}"
-        f"&destination={urllib.parse.quote(to_city+',Türkiye')}"
-        f"&mode=driving"
-        f"&language=tr"
-        f"&region=tr"
-        f"&key={GOOGLE_API_KEY}"
+_PLACE_ID_CACHE: dict[str, str] = {}
+
+def _resolve_place_id(city: str) -> str | None:
+    """‘İstanbul’ vb. şehir adını Google‑place_id’ye çevirir (Türkiye ile sınırlı)."""
+    if city in _PLACE_ID_CACHE:
+        return _PLACE_ID_CACHE[city]
+
+    geo_url = "https://maps.googleapis.com/maps/api/geocode/json"
+    params = {
+        "address":  f"{city}, Türkiye",
+        "language": "tr",
+        "region":   "tr",
+        "key":      GOOGLE_API_KEY,
+    }
+    try:
+        rsp = requests.get(geo_url, params=params, timeout=8)
+        rsp.raise_for_status()
+        js = rsp.json()
+    except requests.RequestException:
+        return None
+
+    best: str | None = None
+    for res in js.get("results", []):
+        kinds = set(res.get("types", []))
+        if "locality" in kinds or "administrative_area_level_1" in kinds:
+            best = res["place_id"]; break
+        if best is None and "place_id" in res:
+            best = res["place_id"]
+
+    if best:
+        _PLACE_ID_CACHE[city] = best
+    return best
+
+def get_google_route_info(from_city: str, to_city: str):
+    """
+    Google Directions API’den (sürüş) mesafe, süre ve polyline döner.
+    Hata durumunda distance_km ve duration_min None olur, error alanı açıklama içerir.
+    """
+    # Şehir isimlerini kesinleştirmek için Google Place ID kullan
+    from_id = _resolve_place_id(from_city)
+    to_id   = _resolve_place_id(to_city)
+    if from_id and to_id:
+        from_city = f"place_id:{from_id}"
+        to_city   = f"place_id:{to_id}"
+
+    def _fmt(loc: str) -> str:
+        # place_id ile başlıyorsa “,Türkiye” ekleme
+        return loc if loc.startswith("place_id:") else f"{loc},Türkiye"
+
+    base_url = "https://maps.googleapis.com/maps/api/directions/json"
+    params = {
+        "origin":      _fmt(from_city),
+        "destination": _fmt(to_city),
+        "mode":        "driving",
+        "language":    "tr",
+        "region":      "tr",
+        "key":         GOOGLE_API_KEY,
+    }
+
+    try:
+        resp = requests.get(base_url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as exc:
+        return None, f"HTTP bağlantı hatası: {exc}", None, None
+
+    logging.warning(
+        "Google Directions → status=%s | %s ➜ %s | err=%s",
+        data.get("status"), from_city, to_city, data.get("error_message"),
     )
-    resp = requests.get(directions_url)
-    data = resp.json()
 
-    if not data["routes"]:
-        return None, f"Rota bulunamadı: {data.get('status','?')}", None, None
+    if data.get("status") != "OK":
+        return None, f"Google Directions hata: {data.get('status')} – {data.get('error_message','')}", None, None
 
-    route = data["routes"][0]
-    # Mesafe ve süre (ilk güzergah)
-    distance_m = route["legs"][0]["distance"]["value"]
-    duration_s = route["legs"][0]["duration"]["value"]
-    polyline = route["overview_polyline"]["points"]
-    return distance_m / 1000, duration_s / 60, polyline, None  # km, dakika, polyline, error yok
+    leg = data["routes"][0]["legs"][0]
+    distance_km = leg["distance"]["value"] / 1000        # metre → km
+    duration_min = leg["duration"]["value"] / 60         # saniye → dakika
+    polyline = data["routes"][0]["overview_polyline"]["points"]
 
-MESAFE_PATTERNS = [
-    r"(.*?)\s*(?:ile|–|ve|,| - )\s*(.*?)\s*(?:arası|arasında)?\s*(kaç km|mesafe|kaç saat|sürer|menzil)",
-    r"(.*?)\s*dan\s*(.*?)\s*kaç km",
-    r"(.+?)\s*kaç km"
-]
+    return distance_km, duration_min, polyline, None
 
 def google_static_map_with_route(polyline, from_city, to_city):
     # İki şehir için marker ve rota çizimi
