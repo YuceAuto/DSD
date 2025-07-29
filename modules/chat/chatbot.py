@@ -106,7 +106,7 @@ from modules.data.elroq_teknik import(
     ELROQ_TEKNIK_MD
 )
 import math
-from modules.data.ev_specs import EV_RANGE_KM   # 1. adımda oluşturduk
+from modules.data.ev_specs import EV_RANGE_KM, FUEL_SPECS   # 1. adımda oluşturduk
 import math
 
 import secrets
@@ -138,7 +138,8 @@ def parse_distance_question(msg: str):
 import re
 
 MODELS = r"(fabia|scala|kamiq|karoq|kodiaq|octavia|superb|enyaq|elroq)"
-
+FUEL_WORDS = r"(?:depo|yakıt|benzin)"
+CHARGE_OR_FUEL = rf"(?:şarj|{FUEL_WORDS})"
 def parse_charging_question(msg: str):
     """
     Örnek: “milas bodrum arasında elroq ile kaç şarj” → ('Milas', 'Bodrum', 'elroq', None)
@@ -153,7 +154,7 @@ def parse_charging_question(msg: str):
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)\s+"
         rf"(?:({MODELS})\s*(?:['’]?l[ae])?\s*)?"
-        r".*?kaç\s+şarj\w*"
+        rf".*?kaç\s+{CHARGE_OR_FUEL}\w*"
     )
     m1 = re.search(pat1, msg, re.DOTALL)
     if m1:
@@ -175,7 +176,7 @@ def parse_charging_question(msg: str):
         rf"({MODELS})\s*(?:ile|la|le)?\s*"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)\s+"
-        r".*?kaç\s+şarj\w*"
+        rf".*?kaç\s+{CHARGE_OR_FUEL}\w*"
     )
     m3 = re.search(pat3, msg, re.DOTALL)
     if m3:
@@ -187,7 +188,7 @@ def parse_charging_question(msg: str):
         r"([a-zçğıöşü\s]+?)\s+"          # şehir‑2
         r"(?:arası|arasında)\s*"
         rf"(?:({MODELS})\s*(?:ile|la|le)?\s*)?"
-        r".*?kaç\s+şarj\w*"
+        rf".*?kaç\s+{CHARGE_OR_FUEL}\w*"
     )
     m4 = re.search(pat4, msg, re.DOTALL)
     if m4:
@@ -528,6 +529,33 @@ class ChatbotAPI:
             EV_RANGE_KM.get(key_model_only) or
             None
         )
+        # ------------------------------------------------------------------
+    # EV (şarj) ve ICE (depo) menzilini tek yerden hesapla
+    # ------------------------------------------------------------------
+    def _lookup_range_and_unit(self, model: str, trim: str) -> tuple[float | None, str]:
+        """
+        Dönen değer  →  (menzil_km, 'şarj' | 'depo' | '')
+        'menzil_km' None ise model/trim için veri yok demektir.
+        """
+        key_exact = (model.lower(), trim.lower())
+        key_model = (model.lower(), "")
+
+        # 1) Elektrikli araç (EV)
+        rng = EV_RANGE_KM.get(key_exact) or EV_RANGE_KM.get(key_model)
+        if rng:
+            return rng, "şarj"
+
+        # 2) İçten yanmalı (ICE): depo hacmi + ort. tüketimden menzil
+        spec = FUEL_SPECS.get(key_exact) or FUEL_SPECS.get(key_model)
+        if spec:
+            tank = spec["tank_l"]
+            l100 = spec["l_per_100km"]
+            if tank > 0 and l100 > 0:
+                rng_km = tank / l100 * 100.0   # basit ortalama
+                return rng_km, "depo"
+
+        return None, ""   # veri bulunamadı
+
 
     def _charges_needed(self, distance_km: float, range_km: float) -> int:
         """
@@ -1591,14 +1619,15 @@ class ChatbotAPI:
                 yield rd["error"].encode("utf-8")
                 return
 
-            range_km = self._get_ev_range_km(ev_model, ev_trim or "")
-            if not range_km:
+            range_km, unit = self._lookup_range_and_unit(ev_model, ev_trim or "")
+            if range_km is None:
                 msg = (f"{ev_model.title()} {ev_trim.title() if ev_trim else ''} için "
-                    "tanımlı bir menzil bilgisi bulamadım.")
+                    "menzil / tüketim verisi bulunamadı.")
                 yield msg.encode("utf-8")
                 return
 
             charges = self._charges_needed(rd["distance_km"], range_km)
+            unit_txt = "şarj" if unit == "şarj" else "yakıt ikmâli"
 
             # Harita
             yield from self._yield_route_map(rd)
@@ -1607,11 +1636,10 @@ class ChatbotAPI:
             # Sonuç paragrafı
             summary = (
                 f"**{c1} – {c2}** güzergâhı yaklaşık **{rd['distance_km']:.0f} km**. "
-                f"{ev_model.title()} {ev_trim.title() if ev_trim else ''} modelinin "
-                f"tek şarj menzili kabaca **{range_km} km** kabul edildiğinde, "
-                f"yola tam şarjla çıktığınızda **{charges} kez** hızlı/AC şarj molası "
-                f"vermeniz gerekir.\n\n"
-                "_Gerçek ihtiyaç; sürüş stili, hava şartı, yük ve hızınıza göre değişebilir._"
+                f"{ev_model.title()} {ev_trim.title() if ev_trim else ''} modelinin tek {unit} menzili "
+                f"**{range_km:.0f} km** kabul edildiğinde, yola tam dolu başladığınızda "
+                f"**{charges} {unit_txt}** gerekir.\n\n"
+                "_Gerçek ihtiyaç; sürüş stili, hava ve hızınıza göre değişebilir._"
             )
             yield summary.encode("utf-8")
 
