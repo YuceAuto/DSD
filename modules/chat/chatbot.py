@@ -115,6 +115,18 @@ ASSISTANT_NAMES = {
     "octavia", "superb", "elroq", "enyaq"
 }
 import re
+def clean_city_name(raw: str) -> str:
+    """
+    'Fabia İzmir' → 'İzmir'
+    'Kodiaq Ankara' → 'Ankara'
+    """
+    txt = raw.lower()
+    # Modele ait kelimeleri boşluğa çevir
+    for m in ASSISTANT_NAMES:
+        txt = re.sub(rf"\b{m}\b", "", txt, flags=re.IGNORECASE)
+    # Artık kalan fazla boşlukları sıkıştır
+    txt = re.sub(r"\s{2,}", " ", txt).strip()
+    return txt.title()
 TWO_LOC_PAT = (
     r"([a-zçğıöşü\s]+?)\s*"                       # konum‑1
     r"(?:ile|ve|,|-|dan|den)?\s+"                 # bağlaçlar
@@ -131,13 +143,15 @@ def parse_distance_question(msg: str):
     m = re.search(TWO_LOC_PAT, msg)
     if not m:
         return (None, None)
-    return (m.group(1).strip().title(), m.group(2).strip().title())
-
+    return (
+        clean_city_name(m.group(1)),
+        clean_city_name(m.group(2))
+    )
 # Yeni: Kaç şarj sorularını ayrıştır
 # utils/parsers.py  (veya mevcut dosyanız neredeyse)
 import re
 
-MODELS = r"(fabia|scala|kamiq|karoq|kodiaq|octavia|superb|enyaq|elroq)"
+MODELS = r"(?:fabia|scala|kamiq|karoq|kodiaq|octavia|superb|enyaq|elroq)"
 FUEL_WORDS = r"(?:depo|yakıt|benzin)"
 CHARGE_OR_FUEL = rf"(?:şarj|{FUEL_WORDS})"
 def parse_charging_question(msg: str):
@@ -158,7 +172,12 @@ def parse_charging_question(msg: str):
     )
     m1 = re.search(pat1, msg, re.DOTALL)
     if m1:
-        return (m1.group(1).title(), m1.group(2).title(), m1.group(3), None)
+        return (
+            clean_city_name(m1.group(1)),
+            clean_city_name(m1.group(2)),
+            m1.group(3),   # model
+            None
+        )
 
     # 2) model … kaç şarj … <şehir‑1> … <şehir‑2>
     pat2 = (
@@ -169,7 +188,12 @@ def parse_charging_question(msg: str):
     )
     m2 = re.search(pat2, msg, re.DOTALL)
     if m2:
-        return (m2.group(2).title(), m2.group(3).title(), m2.group(1), None)
+        return (
+            clean_city_name(m2.group(2)),
+            clean_city_name(m2.group(3)),
+            m2.group(1),   # model
+            None
+        )
 
     # 3) model … <şehir‑1> … <şehir‑2> … kaç şarj
     pat3 = (
@@ -180,7 +204,12 @@ def parse_charging_question(msg: str):
     )
     m3 = re.search(pat3, msg, re.DOTALL)
     if m3:
-        return (m3.group(2).title(), m3.group(3).title(), m3.group(1), None)
+        return (
+            clean_city_name(m3.group(2)),
+            clean_city_name(m3.group(3)),
+            m3.group(1),   # model
+            None
+        )
 
     # 4) “<şehir‑1> <şehir‑2> arası … kaç şarj”
     pat4 = (
@@ -192,7 +221,12 @@ def parse_charging_question(msg: str):
     )
     m4 = re.search(pat4, msg, re.DOTALL)
     if m4:
-        return (m4.group(1).title(), m4.group(2).title(), m4.group(3), None)
+        return (
+            clean_city_name(m4.group(1)),
+            clean_city_name(m4.group(2)),
+            m4.group(3),   # model
+            None
+        )
 
     return (None, None, None, None)
 
@@ -349,8 +383,8 @@ def parse_route_question(user_message):
         if not m:
             continue
 
-        city1 = m.group(1).strip().title()
-        city2 = m.group(2).strip().title()
+        city1 = clean_city_name(m.group(1))
+        city2 = clean_city_name(m.group(2))
 
         # 3a) Yakalanan kelimeler hâlâ asistan adıysa bu eşleşmeyi geç
         if city1.lower() in ASSISTANT_NAMES or city2.lower() in ASSISTANT_NAMES:
