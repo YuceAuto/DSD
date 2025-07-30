@@ -230,6 +230,33 @@ def parse_charging_question(msg: str):
 
     return (None, None, None, None)
 
+# utils/parsers.py  (veya mevcut dosyanız neredeyse)
+FUEL_WORDS = r"(?:benzin|yakıt|depo|litre)"
+def parse_fuel_question(msg: str):
+    """
+    'milas marmaris arasında karoq kaç litre yakar'
+    → ('Milas', 'Marmaris', 'karoq', None)
+    """
+    if not msg:
+        return (None, None, None, None)
+    msg = msg.lower()
+
+    # 1)  <şehir1> … <şehir2> … <model>? … (kaç|ne kadar) {FUEL_WORDS}
+    pat = (
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)?\s+"      # şehir‑1
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)?\s+"    # şehir‑2
+        rf"(?:({MODELS})\s*(?:ile|la|le)?\s*)?"                 # model (isteğe bağlı)
+        r".*?(?:kaç|ne\s+kadar)\s+" + FUEL_WORDS                # yakıt sözcükleri
+    )
+    m = re.search(pat, msg, re.DOTALL)
+    if m:
+        return (
+            clean_city_name(m.group(1)),
+            clean_city_name(m.group(2)),
+            m.group(3),   # model (veya None)
+            None
+        )
+    return (None, None, None, None)
 
 
 GOOGLE_API_KEY = "AIzaSyAy3vtaMa62ikEYJ0Dy9-XiSh_we3Or640"
@@ -604,6 +631,9 @@ class ChatbotAPI:
         # Başlangıç şarjı zaten dolu; geriye gereken ekstra şarj sayısı:
         extra_charges = math.ceil(required_full_cycles) - 1
         return max(extra_charges, 0)
+    def _fuel_needed_litre(self, distance_km: float, l_per_100: float) -> float:
+        """Mesafe ve ort. tüketime göre toplam litre hesabı."""
+        return distance_km * l_per_100 / 100.0
 
     def _get_gpt_journey_with_model(self, rd: dict, user_id: str) -> str:
         """
@@ -1632,6 +1662,53 @@ class ChatbotAPI:
     # ------------------------------------------------------------------
     #  ROTA / MESAFE SORGUSU
     # ------------------------------------------------------------------
+        # ---  YAKIT (benzin/dizel) SORUSU  ------------------------------------
+        f1, f2, fuel_model, fuel_trim = parse_fuel_question(user_message)
+
+        if f1 and f2:
+            # model tanımlı değilse oturumdan çek
+            if not fuel_model:
+                asst_id = self.user_states[user_id].get("assistant_id")
+                fuel_model = (
+                    self.ASSISTANT_NAME_MAP.get(asst_id, "").lower()
+                    if asst_id else None
+                ) or next(iter(self.user_states[user_id].get("last_models", [])), None)
+
+            if not fuel_model:
+                yield ("Hangi modeli kullanacağınızı da belirtir misiniz? "
+                    "(örn. *karoq*, *octavia* …)").encode("utf-8")
+                return
+
+            rd = self._get_route_data(f1, f2)
+            if rd["error"]:
+                yield rd["error"].encode("utf-8")
+                return
+
+            # FUEL_SPECS’ten tüketim verisi
+            spec = FUEL_SPECS.get((fuel_model, (fuel_trim or "").lower())) \
+                or FUEL_SPECS.get((fuel_model, ""))
+            if not spec:
+                yield f"{fuel_model.title()} modeli için ortalama yakıt verisi bulunamadı.".encode("utf-8")
+                return
+
+            l100 = spec["l_per_100km"]             # lt / 100 km
+            litre = self._fuel_needed_litre(rd["distance_km"], l100)
+
+            # Harita
+            yield from self._yield_route_map(rd)
+            yield b"<!-- SPLIT -->"
+
+            # Özet
+            txt = (
+                f"**{f1} – {f2}** arası yol yaklaşık **{rd['distance_km']:.0f} km**.\n\n"
+                f"{fuel_model.title()} için fabrika ortalaması **{l100:.1f} L/100 km** alındığında "
+                f"bu yolculukta yaklaşık **{litre:.1f} litre** yakıt harcarsınız.\n\n"
+                "_Gerçek tüketim; hız, yük, klima ve yol durumuna göre değişebilir._"
+            )
+            yield txt.encode("utf-8")
+            return
+        # ----------------------------------------------------------------------
+
         c1, c2, ev_model, ev_trim = parse_charging_question(user_message)
         if c1 and c2:                    # eşleşme varsa model olmayabilir
     # ▸ model yoksa oturumdan/fallback
