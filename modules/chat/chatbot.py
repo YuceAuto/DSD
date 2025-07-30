@@ -115,16 +115,15 @@ ASSISTANT_NAMES = {
     "octavia", "superb", "elroq", "enyaq"
 }
 import re
+from modules.data.text_norm import normalize_tr_text
 def clean_city_name(raw: str) -> str:
     """
     'Fabia İzmir' → 'İzmir'
     'Kodiaq Ankara' → 'Ankara'
     """
-    txt = raw.lower()
-    # Modele ait kelimeleri boşluğa çevir
+    txt = normalize_tr_text(raw)
     for m in ASSISTANT_NAMES:
         txt = re.sub(rf"\b{m}\b", "", txt, flags=re.IGNORECASE)
-    # Artık kalan fazla boşlukları sıkıştır
     txt = re.sub(r"\s{2,}", " ", txt).strip()
     return txt.title()
 TWO_LOC_PAT = (
@@ -272,7 +271,7 @@ def parse_fuel_question(msg: str):
     """
     if not msg:
         return (None, None, None, None)
-    msg = msg.lower()
+    msg = normalize_tr_text(msg)
 
     # 1)  <şehir1> … <şehir2> … <model>? … (kaç|ne kadar) {FUEL_WORDS}
     pat = (
