@@ -183,8 +183,9 @@ def parse_charging_question(msg: str):
     pat2 = (
         rf"({MODELS})\s*(?:ile|la|le)?\s*.*?"
         r"kaç\s+şarj\w*\s*"
+        r"(?:ile\s+)?"                 # <‑‑ eklenen kısım
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
-        r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)"
+        r"([a-zçğıöşü\s]+?)\s+(?:['’]?y?[ae]|ya|ye|a|e)\b"
     )
     m2 = re.search(pat2, msg, re.DOTALL)
     if m2:
@@ -199,6 +200,7 @@ def parse_charging_question(msg: str):
     pat3 = (
         rf"({MODELS})\s*(?:ile|la|le)?\s*"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
+        r"(?:ile\s+)?"
         r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)\s+"
         rf".*?kaç\s+{CHARGE_OR_FUEL}\w*"
     )
@@ -225,6 +227,37 @@ def parse_charging_question(msg: str):
             clean_city_name(m4.group(1)),
             clean_city_name(m4.group(2)),
             m4.group(3),   # model
+            None
+        )
+    
+    pat5 = (
+        rf"({MODELS})\s*(?:ile|la|le)?\s*.*?"
+        r"kaç\s+şarj\w*\s*"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)"
+    )
+    m5 = re.search(pat5, msg, re.DOTALL)
+    if m5:
+        return (
+            clean_city_name(m5.group(2)),
+            clean_city_name(m5.group(3)),
+            m5.group(1),   # model
+            None
+        )
+
+    # 3) model … <şehir‑1> … <şehir‑2> … kaç şarj
+    pat6 = (
+        rf"({MODELS})\s*(?:ile|la|le)?\s*"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?d[ae]n|dan|den)\s+"
+        r"([a-zçğıöşü\s]+?)\s*(?:['’]?y?[ae]|ya|ye|a|e)\s+"
+        rf".*?kaç\s+{CHARGE_OR_FUEL}\w*"
+    )
+    m6 = re.search(pat6, msg, re.DOTALL)
+    if m6:
+        return (
+            clean_city_name(m6.group(2)),
+            clean_city_name(m6.group(3)),
+            m6.group(1),   # model
             None
         )
 
