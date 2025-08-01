@@ -122,10 +122,17 @@ def clean_city_name(raw: str) -> str:
     'Kodiaq Ankara' → 'Ankara'
     """
     txt = normalize_tr_text(raw)
+
+    # Tüm asistan adlarını sırayla temizle
     for m in ASSISTANT_NAMES:
         txt = re.sub(rf"\b{m}\b", "", txt, flags=re.IGNORECASE)
+
+    # Art arda gelen boşlukları sadeleştir
     txt = re.sub(r"\s{2,}", " ", txt).strip()
-    return txt.title()
+
+    # Baş‑harfleri büyüt (İstanbul, Amasya …)
+    from modules.data.text_utils import title_tr
+    return title_tr(txt)
 TWO_LOC_PAT = (
     r"([a-zçğıöşü\s]+?)\s*"                       # konum‑1
     r"(?:ile|ve|,|-|dan|den)?\s+"                 # bağlaçlar
@@ -1784,7 +1791,8 @@ class ChatbotAPI:
                 f"**{charges} {unit_txt}** gerekir.\n\n"
                 "_Gerçek ihtiyaç; sürüş stili, hava ve hızınıza göre değişebilir._"
             )
-            yield summary.encode("utf-8")
+            summary_md = self.markdown_processor.transform_text_to_markdown(summary)
+            yield summary_md.encode("utf‑8")
 
             # İsterseniz yolculuk deneyimi / GPT yorumu ekleyin:
             journey_txt = self._get_gpt_journey_with_model(rd, user_id)
@@ -2322,7 +2330,12 @@ class ChatbotAPI:
                     msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
                     for msg in msg_response.data:
                         if msg.role == "assistant":
-                            content = str(msg.content)
+                            parts = [
+                                part.text.value                    # sadece metin parçaları
+                                for part in msg.content
+                                if getattr(part, "type", "") == "text"
+                            ]
+                            content = "\n".join(parts) 
                             content_md = self.markdown_processor.transform_text_to_markdown(content)
                             # --- YENİ EK: Tablo fix'i burada uygula ---
                             if '|' in content_md and '\n' in content_md:
