@@ -302,23 +302,37 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
-    def _contact_link_html(self) -> str:
-        # Tek satırda basit, tıklanabilir bağlantı
+    def _resolve_display_model(self, user_id: str, model_hint: str | None = None) -> str:
+        if model_hint:
+            return model_hint.title()
+        last_models = self.user_states.get(user_id, {}).get("last_models", set())
+        if last_models and len(last_models) == 1:
+            return next(iter(last_models)).title()
+        asst_id = self.user_states.get(user_id, {}).get("assistant_id")
+        if asst_id:
+            mapped = self.ASSISTANT_NAME_MAP.get(asst_id, "")
+            if mapped:
+                return mapped.title()
+        return "Skoda"
+
+
+    def _contact_link_html(self, user_id: str | None = None, model_hint: str | None = None) -> str:
+        model_display = self._resolve_display_model(user_id, model_hint)
         return (
             '<!-- SKODA_CONTACT_LINK -->'
             '<p style="margin:8px 0 12px;">'
+            f'Skoda&rsquo;yı en iyi deneyerek hissedersiniz. '
+            'Test sürüşü randevusu: '
             '<a href="https://www.skoda.com.tr/satis-iletisim-formu" target="_blank" rel="noopener">'
-            'Satış & İletişim Formu</a>'
+            'Satış &amp; İletişim Formu</a>.'
             '</p>'
         )
 
-    def _with_contact_link_prefixed(self, body_bytes: bytes) -> bytes:
-        """Cevabın başına iletişim linkini 1 kez ekler (zaten varsa eklemez)."""
+    def _with_contact_link_prefixed(self, body_bytes: bytes, user_id: str | None = None, model_hint: str | None = None) -> bytes:
         marker = b"<!-- SKODA_CONTACT_LINK -->"
         if marker in body_bytes[:500]:
             return body_bytes
-        return (self._contact_link_html().encode("utf-8") + body_bytes)
-
+        return (self._contact_link_html(user_id=user_id, model_hint=model_hint).encode("utf-8") + body_bytes)
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
         self.app = Flask(
             __name__,
@@ -802,7 +816,7 @@ class ChatbotAPI:
                     if cached_answer:
                         self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                         time.sleep(1)
-                        wrapped = self._with_contact_link_prefixed(cached_answer)  # <-- YENİ
+                        wrapped = self._with_contact_link_prefixed(cached_answer, user_id=user_id)  # <-- YENİ
                         return self.app.response_class(wrapped, mimetype="text/plain")
 
         # --- YENİ SON ---
@@ -869,7 +883,7 @@ class ChatbotAPI:
                 if cached_answer:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                     time.sleep(1)
-                    wrapped = self._with_contact_link_prefixed(cached_answer)  # <-- YENİ
+                    wrapped = self._with_contact_link_prefixed(cached_answer, user_id=user_id)  # <-- YENİ
                     return self.app.response_class(wrapped, mimetype="text/plain")
 
         final_answer_parts = []
@@ -1742,26 +1756,45 @@ class ChatbotAPI:
             while time.time() - start_time < timeout:
                 run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
                 if run.status == "completed":
-                    msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
-                    for msg in msg_response.data:
-                        if msg.role == "assistant":
-                            # İçeriği güvenli biçimde topla
-                            parts = []
-                            for part in msg.content:
-                                if getattr(part, "type", None) == "text":
-                                    parts.append(part.text.value)
-                            content = "\n".join(parts).strip()
+                    try:
+                        # SDK sürümünüz destekliyorsa run_id ile daraltın
+                        msg_response = self.client.beta.threads.messages.list(
+                            thread_id=thread_id,
+                            run_id=run.id,
+                            order="desc",
+                            limit=5
+                        )
+                    except TypeError:
+                        # Eski SDK: run_id parametresi yoksa sadece en yeni mesajlara bak
+                        msg_response = self.client.beta.threads.messages.list(
+                            thread_id=thread_id,
+                            order="desc",
+                            limit=5
+                        )
 
-                            content_md = self.markdown_processor.transform_text_to_markdown(content)
-                            if '|' in content_md and '\n' in content_md:
-                                content_md = fix_markdown_table(content_md)
+                    latest_assistant = next((m for m in msg_response.data if m.role == "assistant"), None)
+                    if not latest_assistant:
+                        yield "Asistan yanıtı bulunamadı.\n"
+                        break
 
-                            assistant_response = content
+                    parts = []
+                    for part in latest_assistant.content:
+                        if getattr(part, "type", None) == "text":
+                            parts.append(part.text.value)
+                    content = "\n".join(parts).strip()
 
-                            # <-- YENİ: Linki en başa ekle ve TEK SEFER ekle
-                            to_send = self._with_contact_link_prefixed(content_md.encode("utf-8"))
-                            yield to_send
+                    content_md = self.markdown_processor.transform_text_to_markdown(content)
+                    if '|' in content_md and '\n' in content_md:
+                        content_md = fix_markdown_table(content_md)
 
+                    assistant_response = content
+                    models_in_msg_now = self._extract_models(user_message)
+                    model_hint = next(iter(models_in_msg_now)) if len(models_in_msg_now) == 1 else None
+
+                    to_send = self._with_contact_link_prefixed(content_md.encode("utf-8"))
+                    yield to_send
+
+                    # ÖNEMLİ: while döngüsünden çık
                     break
                 elif run.status == "failed":
                     yield "Yanıt oluşturulamadı.\n"
