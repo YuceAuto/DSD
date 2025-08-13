@@ -226,6 +226,22 @@ function processBotMessage(fullText, uniqueId) {
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
   });
+
+  // Always append contact form link block
+  const contactBlock = `
+    <div class="d-flex justify-content-center mb-4 w-100">
+      <div class="assistant_message_container">
+        <div style="text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 8px; margin-top: 10px;">
+          <p style="margin: 0 0 10px 0; font-weight: bold; color: #333;">Daha fazla bilgi almak ister misiniz?</p>
+          <a href="https://www.skoda.com.tr/satis-iletisim-formu" target="_blank" style="display: inline-block; background-color: #0066cc; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+            Satış İletişim Formu
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+  $("#messageFormeight").append(contactBlock);
+  $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 }
 
 $(document).ready(function () {

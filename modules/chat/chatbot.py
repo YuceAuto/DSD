@@ -302,6 +302,22 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+    def _contact_link_html(self) -> str:
+        # Tek satırda basit, tıklanabilir bağlantı
+        return (
+            '<!-- SKODA_CONTACT_LINK -->'
+            '<p style="margin:8px 0 12px;">'
+            '<a href="https://www.skoda.com.tr/satis-iletisim-formu" target="_blank" rel="noopener">'
+            'Satış & İletişim Formu</a>'
+            '</p>'
+        )
+
+    def _with_contact_link_prefixed(self, body_bytes: bytes) -> bytes:
+        """Cevabın başına iletişim linkini 1 kez ekler (zaten varsa eklemez)."""
+        marker = b"<!-- SKODA_CONTACT_LINK -->"
+        if marker in body_bytes[:500]:
+            return body_bytes
+        return (self._contact_link_html().encode("utf-8") + body_bytes)
 
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
         self.app = Flask(
@@ -394,25 +410,6 @@ class ChatbotAPI:
         self.logger.info("=== YENI VERSIYON KOD CALISIYOR ===")
 
         self._define_routes()
-        # --- Her cevabın altına eklenecek form linki (HTML) ---
-    # --- Her cevabın altına eklenecek form linki (Markdown) ---
-    def _test_form_link_html(self) -> str:
-        return (
-            '\n<div class="skoda-test-form" style="margin-top:12px;">'
-            '👉 <a href="https://www.skoda.com.tr/satis-iletisim-formu" '
-            'target="_blank" rel="noopener noreferrer">Test formunu doldurmak için tıklayın</a>'
-            '</div>\n'
-        )
-
-    def _append_test_form_link_bytes(self, answer_bytes: bytes) -> bytes:
-        try:
-            txt = answer_bytes.decode("utf-8", errors="ignore")
-        except Exception:
-            txt = str(answer_bytes)
-        if "skoda.com.tr/satis-iletisim-formu" in txt:
-            return answer_bytes
-        appended = txt + self._test_form_link_html()
-        return appended.encode("utf-8")
 
     def _setup_logger(self):
         logger = logging.getLogger("ChatbotAPI")
@@ -805,10 +802,8 @@ class ChatbotAPI:
                     if cached_answer:
                         self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                         time.sleep(1)
-                        return self.app.response_class(
-                            self._append_test_form_link_bytes(cached_answer),
-                            mimetype="text/html"
-                        )
+                        wrapped = self._with_contact_link_prefixed(cached_answer)  # <-- YENİ
+                        return self.app.response_class(wrapped, mimetype="text/plain")
 
         # --- YENİ SON ---
         # Model tespitinden asistan ID'si seç
@@ -835,11 +830,9 @@ class ChatbotAPI:
         if not new_assistant_id:
             new_assistant_id = self._pick_least_busy_assistant()
             if not new_assistant_id:
-                raw = "Uygun bir asistan bulunamadı.\n".encode("utf-8")
-                with_link = self._append_test_form_link_bytes(raw)
-                save_to_db(user_id, user_message, with_link.decode("utf-8", errors="ignore"), username=name_surname)
-                return self.app.response_class(with_link, mimetype="text/html")
-
+                # Tek seferlik DB kaydı
+                save_to_db(user_id, user_message, "Uygun asistan bulunamadı.", username=name_surname)
+                return self.app.response_class("Uygun bir asistan bulunamadı.\n", mimetype="text/plain")
 
         self.user_states[user_id]["assistant_id"] = new_assistant_id
 
@@ -876,11 +869,8 @@ class ChatbotAPI:
                 if cached_answer:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                     time.sleep(1)
-                    return self.app.response_class(
-                        self._append_test_form_link_bytes(cached_answer),
-                        mimetype="text/html"
-                    )
-
+                    wrapped = self._with_contact_link_prefixed(cached_answer)  # <-- YENİ
+                    return self.app.response_class(wrapped, mimetype="text/plain")
 
         final_answer_parts = []
 
@@ -894,27 +884,21 @@ class ChatbotAPI:
                 final_answer_parts.append(error_text.encode("utf-8"))
                 self.logger.error(f"caching_generator hata: {ex}")
             finally:
-                # 1) Linki cevabın sonuna ekle ve hemen kullanıcıya gönder
-                form_html = self._test_form_link_html()
-                final_answer_parts.append(form_html.encode("utf-8"))
-                yield form_html.encode("utf-8")
-
-                # 2) Artık full_answer linki de içeriyor
                 full_answer = b"".join(
                     p if isinstance(p, bytes) else p.encode("utf-8")
                     for p in final_answer_parts
                 ).decode("utf-8", errors="ignore")
 
-                # 3) DB kaydı (linkli)
                 conversation_id = save_to_db(
                     user_id,
                     user_message,
                     full_answer,
                     username=name_surname
                 )
+
                 self.user_states[user_id]["last_conversation_id"] = conversation_id
 
-                # 4) Cache’e de linkli haliyle yaz
+                 # --- YENİ BAŞLANGIÇ: Cache'e kısa/klişe yanıtı hiç kaydetme! ---
                 if not is_image_req and not is_non_sentence_short_reply(corrected_message):
                     self._store_in_fuzzy_cache(
                         user_id,
@@ -924,12 +908,11 @@ class ChatbotAPI:
                         new_assistant_id,
                         conversation_id
                     )
+                # --- YENİ SON ---
 
-                # 5) En sonda Conversation ID
-                yield f"\n<!-- CONVERSATION_ID:{conversation_id} -->".encode("utf-8")
+                yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
 
-
-        return self.app.response_class(caching_generator(), mimetype="text/html")
+        return self.app.response_class(caching_generator(), mimetype="text/plain")
 
     # --------------------------------------------------------
     #                   GÖRSEL MANTIĞI
@@ -1762,13 +1745,23 @@ class ChatbotAPI:
                     msg_response = self.client.beta.threads.messages.list(thread_id=thread_id)
                     for msg in msg_response.data:
                         if msg.role == "assistant":
-                            content = str(msg.content)
+                            # İçeriği güvenli biçimde topla
+                            parts = []
+                            for part in msg.content:
+                                if getattr(part, "type", None) == "text":
+                                    parts.append(part.text.value)
+                            content = "\n".join(parts).strip()
+
                             content_md = self.markdown_processor.transform_text_to_markdown(content)
-                            # --- YENİ EK: Tablo fix'i burada uygula ---
                             if '|' in content_md and '\n' in content_md:
                                 content_md = fix_markdown_table(content_md)
+
                             assistant_response = content
-                            yield content_md.encode("utf-8")
+
+                            # <-- YENİ: Linki en başa ekle ve TEK SEFER ekle
+                            to_send = self._with_contact_link_prefixed(content_md.encode("utf-8"))
+                            yield to_send
+
                     break
                 elif run.status == "failed":
                     yield "Yanıt oluşturulamadı.\n"
