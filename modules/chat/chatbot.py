@@ -105,6 +105,9 @@ from modules.data.enyaq_teknik import(
 from modules.data.elroq_teknik import(
     ELROQ_TEKNIK_MD
 )
+# -- Fiyat tablosu
+from modules.data.fiyat_data import FIYAT_LISTESI_MD
+
 import math
 from modules.data.ev_specs import EV_RANGE_KM, FUEL_SPECS   # 1. adımda oluşturduk
 import math
@@ -302,6 +305,160 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+    def _yield_fiyat_listesi(self, user_message: str):
+        """
+        'fiyat' geçen mesajlarda fiyat tablosunu döndürür.
+        Model belirtilmişse filtreler; Octavia/Superb için 'combi',
+        Enyaq için 'coupe/coupé/kupe/kupé' anahtarlarını dikkate alır.
+        """
+        lower_msg = user_message.lower()
+
+        # 1) Hangi modeller istenmiş?
+        models = self._extract_models(user_message)
+        want_combi = "combi" in lower_msg
+        want_coupe = any(k in lower_msg for k in ["coupe", "coupé", "kupe", "kupé"])
+
+        # 2) Model -> tabloda arama etiketleri
+        tags = set()
+        if "fabia" in models:   tags.add("FABIA")
+        if "scala" in models:   tags.add("SCALA")
+        if "kamiq" in models:   tags.add("KAMIQ")
+        if "karoq" in models:   tags.add("KAROQ")
+        if "kodiaq" in models:  tags.add("KODIAQ")
+        if "elroq" in models:   tags.add("ELROQ")
+        if "octavia" in models:
+            if want_combi:
+                tags.add("OCTAVIA COMBI")
+            else:
+                tags.update({"OCTAVIA", "OCTAVIA COMBI"})
+        if "superb" in models:
+            if want_combi:
+                tags.add("SUPERB COMBI")
+            else:
+                tags.update({"SUPERB", "SUPERB COMBI"})
+        if "enyaq" in models:
+            if want_coupe:
+                tags.update({"ENYAQ COUP", "ENYAQ COUPÉ", "ENYAQ COUPE"})
+            else:
+                tags.update({"ENYAQ", "ENYAQ COUP", "ENYAQ COUPÉ", "ENYAQ COUPE"})
+
+        # 3) Tabloyu (gerekirse) filtrele
+        md = FIYAT_LISTESI_MD
+        if tags:
+            lines = FIYAT_LISTESI_MD.strip().splitlines()
+            if len(lines) >= 2:
+                header, sep = lines[0], lines[1]
+                body = lines[2:]
+                filtered = []
+                for row in body:
+                    parts = row.split("|")
+                    if len(parts) > 2:
+                        first_cell = parts[1].strip().upper()
+                        if any(tag in first_cell for tag in tags):
+                            filtered.append(row)
+                if filtered:
+                    md = "\n".join([header, sep] + filtered)
+
+        # 4) Markdown hizasını düzelt
+        md_fixed = fix_markdown_table(md)
+
+        # 5) Başlık (UTF‑8) + tablo öncesi boş satır
+        yield "<b>Güncel Fiyat Listesi</b><br><br>".encode("utf-8")
+        yield ("\n" + md_fixed + "\n\n").encode("utf-8")  # ← tabloyu kapatmak için boş satır ŞART
+
+        # 6) Filtreli çıktıysa 'Tüm fiyatlar' linki (tablodan ayrı paragraf)
+        if tags:
+            link_html = (
+                "<br>• <a href=\"#\" onclick=\"sendMessage('fiyat');return false;\">"
+                "Tüm fiyatları göster</a><br>"
+            )
+            yield link_html.encode("utf-8")
+    
+    def _fuzzy_contains(self, text: str, phrase: str, threshold: float | None = None) -> bool:
+        """
+        'text' içinde 'phrase' yaklaşık olarak var mı?
+        - Boşlukları normalize eder
+        - Alt dizi pencerelerinde difflib oranı hesaplar
+        """
+        t = normalize_tr_text(text or "").lower()
+        p = normalize_tr_text(phrase or "").lower()
+
+        # hızlı kazanımlar
+        if p in t:
+            return True
+
+        # boşlukları kaldırıp karakter bazında karşılaştır
+        t_comp = re.sub(r"\s+", "", t)
+        p_comp = re.sub(r"\s+", "", p)
+        if p_comp in t_comp:
+            return True
+
+        import difflib
+        thr = threshold if threshold is not None else getattr(self, "PRICE_INTENT_FUZZY_THRESHOLD", 0.80)
+        L = len(p_comp)
+        if L == 0:
+            return False
+
+        # pencere uzunluğunu ±2 karakter toleransla tara
+        minL = max(1, L - 2)
+        maxL = L + 2
+        n = len(t_comp)
+        for win_len in range(minL, maxL + 1):
+            for i in range(0, max(0, n - win_len) + 1):
+                chunk = t_comp[i:i + win_len]
+                if difflib.SequenceMatcher(None, chunk, p_comp).ratio() >= thr:
+                    return True
+        return False
+
+
+    def _is_price_intent(self, text: str, threshold: float | None = None) -> bool:
+        """
+        Kullanıcı metni fiyat sormak mı?
+        - Fuzzy eşleşme: 'ne kadar', 'kaç para', 'kaça', 'fiyat listesi', 'anahtar teslim'
+        - 'fiyat' sözcüğü ve çekimleri + yazım hataları (fıyat, fiayt, fyat...)
+        - Negatif örüntüler: 'ne kadar yakar/menzil/şarj/km...' ise fiyat değildir.
+        """
+        t = normalize_tr_text(text or "").lower()
+        thr = threshold if threshold is not None else getattr(self, "PRICE_INTENT_FUZZY_THRESHOLD", 0.80)
+
+        # 0) Fiyatla ilgisiz 'ne kadar ...' örüntülerini dışla
+        # (burada fuzzy kullanmıyoruz; bu kelimeler genelde doğru yazılır)
+        if re.search(r"\b(yakar|yakit|yakıt|sarj|şarj|menzil|range|km|kilometre|bagaj|hizlanma|hızlanma|0[-–]100)\b", t):
+            # ...ama eğer açıkça 'fiyat' da geçiyorsa yine de fiyat say
+            if "fiyat" not in t:
+                # örn. "ne kadar yakar", "menzil ne kadar" → fiyat niyeti değil
+                pass
+            else:
+                return True
+
+        # 1) Fuzzy kalıplar
+        phrases = [
+            "ne kadar",
+            "kaç para",
+            "kaca",         # aksansız varyant
+            "kaça",
+            "fiyat listesi",
+            "liste fiyat",
+            "anahtar teslim",
+        ]
+        if any(self._fuzzy_contains(t, ph, thr) for ph in phrases):
+            return True
+
+        # 2) 'fiyat' kökü (çekimler veya yazım hataları)
+        tokens = re.findall(r"[a-zçğıöşü]+", t)
+        import difflib
+        for tok in tokens:
+            if tok == "fiat":   # marka ile karışmasın
+                continue
+            if tok.startswith("fiyat"):  # fiyat, fiyatı, fiyatlar...
+                return True
+            # ilk 5 harfe fuzzy: fıyat, fyat, fiayt...
+            if difflib.SequenceMatcher(None, tok[:5], "fiyat").ratio() >= thr:
+                return True
+
+        return False
+
+
     def _resolve_display_model(self, user_id: str, model_hint: str | None = None) -> str:
         if model_hint:
             return model_hint.title()
@@ -337,8 +494,11 @@ class ChatbotAPI:
         self.app = Flask(
             __name__,
             static_folder=os.path.join(os.getcwd(), static_folder),
-            template_folder=os.path.join(os.getcwd(), template_folder)
+            template_folder=os.path.join(os.getcwd(), template_folder),
+            
         )
+        self.PRICE_INTENT_FUZZY_THRESHOLD = float(os.getenv("PRICE_INTENT_FUZZY_THRESHOLD", "0.80"))
+        
         CORS(self.app)
         self.app.secret_key = secrets.token_hex(16)
 
@@ -757,19 +917,24 @@ class ChatbotAPI:
             session['last_activity'] = time.time()
 
         corrected_message = self._correct_all_typos(user_message)
+        lower_corrected = corrected_message.lower().strip()
         user_models_in_msg = self._extract_models(corrected_message)
-
+        price_intent = self._is_price_intent(corrected_message)
         if user_id not in self.user_states:
             self.user_states[user_id] = {}
             self.user_states[user_id]["threads"] = {}
 
         last_models = self.user_states[user_id].get("last_models", set())
-        if not user_models_in_msg and last_models:
+        if (not user_models_in_msg) and last_models and (not price_intent):
             joined_models = " ve ".join(last_models)
             corrected_message = f"{joined_models} {corrected_message}".strip()
             user_models_in_msg = self._extract_models(corrected_message)
-            self.logger.info(f"[MODEL-EKLEME] Önceki modeller eklendi -> {joined_models}")
-
+            lower_corrected = corrected_message.lower().strip()
+        if (not user_models_in_msg) and last_models and ("fiyat" not in lower_corrected):
+            joined_models = " ve ".join(last_models)
+            corrected_message = f"{joined_models} {corrected_message}".strip()
+            user_models_in_msg = self._extract_models(corrected_message)
+            lower_corrected = corrected_message.lower().strip()
         if user_models_in_msg:
             self.user_states[user_id]["last_models"] = user_models_in_msg
 
@@ -778,7 +943,9 @@ class ChatbotAPI:
 
         lower_corrected = corrected_message.lower().strip()
         is_image_req = self.utils.is_image_request(corrected_message)
+        skip_cache_for_price_all = ("fiyat" in lower_corrected and not user_models_in_msg)
         user_trims_in_msg = extract_trims(lower_corrected)
+        skip_cache_for_price_all = (price_intent and not user_models_in_msg)
         old_assistant_id = self.user_states[user_id].get("assistant_id")
         new_assistant_id = None
         if is_non_sentence_short_reply(corrected_message):
@@ -787,7 +954,7 @@ class ChatbotAPI:
         else:
             # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
             cached_answer = None
-            if not is_image_req:
+            if not is_image_req and not skip_cache_for_price_all:
                 cached_answer = self._find_fuzzy_cached_answer(
                     user_id,
                     corrected_message,
@@ -854,7 +1021,7 @@ class ChatbotAPI:
 
         # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
         cached_answer = None
-        if not is_image_req:
+        if not is_image_req and not skip_cache_for_price_all:
             cached_answer = self._find_fuzzy_cached_answer(
                 user_id,
                 corrected_message,
@@ -1258,9 +1425,14 @@ class ChatbotAPI:
             self.user_states[user_id]["current_trim"] = ""
 
         lower_msg = user_message.lower()
+        price_intent = self._is_price_intent(user_message)
         teknik_keywords = [
             "teknik özellik", "teknik veriler", "teknik veri", "motor özellik", "motor donanım", "motor teknik", "teknik tablo", "teknik", "performans"
         ]
+
+        if price_intent:  # ← ESKİ: if "fiyat" in lower_msg:
+            yield from self._yield_fiyat_listesi(user_message)
+            return
 
         if any(kw in lower_msg for kw in teknik_keywords):
             user_models_in_msg2 = self._extract_models(user_message)
@@ -1310,6 +1482,11 @@ class ChatbotAPI:
                 yield SUPERB_TEKNIK_MD.encode("utf-8")
                 return
             
+                # --- FIYAT L\u0130STES\u0130 ---
+        if "fiyat" in lower_msg:
+            # Belirtilen modele g\u00f6re filtreleyerek ya da tam liste halinde fiyat tablosunu d\u00f6n
+            yield from self._yield_fiyat_listesi(user_message)
+            return
 
         # 1) Kategori eşleşmesi
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
