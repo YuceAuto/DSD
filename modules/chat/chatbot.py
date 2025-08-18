@@ -498,7 +498,12 @@ class ChatbotAPI:
             
         )
         self.PRICE_INTENT_FUZZY_THRESHOLD = float(os.getenv("PRICE_INTENT_FUZZY_THRESHOLD", "0.80"))
-        
+        self.MODEL_FUZZY_THRESHOLD = float(os.getenv("MODEL_FUZZY_THRESHOLD", "0.80"))
+        self.IMAGE_INTENT_LIFETIME = int(os.getenv("IMAGE_INTENT_LIFETIME", "60"))
+        self.MODEL_CANONICALS = [
+            "fabia", "scala", "kamiq", "karoq", "kodiaq",
+            "octavia", "superb", "enyaq", "elroq"
+        ]
         CORS(self.app)
         self.app.secret_key = secrets.token_hex(16)
 
@@ -743,9 +748,21 @@ class ChatbotAPI:
         self.logger.info("Background DB writer thread stopped.")
 
     def _correct_all_typos(self, user_message: str) -> str:
-        step1 = self._correct_image_keywords(user_message)
+        step0 = self._correct_model_typos(user_message)   # ← önce model
+        step1 = self._correct_image_keywords(step0)
         final_corrected = self._correct_trim_typos(step1)
         return final_corrected
+    def _set_pending_image(self, user_id: str):
+        self.user_states.setdefault(user_id, {})["pending_image_ts"] = time.time()
+
+    def _is_pending_image(self, user_id: str) -> bool:
+        ts = self.user_states.get(user_id, {}).get("pending_image_ts")
+        return bool(ts and (time.time() - ts <= self.IMAGE_INTENT_LIFETIME))
+
+    def _clear_pending_image(self, user_id: str):
+        if user_id in self.user_states:
+            self.user_states[user_id]["pending_image_ts"] = None
+
 
     def _correct_image_keywords(self, user_message: str) -> str:
         possible_image_words = [
@@ -791,6 +808,35 @@ class ChatbotAPI:
                 combined_tokens.append(new_tokens[i])
 
         return " ".join(combined_tokens)
+
+    
+
+    def _apply_case_like(self, src: str, dst: str) -> str:
+        """Kaynağın biçemine benzer biçimde hedefi döndür (BÜYÜK / Başlık / küçük)."""
+        if src.isupper():
+            return dst.upper()
+        if src.istitle():
+            return dst.title()
+        return dst
+
+    def _correct_model_typos(self, user_message: str) -> str:
+        """
+        'fabi' → 'fabia', 'karok' → 'karoq' vb.
+        Kelime bazında fuzzy eşleştirip yalnızca model adlarını düzeltir.
+        """
+        canon = ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
+
+        def repl(m):
+            token = m.group(0)
+            norm = normalize_tr_text(token).lower()
+            best = self.utils.fuzzy_find(norm, canon, threshold=self.MODEL_FUZZY_THRESHOLD)
+            if best:
+                return self._apply_case_like(token, best)
+            return token
+
+        # Türkçe karakterler dahil kelime yakala
+        return re.sub(r"\b[0-9A-Za-zçğıöşüÇĞİÖŞÜ]+\b", repl, user_message)
+
 
     def _search_in_assistant_cache(self, user_id, assistant_id, new_question, threshold):
         if not assistant_id:
@@ -844,29 +890,53 @@ class ChatbotAPI:
         self.fuzzy_cache_queue.put(record)
 
     def _extract_models(self, text: str) -> set:
-        lower_t = text.lower()
-        models = set()
-        if "fabia" in lower_t:
-            models.add("fabia")
-        if "scala" in lower_t:
-            models.add("scala")
-        if "kamiq" in lower_t:
-            models.add("kamiq")
-        if "karoq" in lower_t:
-            models.add("karoq")
-        if "kodiaq" in lower_t:
-            models.add("kodiaq")
-        if "enyaq" in lower_t:
-            models.add("enyaq")
-        if "elroq" in lower_t:
-            models.add("elroq")
-        if "octavia" in lower_t:
-            models.add("octavia")
-        if "superb" in lower_t:
-            models.add("superb")
-        if "test" in lower_t:
-            models.add("test")
-        return models
+        """
+        Metinden Skoda model adlarını çıkarır (yazım hatalarıyla birlikte).
+
+        Çalışma biçimi:
+        1) normalize_tr_text ile küçük harfe indirip doğrudan içerme kontrolü
+        2) Türkçe dostu tokenizasyon ve token başına fuzzy eşleşme
+            (örn. 'fabi' -> 'fabia', 'karok' -> 'karoq', 'kodıak' -> 'kodiaq')
+
+        Dönüş: {'fabia', 'karoq'} gibi normalize (küçük harf) model adları kümesi.
+        """
+        if not text:
+            return set()
+
+        s = normalize_tr_text(text).lower()
+
+        CANON = (
+            "fabia", "scala", "kamiq", "karoq", "kodiaq",
+            "octavia", "superb", "enyaq", "elroq", "test"
+        )
+
+        # 1) Hızlı yol: doğrudan metin içinde geçenler
+        found = {m for m in CANON if m in s}
+
+        # 2) Fuzzy: yazım hataları için kelime bazlı tarama
+        #    (Türkçe karakterleri koruyan bir regex ile tokenizasyon)
+        tokens = re.findall(r"[0-9a-zçğıöşü]+", s, flags=re.IGNORECASE)
+
+        # Yanlış pozitifleri azaltmak için birkaç basit filtre
+        SKIP_TOKENS = {"fiat"}                        # başka marka
+        SKIP_PREFIXES = ("fiyat",)                    # 'fiyat' ~ 'fabia' karışmasın
+        th = getattr(self, "MODEL_FUZZY_THRESHOLD", 0.80)
+
+        for tok in tokens:
+            if len(tok) < 3:
+                continue
+            if tok in SKIP_TOKENS:
+                continue
+            if any(tok.startswith(pfx) for pfx in SKIP_PREFIXES):
+                continue
+
+            best = self.utils.fuzzy_find(tok, CANON, threshold=th)
+            if best:
+                found.add(best)
+
+        return found
+    
+        
 
     def _assistant_id_from_model_name(self, model_name: str):
         model_name = model_name.lower()
@@ -1868,12 +1938,14 @@ class ChatbotAPI:
                     return
 
         # 7) Görsel (image) isteği
-        if is_image_req:
+        image_mode = is_image_req or self._is_pending_image(user_id)
+        if image_mode:
             user_models_in_msg2 = self._extract_models(user_message)
             if not user_models_in_msg2 and "last_models" in self.user_states[user_id]:
                 user_models_in_msg2 = self.user_states[user_id]["last_models"]
 
             if user_models_in_msg2:
+                self._clear_pending_image(user_id)  # bekleme bayrağını sil
                 if len(user_models_in_msg2) > 1:
                     yield "Birden fazla model algılandı, rastgele görseller paylaşıyorum...<br>"
                     for m in user_models_in_msg2:
@@ -1890,8 +1962,10 @@ class ChatbotAPI:
                     yield cat_links_html.encode("utf-8")
                     return
             else:
+                # model yoksa kullanıcıdan iste ama bekleme bayrağını ayarla
+                self._set_pending_image(user_id)
                 yield ("Hangi modelin görsellerine bakmak istersiniz? "
-                       "(Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>")
+                    "(Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>")
                 return
 
         # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
