@@ -305,7 +305,59 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
-    def _yield_fiyat_listesi(self, user_message: str):
+    def _should_attach_contact_link(self, message: str) -> bool:
+        """Test sürüş / satış formunu yalnızca uygun niyetlerde ekle."""
+        if not message:
+            return False
+
+        # Zaten var olan fiyat niyeti belirleyicinizi kullanın
+        if self._is_price_intent(message):
+            return True
+
+        # Satın alma / randevu / bayi gibi niyetler de 'ilgili'
+        msg_norm = normalize_tr_text(message).lower()
+        contact_keywords = [
+            "test sürüş", "testsürüş", "deneme sürüş", "randevu",
+            "satın al", "satinal", "teklif", "kredi", "finansman",
+            "leasing", "taksit", "kampanya", "stok", "teslimat", "bayi"
+        ]
+        return any(k in msg_norm for k in contact_keywords)
+
+    def _purge_kac_entries(self) -> int:
+        removed = 0
+        for uid in list(self.fuzzy_cache.keys()):
+            for aid in list(self.fuzzy_cache[uid].keys()):
+                lst = self.fuzzy_cache[uid][aid]
+                new_lst = [it for it in lst if not self._has_kac_word(it.get("question",""))]
+                removed += (len(lst) - len(new_lst))
+                self.fuzzy_cache[uid][aid] = new_lst
+        self.logger.info(f"[CACHE] Purge: 'kaç' içeren {removed} kayıt silindi.")
+        return removed
+    def _has_kac_word(self, text: str) -> bool:
+        """
+        'kaç' ailesini diakritik güvenli yakalar: 'kaç', 'kaça', 'kaç km', 'kac', 'kaca', 'kaçıncı' vb.
+        Yalnızca kelime başında eşleşir (yakacağım gibi iç gövde eşleşmelerini dışlar).
+        """
+        if not text:
+            return False
+
+        t_raw = (text or "").lower()
+        # ham metinde dene (ç harfiyle)
+        if re.search(r"(?<!\w)ka[çc]\w*", t_raw):
+            return True
+
+        # normalize edilmiş metinde tekrar dene (ç -> c vb.)
+        t_norm = normalize_tr_text(text).lower()
+        if re.search(r"(?<!\w)kac\w*", t_norm):
+            return True
+
+        return False
+
+    def _yield_fiyat_listesi(self, user_message: str, user_id: str | None = None):
+        # 0) Fiyat sorularında test sürüş / satış formu uygundur (tekrarları marker ile engeller)
+        if user_id is not None:
+            yield self._contact_link_html(user_id=user_id).encode("utf-8")
+
         """
         'fiyat' geçen mesajlarda fiyat tablosunu döndürür.
         Model belirtilmişse filtreler; Octavia/Superb için 'combi',
@@ -413,48 +465,54 @@ class ChatbotAPI:
 
     def _is_price_intent(self, text: str, threshold: float | None = None) -> bool:
         """
-        Kullanıcı metni fiyat sormak mı?
-        - Fuzzy eşleşme: 'ne kadar', 'kaç para', 'kaça', 'fiyat listesi', 'anahtar teslim'
-        - 'fiyat' sözcüğü ve çekimleri + yazım hataları (fıyat, fiayt, fyat...)
-        - Negatif örüntüler: 'ne kadar yakar/menzil/şarj/km...' ise fiyat değildir.
+        Fiyat niyeti:
+        - 'fiyat' kökü ve türevleri, 'liste fiyat', 'anahtar teslim'
+        - 'kaça' (diakritikli/diakr.) veya 'kaç para'
+        - 'ne kadar' (ancak bariz teknik/menzil/yakıt bağlamları yoksa)
+        Not: Sadece 'kaç' tek başına fiyat değildir.
         """
-        t = normalize_tr_text(text or "").lower()
+        t_raw = (text or "").lower()
+        t_norm = normalize_tr_text(text or "").lower()
         thr = threshold if threshold is not None else getattr(self, "PRICE_INTENT_FUZZY_THRESHOLD", 0.80)
 
-        # 0) Fiyatla ilgisiz 'ne kadar ...' örüntülerini dışla
-        # (burada fuzzy kullanmıyoruz; bu kelimeler genelde doğru yazılır)
-        if re.search(r"\b(yakar|yakit|yakıt|sarj|şarj|menzil|range|km|kilometre|bagaj|hizlanma|hızlanma|0[-–]100)\b", t):
-            # ...ama eğer açıkça 'fiyat' da geçiyorsa yine de fiyat say
-            if "fiyat" not in t:
-                # örn. "ne kadar yakar", "menzil ne kadar" → fiyat niyeti değil
-                pass
-            else:
-                return True
-
-        # 1) Fuzzy kalıplar
-        phrases = [
-            "ne kadar",
-            "kaç para",
-            "kaca",         # aksansız varyant
-            "kaça",
-            "fiyat listesi",
-            "liste fiyat",
-            "anahtar teslim",
-        ]
-        if any(self._fuzzy_contains(t, ph, thr) for ph in phrases):
+        # 0) Açık fiyat kelimeleri
+        if re.search(r"\b(fiyat|liste\s*fiyat|anahtar\s*teslim(?:i)?)\b", t_norm):
             return True
 
-        # 2) 'fiyat' kökü (çekimler veya yazım hataları)
-        tokens = re.findall(r"[a-zçğıöşü]+", t)
+        # 1) Para birimi işaretleri (rakam + TL/₺)
+        if re.search(r"(?:\b\d{1,3}(?:\.\d{3})*(?:,\d+)?|\b\d+(?:,\d+)?)\s*(tl|₺)\b", t_norm):
+            return True
+
+        # 2) Kaça / kaç para  → sadece SINIRLI ve KESİN eşleşme (fuzzy yok!)
+        if re.search(r"\bkaça\b", t_raw) or re.search(r"\bkaca\b", t_norm):
+            return True
+        if re.search(r"\bkaç\s+para\b", t_raw) or re.search(r"\bkac\s+para\b", t_norm):
+            return True
+
+        # 3) 'ne kadar' → fiyat say; fakat teknik/menzil/yakıt gibi bağlamlar varsa sayma
+        if re.search(r"\bne\s+kadar\b", t_raw):
+            # negatif bağlamlar
+            if re.search(r"\b(yakar|yakit|yakıt|sarj|şarj|menzil|range|km|kilometre|bagaj|hiz|hız|hizlanma|hızlanma|0[-–]100|beygir|hp|ps|tork)\b", t_norm):
+                # ancak yanında açık fiyat kelimesi varsa yine fiyat say
+                if re.search(r"\b(fiyat|tl|₺|lira|ücret|bedel)\b", t_norm):
+                    return True
+                return False
+            return True  # düz 'ne kadar' → fiyat
+
+        # 4) Yazım hatalı 'fiyat' yakala (fiayt/fıyat/fyat...)
+        tokens = re.findall(r"[a-zçğıöşü]+", t_norm)
         import difflib
         for tok in tokens:
-            if tok == "fiat":   # marka ile karışmasın
+            if tok == "fiat":  # marka ile karışmasın
                 continue
-            if tok.startswith("fiyat"):  # fiyat, fiyatı, fiyatlar...
+            if tok.startswith("fiyat"):
                 return True
-            # ilk 5 harfe fuzzy: fıyat, fyat, fiayt...
-            if difflib.SequenceMatcher(None, tok[:5], "fiyat").ratio() >= thr:
+            if len(tok) >= 4 and difflib.SequenceMatcher(None, tok[:5], "fiyat").ratio() >= thr:
                 return True
+
+        # 5) ÖNEMLİ: 'kaç' tek başına (veya 'kac') asla fiyat değildir
+        if re.search(r"(?<!\w)ka[çc]\b", t_raw) or re.search(r"(?<!\w)kac\b", t_norm):
+            return False
 
         return False
 
@@ -487,7 +545,7 @@ class ChatbotAPI:
 
     def _with_contact_link_prefixed(self, body_bytes: bytes, user_id: str | None = None, model_hint: str | None = None) -> bytes:
         marker = b"<!-- SKODA_CONTACT_LINK -->"
-        if marker in body_bytes[:500]:
+        if marker in body_bytes:
             return body_bytes
         return (self._contact_link_html(user_id=user_id, model_hint=model_hint).encode("utf-8") + body_bytes)
     def __init__(self, logger=None, static_folder='static', template_folder='templates'):
@@ -589,7 +647,7 @@ class ChatbotAPI:
         self.logger.info("=== YENI VERSIYON KOD CALISIYOR ===")
 
         self._define_routes()
-
+        self._purge_kac_entries()
     def _setup_logger(self):
         logger = logging.getLogger("ChatbotAPI")
         if not logger.handlers:
@@ -839,6 +897,8 @@ class ChatbotAPI:
 
 
     def _search_in_assistant_cache(self, user_id, assistant_id, new_question, threshold):
+        if self._has_kac_word(new_question):
+            return None, None
         if not assistant_id:
             return None, None
         if user_id not in self.fuzzy_cache:
@@ -866,6 +926,10 @@ class ChatbotAPI:
         return None, None
 
     def _find_fuzzy_cached_answer(self, user_id: str, new_question: str, assistant_id: str, threshold=0.9):
+        if self._has_kac_word(new_question):
+            self.logger.info("[CACHE] Bypass: 'kaç' tespit edildi -> _find_fuzzy_cached_answer kapatıldı.")
+            return None
+
         ans, ratio = self._search_in_assistant_cache(user_id, assistant_id, new_question, threshold)
         if ans:
             return ans
@@ -1016,6 +1080,7 @@ class ChatbotAPI:
         skip_cache_for_price_all = ("fiyat" in lower_corrected and not user_models_in_msg)
         user_trims_in_msg = extract_trims(lower_corrected)
         skip_cache_for_price_all = (price_intent and not user_models_in_msg)
+        skip_cache_for_kac = self._has_kac_word(corrected_message)
         old_assistant_id = self.user_states[user_id].get("assistant_id")
         new_assistant_id = None
         if is_non_sentence_short_reply(corrected_message):
@@ -1024,7 +1089,7 @@ class ChatbotAPI:
         else:
             # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
             cached_answer = None
-            if not is_image_req and not skip_cache_for_price_all:
+            if not is_image_req and not skip_cache_for_price_all and not skip_cache_for_kac:
                 cached_answer = self._find_fuzzy_cached_answer(
                     user_id,
                     corrected_message,
@@ -1053,8 +1118,10 @@ class ChatbotAPI:
                     if cached_answer:
                         self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                         time.sleep(1)
-                        wrapped = self._with_contact_link_prefixed(cached_answer, user_id=user_id)  # <-- YENİ
-                        return self.app.response_class(wrapped, mimetype="text/plain")
+                        ans_bytes = cached_answer
+                        if self._should_attach_contact_link(corrected_message):
+                            ans_bytes = self._with_contact_link_prefixed(ans_bytes, user_id=user_id)
+                        return self.app.response_class(ans_bytes, mimetype="text/plain")
 
         # --- YENİ SON ---
         # Model tespitinden asistan ID'si seç
@@ -1091,7 +1158,7 @@ class ChatbotAPI:
 
         # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
         cached_answer = None
-        if not is_image_req and not skip_cache_for_price_all:
+        if not is_image_req and not skip_cache_for_price_all and not skip_cache_for_kac:
             cached_answer = self._find_fuzzy_cached_answer(
                 user_id,
                 corrected_message,
@@ -1120,8 +1187,11 @@ class ChatbotAPI:
                 if cached_answer:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                     time.sleep(1)
-                    wrapped = self._with_contact_link_prefixed(cached_answer, user_id=user_id)  # <-- YENİ
-                    return self.app.response_class(wrapped, mimetype="text/plain")
+                    ans_bytes = cached_answer
+                    if self._should_attach_contact_link(corrected_message):
+                        ans_bytes = self._with_contact_link_prefixed(ans_bytes, user_id=user_id)
+                    return self.app.response_class(ans_bytes, mimetype="text/plain")
+                    
 
         final_answer_parts = []
 
@@ -1150,7 +1220,9 @@ class ChatbotAPI:
                 self.user_states[user_id]["last_conversation_id"] = conversation_id
 
                  # --- YENİ BAŞLANGIÇ: Cache'e kısa/klişe yanıtı hiç kaydetme! ---
-                if not is_image_req and not is_non_sentence_short_reply(corrected_message):
+                if (not is_image_req
+                    and not is_non_sentence_short_reply(corrected_message)
+                    and not skip_cache_for_kac):
                     self._store_in_fuzzy_cache(
                         user_id,
                         name_surname,
@@ -1501,7 +1573,7 @@ class ChatbotAPI:
         ]
 
         if price_intent:  # ← ESKİ: if "fiyat" in lower_msg:
-            yield from self._yield_fiyat_listesi(user_message)
+            yield from self._yield_fiyat_listesi(user_message, user_id=user_id)
             return
 
         if any(kw in lower_msg for kw in teknik_keywords):
@@ -1555,7 +1627,7 @@ class ChatbotAPI:
                 # --- FIYAT L\u0130STES\u0130 ---
         if "fiyat" in lower_msg:
             # Belirtilen modele g\u00f6re filtreleyerek ya da tam liste halinde fiyat tablosunu d\u00f6n
-            yield from self._yield_fiyat_listesi(user_message)
+            yield from self._yield_fiyat_listesi(user_message, user_id=user_id)
             return
 
         # 1) Kategori eşleşmesi
@@ -2042,8 +2114,11 @@ class ChatbotAPI:
                     models_in_msg_now = self._extract_models(user_message)
                     model_hint = next(iter(models_in_msg_now)) if len(models_in_msg_now) == 1 else None
 
-                    to_send = self._with_contact_link_prefixed(content_md.encode("utf-8"))
-                    yield to_send
+                    resp_bytes = content_md.encode("utf-8")
+                    if self._should_attach_contact_link(user_message):
+                        resp_bytes = self._with_contact_link_prefixed(resp_bytes, user_id=user_id)
+                    yield resp_bytes
+
 
                     # ÖNEMLİ: while döngüsünden çık
                     break
