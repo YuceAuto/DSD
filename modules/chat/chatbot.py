@@ -305,6 +305,123 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+    def _proxy_first_service_answer(self, user_message: str, user_id: str) -> dict:
+        """
+        Birinci servis (Birinci Kod) /api/raw_answer endpoint’ine proxy çağrı yapar.
+        Tablo/görsel dışı metin yanıtı istediğimizde kullanılır.
+        """
+        try:
+            payload = {"question": user_message, "user_id": user_id}
+            headers = {
+                "Content-Type": "application/json",
+                "X-Bridge-Key": self.FIRST_SHARED_SECRET or ""
+            }
+            r = requests.post(self.FIRST_SERVICE_URL, json=payload, headers=headers, timeout=30)
+            r.raise_for_status()
+            data = r.json() if r.content else {}
+            # Beklenen alanlar: answer, conversation_id, assistant_id
+            return data or {}
+        except Exception as e:
+            self.logger.error(f"[bridge] First service error: {e}")
+            return {"answer": "", "error": str(e)}
+
+    def _looks_like_table_or_image(self, text: str) -> bool:
+        """Birinci servisten dönen içeriğin tablo/görsel içerip içermediğini kaba olarak anlar."""
+        if not text:
+            return False
+        t = text.lower()
+        # basit tablo ipuçları (markdown header ve sütun çizgisi)
+        if ("|\n" in text or "\n|" in text) and re.search(r"\|\s*[-:]+\s*\|", text):
+            return True
+        # tipik görsel ipuçları
+        if "![ " in t or "![" in t or "<img" in t or "/static/images/" in t:
+            return True
+        return False
+
+    def _strip_tables_and_images(self, text: str) -> str:
+        """
+        Güvenlik için: Birinci servisten yanlışlıkla tablo/görsel gelirse,
+        onları kullanıcıya aktarmadan ayıklar (sadece düz metni bırakır).
+        """
+        if not text:
+            return text
+        lines = text.splitlines()
+        filtered = []
+        in_table = False
+        for ln in lines:
+            ln_low = ln.lower()
+
+            # Görsel satırlarını tamamen at
+            if ("![ " in ln_low) or ("![" in ln_low) or ("<img" in ln_low) or ("/static/images/" in ln_low):
+                continue
+
+            # Tablo ayıklama: ayırıcıyı gördüğünde tablo bloklarını geç
+            if re.search(r"\|\s*[-:]+\s*\|", ln):
+                in_table = True
+                continue
+            if in_table:
+                if '|' in ln:
+                    continue
+                else:
+                    in_table = False
+
+            # Kalan satırlar
+            filtered.append(ln)
+        out = "\n".join(filtered).strip()
+        return out if out else " "
+
+    def _deliver_via_test_assistant(self, user_id: str, answer_text: str, original_user_message: str = "") -> bytes:
+        """
+        Birinci servisten gelen metin cevabı, İkinci Kod'un 'test' asistanı üzerinden son kullanıcıya iletir.
+        'test' asistan yoksa, düz metni döner.
+        """
+        # Eğer 'test' ID yoksa ham metni dön (site/test sürüş linklerini yine ekleyelim)
+        if not self.TEST_ASSISTANT_ID:
+            self.logger.warning("TEST_ASSISTANT_ID not configured; returning raw bridged answer.")
+            resp_bytes = answer_text.encode("utf-8")
+            if self._should_attach_contact_link(original_user_message):
+                resp_bytes = self._with_contact_link_prefixed(resp_bytes, user_id=user_id)
+            if self._should_attach_site_link(original_user_message):
+                resp_bytes = self._with_site_link_appended(resp_bytes)
+            return resp_bytes
+
+        # 'test' asistanına "ileti metni" olarak gönder (parafraz etmemesi için kısa direktif)
+        content = (
+            "Aşağıdaki metin son kullanıcı cevabıdır. Lütfen metni olduğu gibi, "
+            "Markdown biçimini koruyarak ve ek yorum katmadan ilet.\n\n"
+            f"{answer_text}"
+        )
+        try:
+            out = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=self.TEST_ASSISTANT_ID,
+                content=content,
+                timeout=60.0
+            )
+            out_md = self.markdown_processor.transform_text_to_markdown(out or "")
+
+            # Uygun yerlerde linkleri ekleyelim (marker’lar mükerrer eklemeyi önlüyor)
+            resp_bytes = out_md.encode("utf-8")
+            if self._should_attach_contact_link(original_user_message):
+                resp_bytes = self._with_contact_link_prefixed(resp_bytes, user_id=user_id)
+            if self._should_attach_site_link(original_user_message):
+                resp_bytes = self._with_site_link_appended(resp_bytes)
+            return resp_bytes
+        except Exception as e:
+            self.logger.error(f"[bridge] deliver via test assistant failed: {e}")
+            # Yedek: ham metni dön
+            resp_bytes = answer_text.encode("utf-8")
+            if self._should_attach_contact_link(original_user_message):
+                resp_bytes = self._with_contact_link_prefixed(resp_bytes, user_id=user_id)
+            if self._should_attach_site_link(original_user_message):
+                resp_bytes = self._with_site_link_appended(resp_bytes)
+            return resp_bytes
+
+    def _feedback_marker(self, conversation_id: int) -> bytes:
+        # görünmez veri taşıyıcı
+        html = f'<span class="conv-marker" data-conv-id="{conversation_id}" style="display:none"></span>'
+        return html.encode("utf-8")
+
     def _should_attach_contact_link(self, message: str) -> bool:
         """Test sürüş / satış formunu yalnızca uygun niyetlerde ekle."""
         if not message:
@@ -314,14 +431,30 @@ class ChatbotAPI:
         if self._is_price_intent(message):
             return True
 
-        # Satın alma / randevu / bayi gibi niyetler de 'ilgili'
         msg_norm = normalize_tr_text(message).lower()
-        contact_keywords = [
-            "test sürüş", "testsürüş", "deneme sürüş", "randevu",
+        raw_keywords = [
+            "test sürüşü", "testsürüş", "deneme sürüş", "randevu",
             "satın al", "satinal", "teklif", "kredi", "finansman",
             "leasing", "taksit", "kampanya", "stok", "teslimat", "bayi"
         ]
-        return any(k in msg_norm for k in contact_keywords)
+        # diakritik güvenli karşılaştırma
+        kw = [normalize_tr_text(k).lower() for k in raw_keywords]
+        msg_compact = re.sub(r"\s+", "", msg_norm)
+        return any(k in msg_norm or k.replace(" ", "") in msg_compact for k in kw)
+
+
+    def _is_test_drive_intent(self, message: str) -> bool:
+        """'test sürüşü' / 'testsürüş' / 'deneme sürüş' gibi niyetleri diakritik güvenli yakalar."""
+        if not message:
+            return False
+        msg_norm = normalize_tr_text(message).lower()
+        cmp_msg = re.sub(r"\s+", "", msg_norm)  # boşluksuz varyantı da tara
+        candidates = ["test sürüş", "testsürüş", "deneme sürüş"]
+        candidates = [normalize_tr_text(c).lower() for c in candidates]
+        return any(
+            c in msg_norm or c.replace(" ", "") in cmp_msg
+            for c in candidates
+        )
 
     def _purge_kac_entries(self) -> int:
         removed = 0
@@ -543,6 +676,36 @@ class ChatbotAPI:
             '</p>'
         )
 
+    def _site_link_html(self) -> str:
+        return (
+            '<!-- SKODA_SITE_LINK -->'
+            '<p style="margin:8px 0 12px;">'
+            'Daha fazla bilgi için resmi web sitemizi ziyaret edebilirsiniz: '
+            '<a href="https://www.skoda.com.tr/" target="_blank" rel="noopener">skoda.com.tr</a>.'
+            '</p>'
+        )
+
+    def _with_site_link_appended(self, body_bytes: bytes) -> bytes:
+        """Yanıtın SONUNA resmi site linkini ekler; marker ile çoğaltmayı engeller."""
+        marker = b"<!-- SKODA_SITE_LINK -->"
+        if marker in body_bytes:
+            return body_bytes
+        return body_bytes + b"\n" + self._site_link_html().encode("utf-8")
+
+    def _should_attach_site_link(self, message: str) -> bool:
+        """Kullanıcı 'daha fazla/ayrıntı' isterse site linkini ekle."""
+        if not message:
+            return False
+        m = normalize_tr_text(message).lower()
+        more_kw = [
+            "daha fazla", "daha fazlasi", "daha cok", "daha çok",
+            "detay", "detayli", "detaylı", "ayrinti", "ayrıntı",
+            "devam", "continue", "more", "tell me more",
+            "site", "web", "resmi site", "skoda sitesi", "skoda.com.tr"
+        ]
+        return any(k in m for k in more_kw)
+
+
     def _with_contact_link_prefixed(self, body_bytes: bytes, user_id: str | None = None, model_hint: str | None = None) -> bytes:
         marker = b"<!-- SKODA_CONTACT_LINK -->"
         if marker in body_bytes:
@@ -555,6 +718,11 @@ class ChatbotAPI:
             template_folder=os.path.join(os.getcwd(), template_folder),
             
         )
+        self.FIRST_SERVICE_URL   = os.getenv("FIRST_SERVICE_URL", "http://127.0.0.1:5000/api/raw_answer")
+        self.FIRST_SHARED_SECRET = os.getenv("FIRST_SHARED_SECRET", "")
+        # "test" asistan ID'si: .env yoksa Config'ten 'test' map'ini dene
+        self.TEST_ASSISTANT_ID   = os.getenv("TEST_ASSISTANT_ID") or self._assistant_id_from_model_name("test")
+
         self.PRICE_INTENT_FUZZY_THRESHOLD = float(os.getenv("PRICE_INTENT_FUZZY_THRESHOLD", "0.80"))
         self.MODEL_FUZZY_THRESHOLD = float(os.getenv("MODEL_FUZZY_THRESHOLD", "0.80"))
         self.IMAGE_INTENT_LIFETIME = int(os.getenv("IMAGE_INTENT_LIFETIME", "60"))
@@ -659,6 +827,14 @@ class ChatbotAPI:
         return logger
 
     def _define_routes(self):
+        @self.app.route("/idle_prompts", methods=["GET"])
+        def idle_prompts():
+            user_id = request.args.get("user_id", "guest")
+            try:
+                html = self._idle_prompts_html(user_id)
+                return jsonify({"html": html})
+            except Exception as e:
+                return jsonify({"html": f"<div>Örnek talepler yüklenemedi: {str(e)}</div>"}), 200
         @self.app.route("/", methods=["GET"])
         def home():
             return render_template("index.html")
@@ -666,6 +842,11 @@ class ChatbotAPI:
         @self.app.route("/ask/<string:username>", methods=["POST"])
         def ask(username):
             return self._ask(username)
+        @self.app.route("/ask", methods=["POST"])
+        def ask_plain():
+            # Frontend zaten body'de user_id gönderiyor, yine de bir "guest" adı geçelim
+            return self._ask(username="guest")
+
 
         @self.app.route("/check_session", methods=["GET"])
         def check_session():
@@ -1119,8 +1300,9 @@ class ChatbotAPI:
                         self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                         time.sleep(1)
                         ans_bytes = cached_answer
-                        if self._should_attach_contact_link(corrected_message):
-                            ans_bytes = self._with_contact_link_prefixed(ans_bytes, user_id=user_id)
+                        if self._should_attach_site_link(corrected_message):
+                            ans_bytes = self._with_site_link_appended(ans_bytes)
+
                         return self.app.response_class(ans_bytes, mimetype="text/plain")
 
         # --- YENİ SON ---
@@ -1150,7 +1332,9 @@ class ChatbotAPI:
             if not new_assistant_id:
                 # Tek seferlik DB kaydı
                 save_to_db(user_id, user_message, "Uygun asistan bulunamadı.", username=name_surname)
-                return self.app.response_class("Uygun bir asistan bulunamadı.\n", mimetype="text/plain")
+                msg = self._with_site_link_appended("Uygun bir asistan bulunamadı.\n")
+                return self.app.response_class(msg, mimetype="text/plain")
+
 
         self.user_states[user_id]["assistant_id"] = new_assistant_id
 
@@ -1188,8 +1372,9 @@ class ChatbotAPI:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
                     time.sleep(1)
                     ans_bytes = cached_answer
-                    if self._should_attach_contact_link(corrected_message):
-                        ans_bytes = self._with_contact_link_prefixed(ans_bytes, user_id=user_id)
+                    if self._should_attach_site_link(corrected_message):
+                        ans_bytes = self._with_site_link_appended(ans_bytes)
+
                     return self.app.response_class(ans_bytes, mimetype="text/plain")
                     
 
@@ -1204,6 +1389,8 @@ class ChatbotAPI:
                 error_text = f"Bir hata oluştu: {str(ex)}\n"
                 final_answer_parts.append(error_text.encode("utf-8"))
                 self.logger.error(f"caching_generator hata: {ex}")
+                # YENİ: Hata metnini site linki ile birlikte kullanıcıya gönder
+                yield self._with_site_link_appended(error_text.encode("utf-8"))
             finally:
                 full_answer = b"".join(
                     p if isinstance(p, bytes) else p.encode("utf-8")
@@ -1233,7 +1420,8 @@ class ChatbotAPI:
                     )
                 # --- YENİ SON ---
 
-                yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
+                #yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
+                yield self._feedback_marker(conversation_id)
 
         return self.app.response_class(caching_generator(), mimetype="text/plain")
 
@@ -1562,6 +1750,13 @@ class ChatbotAPI:
         # ---  YAKIT (benzin/dizel) SORUSU  ------------------------------------
         
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
+        if self._is_test_drive_intent(user_message):
+            yield self._contact_link_html(
+                user_id=user_id,
+                model_hint=self._resolve_display_model(user_id)
+            ).encode("utf-8")
+            # İsterseniz yanında hızlı örnek talepleri de gösterelim:
+            return
         assistant_id = self.user_states[user_id].get("assistant_id", None)
         if "current_trim" not in self.user_states[user_id]:
             self.user_states[user_id]["current_trim"] = ""
@@ -2039,10 +2234,33 @@ class ChatbotAPI:
                 yield ("Hangi modelin görsellerine bakmak istersiniz? "
                     "(Fabia, Kamiq, Scala, Karoq, Enyaq, Elroq vb.)<br>")
                 return
+        # 7.9) KÖPRÜ: Tablo/Görsel akışları haricinde — birinci servisten yanıt al,
+#            sonra 'test' asistanı üzerinden kullanıcıya ilet
+        try:
+            bridge = self._proxy_first_service_answer(user_message=user_message, user_id=user_id)
+            bridge_answer = (bridge.get("answer") or "").strip()
+        except Exception:
+            bridge_answer = ""
+
+        if bridge_answer:
+            # Güvenlik: varsa tablo/görsel kısımlarını çıkar (tablolar/görseller her zaman İkinci Kod tarafından verilmeli)
+            if self._looks_like_table_or_image(bridge_answer):
+                bridge_answer = self._strip_tables_and_images(bridge_answer)
+
+            # Cevabı "test" asistanı üzerinden ilet ve akışı bitir
+            out_bytes = self._deliver_via_test_assistant(
+                user_id=user_id,
+                answer_text=bridge_answer,
+                original_user_message=user_message
+            )
+            yield out_bytes
+            return
+
+        # (Bridge boş dönerse normal '8) OpenAI API' yerel akışınıza düşsün.)
 
         # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
         if not assistant_id:
-            yield "Uygun bir asistan bulunamadı.\n"
+            yield self._with_site_link_appended("Uygun bir asistan bulunamadı.\n")
             return
 
         try:
@@ -2097,7 +2315,7 @@ class ChatbotAPI:
 
                     latest_assistant = next((m for m in msg_response.data if m.role == "assistant"), None)
                     if not latest_assistant:
-                        yield "Asistan yanıtı bulunamadı.\n"
+                        yield self._with_site_link_appended("Asistan yanıtı bulunamadı.\n")
                         break
 
                     parts = []
@@ -2115,26 +2333,31 @@ class ChatbotAPI:
                     model_hint = next(iter(models_in_msg_now)) if len(models_in_msg_now) == 1 else None
 
                     resp_bytes = content_md.encode("utf-8")
+                    
                     if self._should_attach_contact_link(user_message):
-                        resp_bytes = self._with_contact_link_prefixed(resp_bytes, user_id=user_id)
+                        resp_bytes = self._with_contact_link_prefixed(
+                            resp_bytes, user_id=user_id, model_hint=model_hint
+                        )
+
+                    if self._should_attach_site_link(user_message):
+                        resp_bytes = self._with_site_link_appended(resp_bytes)
+
                     yield resp_bytes
-
-
                     # ÖNEMLİ: while döngüsünden çık
                     break
                 elif run.status == "failed":
-                    yield "Yanıt oluşturulamadı.\n"
+                    yield self._with_site_link_appended("Yanıt oluşturulamadı.\n")
                     return
                 time.sleep(0.5)
 
             if not assistant_response:
-                yield "Yanıt alma zaman aşımına uğradı.\n"
+                yield self._with_site_link_appended("Yanıt alma zaman aşımına uğradı.\n")
                 return
 
         except Exception as e:
-            error_msg = f"Hata: {str(e)}"
+            error_msg = f"Hata: {str(e)}\n"
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
-            yield f"{error_msg}\n".encode("utf-8")
+            yield self._with_site_link_appended(error_msg.encode("utf-8"))
 
     def _yield_invalid_trim_message(self, model, invalid_trim):
         msg = f"{model.title()} {invalid_trim.title()} modelimiz bulunmamaktadır.<br>"
@@ -2148,6 +2371,41 @@ class ChatbotAPI:
             link_label = f"{model.title()} {vt.title()}"
             link_html = f"""&bull; <a href="#" onclick="sendMessage('{cmd_str}');return false;">{link_label}</a><br>"""
             yield link_html.encode("utf-8")
+
+    def _idle_prompts_html(self, user_id: str) -> str:
+        """Kullanıcı pasif kaldığında gösterilecek tıklanabilir örnek talepler."""
+        model = (self._resolve_display_model(user_id) or "Skoda").lower()
+        suggestions = []
+
+        if model in self.MODEL_VALID_TRIMS:
+            trims = self.MODEL_VALID_TRIMS[model]
+            first_trim = trims[0] if trims else ""
+            suggestions = [
+                "Test sürüşü",
+                f"{model} fiyat",
+                f"{model} teknik özellikler",
+                (f"{model} {first_trim} opsiyonel" if first_trim else f"{model} opsiyonel"),
+                f"{model} siyah görsel",
+            ]
+        else:
+            suggestions = [
+                "Test sürüşü",
+                "Fiyat",
+                "Octavia teknik özellikler",
+                "Karoq Premium opsiyonel",
+                "Kamiq gümüş görsel",
+            ]
+
+        html = [
+            '<div class="idle-prompts" style="margin-top:10px;">',
+            "<b>Örnek talepler:</b><br>"
+        ]
+        for p in suggestions:
+            # Gönderilecek komut olduğu gibi kalsın; link metni kullanıcı dostu görünsün
+            safe_cmd = p.replace("'", "\\'")
+            html.append(f"&bull; <a href=\"#\" onclick=\"sendMessage('{safe_cmd}');return false;\">{p}</a><br>")
+        html.append("</div>")
+        return "".join(html)
 
     def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
         self.logger.info(f"_yield_opsiyonel_table() called => model={model_name}, trim={trim_name}")
