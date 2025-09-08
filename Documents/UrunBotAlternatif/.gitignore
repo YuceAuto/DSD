@@ -1,0 +1,14 @@
+# Ignore environment variable files
+.env
+
+# Ignore archive files
+*.zip
+*.rar
+
+# If you have other common Python ignores, you can also include them (optional):
+__pycache__/
+# *.py[cod]
+# *.pyo
+
+# Folders
+assets/files

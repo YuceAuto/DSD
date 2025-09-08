@@ -1,20 +1,28 @@
 // ----------------------------------------------------
+<<<<<<< HEAD
 // script.js 
 // ----------------------------------------------------
 
+=======
+// script.js (Gerçek zamanlı "stream" yanıt almak için düzenlendi)
+// ----------------------------------------------------
+
+// 1) Kalıcı user_id sakla
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
 function getOrCreateUserId() {
   let existing = localStorage.getItem("skodaBotUserId");
   if (existing) {
     return existing;
   }
-  // Yeni bir UUID üret
+  // Yeni ID:
   let newId;
   if (window.crypto && crypto.randomUUID) {
     newId = crypto.randomUUID();
   } else {
+    // Fallback random
     newId = 'xxxx-4xxx-yxxx-xxxx'.replace(/[xy]/g, function (c) {
       let r = Math.random() * 16 | 0;
-      let v = c === 'x' ? r : (r & 0x3 | 0x8);
+      let v = (c === 'x') ? r : (r & 0x3 | 0x8);
       return v.toString(16);
     });
   }
@@ -22,7 +30,12 @@ function getOrCreateUserId() {
   return newId;
 }
 
+<<<<<<< HEAD
 function showPopupImage(imgUrl, size = 'normal') {
+=======
+// 2) Modal büyük görsel gösterme
+function showPopupImage(imgUrl) {
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
   $("#popupImage").attr("src", imgUrl);
   if (size === 'smaller') {
     $("#popupImage").addClass("popupImageSmaller");
@@ -31,6 +44,7 @@ function showPopupImage(imgUrl, size = 'normal') {
   }
 }
 
+<<<<<<< HEAD
 function extractTextContentBlock(fullText) {
   const regex = /\[TextContentBlock\(.*?value=(['"])([\s\S]*?)\1.*?\)\]/;
   const match = regex.exec(fullText);
@@ -40,6 +54,9 @@ function extractTextContentBlock(fullText) {
   return null;
 }
 
+=======
+// Basit tablo dönüştürme
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
 function markdownTableToHTML(mdTable) {
   const lines = mdTable.trim().split("\n").map(line => line.trim());
   if (lines.length < 2) {
@@ -77,6 +94,7 @@ function markdownTableToHTML(mdTable) {
   return html;
 }
 
+<<<<<<< HEAD
 function splitNonTableTextIntoBubbles(fullText) {
   const trimmedText = fullText.trim();
   const lines = trimmedText.split(/\r?\n/);
@@ -146,11 +164,26 @@ function splitNonTableTextIntoBubbles(fullText) {
 }
 
 function processBotMessage(fullText, uniqueId) {
+=======
+// Metni tablo/normal parçalara bölme (basit)
+function splitNonTableTextIntoBubbles(fullText) {
+  // İsterseniz daha akıllı bir parçalayıcı yapabilirsiniz.
+  // Burada sadece tek bir parça dönüyoruz.
+  return [ fullText ];
+}
+
+// Gelen bot mesajını baloncuklar olarak ekrana basma
+function processBotMessage(fullText, uniqueId) {
+  // "Yazıyor..." placeholder'ını kaldıralım
+  $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
+
+  // Tabloları bulmak için regex
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
   let normalizedText = fullText
     .replace(/\\n/g, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/[–—]/g, '-');
+    .replace(/<br\s*\/?>/gi, "\n");
 
+<<<<<<< HEAD
   // "[CONVERSATION_ID=xxx]" yakala
   let conversationId = null;
   const matchConv = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
@@ -162,38 +195,61 @@ function processBotMessage(fullText, uniqueId) {
   const extractedValue = extractTextContentBlock(normalizedText);
   const textToCheck = extractedValue ? extractedValue : normalizedText;
 
+=======
+  // CONVERSATION_ID yakala
+  let conversationId = null;
+  const convMatch = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
+  if (convMatch) {
+    conversationId = convMatch[1];
+    normalizedText = normalizedText.replace(convMatch[0], "");
+  }
+
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
   const tableRegexGlobal = /(\|.*?\|\n\|.*?\|\n[\s\S]+?)(?=\n\n|$)/g;
   let newBubbles = [];
   let lastIndex = 0;
   let match;
 
+<<<<<<< HEAD
   while ((match = tableRegexGlobal.exec(textToCheck)) !== null) {
+=======
+  while ((match = tableRegexGlobal.exec(normalizedText)) !== null) {
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     const tableMarkdown = match[1];
-    const textBefore = textToCheck.substring(lastIndex, match.index).trim();
+    const textBefore = normalizedText.substring(lastIndex, match.index).trim();
     if (textBefore) {
-      const splittedTextBubbles = splitNonTableTextIntoBubbles(textBefore);
-      splittedTextBubbles.forEach(subPart => {
-        newBubbles.push({ type: 'text', content: subPart });
-      });
+      let splitted = splitNonTableTextIntoBubbles(textBefore);
+      splitted.forEach(sub => newBubbles.push({ type: 'text', content: sub }));
     }
     newBubbles.push({ type: 'table', content: tableMarkdown });
     lastIndex = tableRegexGlobal.lastIndex;
   }
+<<<<<<< HEAD
 
   if (lastIndex < textToCheck.length) {
     const textAfter = textToCheck.substring(lastIndex).trim();
+=======
+  // Son kısım
+  if (lastIndex < normalizedText.length) {
+    const textAfter = normalizedText.substring(lastIndex).trim();
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     if (textAfter) {
-      const splittedTextBubbles = splitNonTableTextIntoBubbles(textAfter);
-      splittedTextBubbles.forEach(subPart => {
-        newBubbles.push({ type: 'text', content: subPart });
-      });
+      let splitted = splitNonTableTextIntoBubbles(textAfter);
+      splitted.forEach(sub => newBubbles.push({ type: 'text', content: sub }));
     }
   }
 
+<<<<<<< HEAD
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
   newBubbles.forEach((bubble, index) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
+=======
+  // Her bubble ayrı balon olarak ekleyelim
+  newBubbles.forEach((bubble, index) => {
+    const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
+    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     let bubbleContent = "";
 
     if (bubble.type === "table") {
@@ -202,15 +258,23 @@ function processBotMessage(fullText, uniqueId) {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
 
+<<<<<<< HEAD
+=======
+    // Beğen butonunu sadece son bubble'a ekliyoruz (opsiyonel)
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     const isLastBubble = (index === newBubbles.length - 1);
     let likeButtonHtml = "";
     if (isLastBubble && conversationId) {
       likeButtonHtml = `
         <button class="like-button" data-conversation-id="${conversationId}">
+<<<<<<< HEAD
           <i class="fa-solid fa-thumbs-up" style="color: #f2f2f2;"></i>
         </button>
         <button class="dislike-button" data-conversation-id="${conversationId}">
           <i class="fa-solid fa-thumbs-down" style="color: #f2f2f2;"></i>
+=======
+          Beğen
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
         </button>
       `;
     }
@@ -247,6 +311,7 @@ function processBotMessage(fullText, uniqueId) {
 $(document).ready(function () {
   const localUserId = getOrCreateUserId();
 
+<<<<<<< HEAD
   // ---------------------------------------------
   //  SAYFA İLK YÜKLENDİĞİNDE -> "Boş question" ile istek at
   //  Böylece chatbot "Merhaba X, nasıl yardımcı olabilirim?" diyor.
@@ -289,6 +354,9 @@ $(document).ready(function () {
   // ---------------------------------------------
   // MESAJ GÖNDERME (KULLANICI YAZINCA)
   // ---------------------------------------------
+=======
+  // Form submit
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
   $("#messageArea").on("submit", function (e) {
     e.preventDefault();
     const inputField = $("#text");
@@ -296,7 +364,12 @@ $(document).ready(function () {
     if (!rawText) return;
 
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+<<<<<<< HEAD
     // Kullanıcı mesajı
+=======
+
+    // Kullanıcı mesaj balonu
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     const userHtml = `
       <div class="d-flex justify-content-end mb-4">
         <div class="msg_cotainer_send">
@@ -311,20 +384,33 @@ $(document).ready(function () {
     $("#messageFormeight").append(userHtml);
     inputField.val("");
 
+<<<<<<< HEAD
+=======
+    // Bot "yazıyor" placeholder
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     const uniqueId = Date.now();
     const botHtml = `
       <div class="d-flex justify-content-start mb-4">
         <img src="static/images/fotograf.png"
              class="rounded-circle user_img_msg"
              alt="bot image">
+<<<<<<< HEAD
         <div class="msg_cotainer" id="botMessageContent-${uniqueId}">
           Yazıyor...
+=======
+        <div class="msg_cotainer">
+          <span id="botMessageContent-${uniqueId}">Yazıyor...</span>
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
         </div>
       </div>
     `;
     $("#messageFormeight").append(botHtml);
     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
 
+<<<<<<< HEAD
+=======
+    // Artık stream ile okuma:
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -333,6 +419,7 @@ $(document).ready(function () {
         user_id: localUserId
       })
     })
+<<<<<<< HEAD
       .then(response => {
         if (!response.ok) {
           throw new Error("Sunucu hatası: " + response.status);
@@ -382,6 +469,71 @@ $(document).on("click", ".like-button", function(event) {
     $likeBtn.addClass("clicked");
 
     const convId = $likeBtn.data("conversation-id");
+=======
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Sunucu hatası: " + response.status);
+      }
+      return response.body; // <-- body: ReadableStream
+    })
+    .then(stream => {
+      // stream'i parça parça okuyacağız
+      const reader = stream.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let partialText = "";
+
+      function readChunk() {
+        return reader.read().then(({ done, value }) => {
+          if (done) {
+            // Stream tamamlandı
+            // Tüm metni tablo vs. ayrıştırmak için processBotMessage'a gönderelim
+            processBotMessage(partialText, uniqueId);
+            return;
+          }
+          // Akış devam
+          const chunkStr = decoder.decode(value, { stream: true });
+          partialText += chunkStr;
+
+          // İsterseniz her chunk geldiğinde placeholder'a ekleyebilirsiniz:
+          // $("#botMessageContent-"+uniqueId).append(document.createTextNode(chunkStr));
+          // Veya alt satır:
+          document.getElementById(`botMessageContent-${uniqueId}`).textContent += chunkStr;
+
+          $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
+
+          return readChunk(); // döngü
+        });
+      }
+      return readChunk();
+    })
+    .catch(err => {
+      console.error("Hata:", err);
+      $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
+    });
+
+    // Oturum bildirimi örneği (9 dakika sonra)
+    setTimeout(() => {
+      const barEl = document.getElementById('notificationBar');
+      if (barEl) {
+        barEl.style.display = 'block';
+      }
+    }, 9 * 60 * 1000);
+  });
+});
+
+// "Beğen" butonu
+$(document).on("click", ".like-button", function() {
+  const $btn = $(this);
+  if ($btn.hasClass("clicked")) {
+    // Geri al
+    $btn.removeClass("clicked");
+    $btn.text("Beğen");
+  } else {
+    // ilk kez beğen
+    $btn.addClass("clicked");
+    $btn.text("Beğenildi");
+    const convId = $btn.data("conversation-id");
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
     if (convId) {
       fetch("/like", {
         method: "POST",
@@ -397,6 +549,7 @@ $(document).on("click", ".like-button", function(event) {
   }
 });
 
+<<<<<<< HEAD
 // -----------------------------------------------------
 // DISLIKE BUTONU
 // -----------------------------------------------------
@@ -436,3 +589,5 @@ function sendMessage(textToSend) {
   inputField.val(textToSend);
   $("#messageArea").submit();
 }
+=======
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba

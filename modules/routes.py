@@ -33,4 +33,9 @@ class Routes:
                 return jsonify({"message": "Thank you for your feedback!"})
             except Exception as e:
                 logger.error(f"Error in /feedback: {str(e)}")
+<<<<<<< HEAD
                 return jsonify({"error": "An error occurred."}), 500
+=======
+                return jsonify({"error": "An error occurred."}), 500
+
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba

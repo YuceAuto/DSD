@@ -162,4 +162,9 @@ def send_email(subject, body, to_email):
     mail.Body = body
     mail.To = to_email
     mail.Send()
+<<<<<<< HEAD
     logging.info("[MAIL] Email sent successfully")
+=======
+    logging.info("[MAIL] Email sent successfully")
+
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba

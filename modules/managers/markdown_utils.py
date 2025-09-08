@@ -113,4 +113,9 @@ class MarkdownProcessor:
                 html += f'<td>{c}</td>'
             html += '</tr>\n'
         html += '</tbody>\n</table>'
+<<<<<<< HEAD:modules/managers/markdown_utils.py
         return html
+=======
+        return html
+
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba:modules/markdown_utils.py

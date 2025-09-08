@@ -240,6 +240,7 @@ body, html {
   -webkit-backdrop-filter: none !important;
 }
 
+<<<<<<< HEAD
 /* =========================================== */
 /* Media Query: Daha dar ekranlar (max-width: 768px) */
 /* =========================================== */
@@ -256,3 +257,5 @@ body, html {
     height: calc(100vh - 20px);
   }
 }
+=======
+>>>>>>> 24694f9bcc193be73fd690e317a39c1cb6ebb2ba
