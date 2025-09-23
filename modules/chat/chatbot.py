@@ -2409,8 +2409,9 @@ class ChatbotAPI:
         # --- init sonunda ---
         self._compile_spec_index()
         self._collect_all_data_texts()
-
         self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
+        # Her yanıta Vector Store özet bloğu eklensin mi? (varsayılan: açık)
+        self.RAG_SUMMARY_EVERY_ANSWER = os.getenv("RAG_SUMMARY_EVERY_ANSWER", "1") == "1"
         self.logger.info(f"[KB] USE_OPENAI_FILE_SEARCH = {self.USE_OPENAI_FILE_SEARCH}")
 
         if self.USE_OPENAI_FILE_SEARCH:
@@ -3017,9 +3018,19 @@ class ChatbotAPI:
                 self.logger.error(f"caching_generator hata: {ex}")
                 yield self._with_site_link_appended(safe_err)
             finally:
-                # Artık final_answer_parts yalnızca bytes: bu join düşmez
-                full_answer = b"".join(final_answer_parts).decode("utf-8", errors="ignore")
+                # ➊ Her yanıta Vector Store kısa özeti ekleyin (mümkünse)
+                try:
+                    for rag_chunk in self._yield_rag_summary_block(
+                        user_id=user_id,
+                        user_message=corrected_message
+                    ):
+                        final_answer_parts.append(rag_chunk)
+                        yield rag_chunk
+                except Exception as _e:
+                    self.logger.error(f"[RAG-SUMMARY] streaming failed: {_e}")
 
+                # ➋ Artık final_answer_parts yalnızca bytes: bu join düşmez
+                full_answer = b"".join(final_answer_parts).decode("utf-8", errors="ignore")
                 conversation_id = save_to_db(user_id, user_message, full_answer, username=name_surname)
 
                 self.user_states[user_id]["last_conversation_id"] = conversation_id
@@ -3367,7 +3378,47 @@ class ChatbotAPI:
             if m.role == "assistant":
                 return m.content[0].text.value
         return "Yanıt bulunamadı."
+    def _yield_rag_summary_block(self, user_id: str, user_message: str):
+            """
+            Her yanıta eklenen kısa 'Vector Store özeti' bloğunu üretir ve yield eder.
+            Koşullar: RAG_SUMMARY_EVERY_ANSWER=1, USE_OPENAI_FILE_SEARCH=1, vector store & asistan mevcut.
+            """
+            try:
+                if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
+                    return
+                if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
+                    return
+                if not getattr(self, "VECTOR_STORE_ID", ""):
+                    return
+                assistant_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
+                if not assistant_id:
+                    return
 
+                # Ephemeral thread -> her çağrıda file_search tool_resources garanti
+                rag_text = self._ask_assistant(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    content=user_message,
+                    timeout=45.0,
+                    instructions_override=(
+                        "Yalnızca bağlı dosya araması (file_search) sonuçlarına dayanarak, "
+                        "kullanıcının sorusunu 3–6 maddelik kısa bir özet halinde açıkla. "
+                        "Madde biçimi: '- ' ile başlayan sade Markdown listesi. "
+                        "Varsayım yapma; emin değilsen kısaca belirt. "
+                        "Tablo, görsel veya kod bloğu üretme; sadece kısa özet yaz. "
+                        "Türkçe yaz."
+                    ),
+                    ephemeral=True
+                ) or ""
+
+                out_md = self.markdown_processor.transform_text_to_markdown(rag_text)
+                if '|' in out_md and '\n' in out_md:
+                    out_md = fix_markdown_table(out_md)
+                block = "\n\n\n\n" + out_md.strip() + "\n"
+                yield block.encode("utf-8")
+            except Exception as e:
+                self.logger.error(f"[RAG-SUMMARY] failed: {e}")
+                return
     ##############################################################################
 # ChatbotAPI._generate_response
 ##############################################################################
