@@ -1,4 +1,4 @@
-import os
+import os 
 import time
 import logging
 import re
@@ -404,6 +404,137 @@ def remove_latex_and_formulas(text):
 
 class ChatbotAPI:
     import difflib
+    
+    # ChatbotAPI içinde
+    def _load_non_skoda_lists(self):
+        import json
+        base_dir = os.path.join(os.getcwd(), "modules", "data")
+        brands_path = os.path.join(base_dir, "non_skoda_brands.json")
+        models_path = os.path.join(base_dir, "non_skoda_models.json")
+
+        # Varsayılan (dosya yoksa min. güvenli çekirdek)
+        DEFAULT_NON_SKODA_BRANDS = {"bmw","mercedes","mercedes-benz","audi","volkswagen","vw","renault","fiat","ford","toyota","honda","hyundai","kia","peugeot","citroen","opel","nissan","tesla","volvo","porsche","cupra","dacia","mini","seat","jaguar","land rover","lexus","mazda","mitsubishi","subaru","suzuki","jeep","chevrolet","cadillac","buick","gmc","dodge","lincoln","chery","byd","mg","nio","xpeng","geely","haval","togg","ssangyong","kg mobility"}
+        DEFAULT_NON_SKODA_MODELS = {"golf","passat","polo","tiguan","fiesta","focus","kuga","corolla","c-hr","yaris","civic","cr-v","juke","qashqai","x-trail","308","3008","208","2008","astra","corsa","megane","clio","egea","tipo","duster","sandero","jogger","model 3","model y","i20","tucson","sportage","e-tron","taycan","x1","x3","x5","a3","a4","a6","c-class","e-class","s-class"}
+
+        def _safe_load(p, fallback):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return {normalize_tr_text(x).lower().strip() for x in data if str(x).strip()}
+            except Exception as e:
+                self.logger.warning(f"[non-skoda] {os.path.basename(p)} yüklenemedi, varsayılan kullanılacak: {e}")
+                return set(fallback)
+
+        self.NON_SKODA_BRANDS = _safe_load(brands_path, DEFAULT_NON_SKODA_BRANDS)
+        self.NON_SKODA_MODELS = _safe_load(models_path, DEFAULT_NON_SKODA_MODELS)
+
+        # Yaygın takma adlar / yazım varyantları
+        BRAND_ALIASES = {
+            "mercedes-benz": ["mercedes","merc","mb","mercedes benz"],
+            "volkswagen": ["vw","volks wagen"],
+            "citroën": ["citroen"],
+            "rolls-royce": ["rolls royce"],
+            "land rover": ["range rover"],   # halk kullanımı
+            "kg mobility": ["ssangyong","ssang-yong"],
+        }
+        for canon, aliases in BRAND_ALIASES.items():
+            for a in aliases:
+                self.NON_SKODA_BRANDS.add(normalize_tr_text(a).lower())
+
+        # Motorlu taşıt bağlam ipuçları (seri kodlarını güvenli tetiklemek için)
+        self._MOTORING_HINTS_RE = re.compile(r"\b(model|seri|series|class|suv|sedan|hatchback|hb|estate|station|coupe|pickup|van|araba|ara[cç]|otomobil)\b", re.IGNORECASE)
+
+        # Global seri/desen kalıpları (tek başına markasız yazıldığında bile araçla ilgili söylendiğini gösteren durumlar)
+        self._SERIES_REGEXES = [
+            # Audi
+            re.compile(r"\b(a|s|rs)\s?-?\s?\d{1,2}\b"),     # A4, S3, RS6
+            re.compile(r"\bq\s?-?\s?\d{1,2}\b"),            # Q3, Q8
+            re.compile(r"\be-?tron\b"),
+
+            # BMW
+            re.compile(r"\b[1-8]\s?(series|seri|serisi)\b"),# 3 Series / 3 Serisi
+            re.compile(r"\bx[1-7]\b"),                      # X3, X5
+            re.compile(r"\bm\d{1,3}\b"),                    # M3, M135 vb.
+            re.compile(r"\bi(?:3|4|5|7|x)\b"),              # i3, i4, i5, i7, iX
+
+            # Mercedes
+            re.compile(r"\b[abcegs]-?\s?class\b"),          # C-Class vs.
+            re.compile(r"\bgl[abce]?\b"),                   # GLA/GLB/GLC/GLE
+            re.compile(r"\bgls\b|\bg-?class\b|\bamg\s?gt\b"),
+            re.compile(r"\beq[abces]\b|\beqs\b"),           # EQ serisi
+
+            # VW ID.* ailesi
+            re.compile(r"\bid\.\s?\d\b"),
+
+            # Tesla
+            re.compile(r"\bmodel\s?(s|3|x|y)\b"),
+
+            # Volvo/Polestar (kısmi)
+            re.compile(r"\bxc\d{2}\b|\bex\d{2}\b|\bpolestar\s?(2|3|4)\b"),
+        ]
+
+
+    def _mentions_non_skoda(self, text: str) -> bool:
+        if not text:
+            return False
+        t = normalize_tr_text(text).lower()
+        tokens = re.findall(r"[0-9a-zçğıöşü]+", t, flags=re.IGNORECASE)
+        token_set = set(tokens)
+
+        # 1) Doğrudan marka (tek veya çok kelime)
+        #    Tek kelimelerde doğrudan token eşleşmesi; çok kelimede regex ile ara
+        for b in self.NON_SKODA_BRANDS:
+            if " " in b or "-" in b:
+                pat = r"(?<!\w)" + re.escape(b).replace(r"\ ", r"(?:\s|-)") + r"(?!\w)"
+                if re.search(pat, t):
+                    return True
+            else:
+                if b in token_set:
+                    return True
+
+        # 2) Model adı (n-gram taraması, 1..4 kelime)
+        for n in (4, 3, 2, 1):
+            for i in range(0, max(0, len(tokens) - n + 1)):
+                ngram = " ".join(tokens[i:i+n])
+                if ngram in self.NON_SKODA_MODELS:
+                    return True
+
+        # 3) Seri/kod desenleri (yanında otomotiv bağlam ipucu varsa)
+        if self._MOTORING_HINTS_RE.search(t):
+            for rx in self._SERIES_REGEXES:
+                if rx.search(t):
+                    return True
+
+        return False
+
+
+    def _gate_to_table_or_image(self, text: str) -> bytes | None:
+        """
+        Yalnızca TABLO veya GÖRSEL olan içerikleri geçirir.
+        - KV veya (- * •) madde listelerini tabloya çevirmeyi dener.
+        - '›' veya sayılı listeler (1., 2.) tabloya çevrilmez → üst blok bastırılır.
+        Dönen: bytes (göster) | None (gösterme).
+        """
+        if text is None:
+            return None
+
+        s = str(text)
+        s_md = self.markdown_processor.transform_text_to_markdown(s)
+
+        # Düzgün tabloysa hizasını düzelt
+        if self._looks_like_table_or_image(s_md):
+            if '|' in s_md and '\n' in s_md:
+                s_md = fix_markdown_table(s_md)
+            return s_md.encode("utf-8")
+
+        # KV veya (- * •) madde listelerini tabloya çevir (› veya 1. … çevrilmez!)
+        coerced = self._coerce_text_to_table_if_possible(s_md)
+        if self._looks_like_table_or_image(coerced):
+            if '|' in coerced and '\n' in coerced:
+                coerced = fix_markdown_table(coerced)
+            return coerced.encode("utf-8")
+
+        return None
 
     def find_equipment_answer(user_message: str, model: str, donanim_md: str) -> str | None:
         """
@@ -1129,45 +1260,44 @@ class ChatbotAPI:
 
 
     def _apply_file_validation_and_route(self, *, user_id: str, user_message: str,
-                                        ai_answer_text: str) -> bytes:
-        """
-        Kıyas kuralını uygular:
-        - Dosyada karşılık yoksa: OpenAI cevabını 'olduğu gibi' iletir.
-        - Karşılık varsa: benzerlik hesapla → eşik üstüyse OpenAI'ı ilet, değilse dosya içeriğini ilet.
-        Log: doğruluk yüzdesi.
-        """
+                                     ai_answer_text: str) -> bytes:
         expected_text, meta = self._expected_answer_from_files(user_message)
-        if not expected_text:
-            # referans yok → OpenAI olduğu gibi
-            self.logger.info("[ACCURACY] source=none match=— decision=OPENAI (no reference)")
-            # OpenAI yanıtını TEST asistanı üzerinden biçimini koruyarak iletelim:
-            return self._deliver_via_test_assistant(
-                user_id=user_id, answer_text=ai_answer_text, original_user_message=user_message
-            )
 
+        def _gate_bytes_from_text(txt: str) -> bytes:
+            gated = self._gate_to_table_or_image(txt)
+            return gated if gated else b" "  # ' ' = üst blok gösterme
+
+        if not expected_text:
+            # Referans yok → OpenAI/bridge cevabını getir, sonra KAPIDAN geçir
+            raw_bytes = self._deliver_via_test_assistant(
+                user_id=user_id,
+                answer_text=ai_answer_text,
+                original_user_message=user_message
+            )
+            raw_text = raw_bytes.decode("utf-8", errors="ignore")
+            return _gate_bytes_from_text(raw_text)
+
+        # Referans var → benzerlik kararına göre seçim + KAPI
         ratio = self._text_similarity_ratio(ai_answer_text, expected_text)
-        pct = ratio * 100.0
-        # Log meta bilgisi
-        meta_info = " ".join(f"{k}={v}" for k, v in meta.items())
-        self.logger.info(f"[ACCURACY] source={meta.get('source','?')} {meta_info} match={pct:.1f}% "
-                        f"threshold={self.OPENAI_MATCH_THRESHOLD*100:.0f}%")
 
         if ratio >= self.OPENAI_MATCH_THRESHOLD:
-            # Aynı kabul → OpenAI cevabını ilet
-            self.logger.info("[DECISION] OPENAI (accepted)")
-            return self._deliver_via_test_assistant(
-                user_id=user_id, answer_text=ai_answer_text, original_user_message=user_message
+            raw_bytes = self._deliver_via_test_assistant(
+                user_id=user_id,
+                answer_text=ai_answer_text,
+                original_user_message=user_message
             )
+            raw_text = raw_bytes.decode("utf-8", errors="ignore")
+            return _gate_bytes_from_text(raw_text)
+
+        # Dosya içeriğini kullanacağız → yine KAPI
+        md = self.markdown_processor.transform_text_to_markdown(expected_text or "")
+        if '|' in md and '\n' in md:
+            md = fix_markdown_table(md)
         else:
-            # Uyuşmuyor → Dosya içeriğini kullanıcıyla paylaş
-            self.logger.info("[DECISION] FILE (overrode OpenAI)")
-            # Dosya içeriğini yerelde düzgün markdown olarak iletelim
-            return self._deliver_locally(
-                body=expected_text,
-                original_user_message=user_message,
-                user_id=user_id
-            )
-    # === [YENİ SON] ==============================================================
+            md = self._coerce_text_to_table_if_possible(md)
+
+        return _gate_bytes_from_text(md)
+
 
 
     def _normalize_spec_key_for_dedup(self, key: str) -> str:
@@ -2247,10 +2377,16 @@ class ChatbotAPI:
             "Batarya kapasitesi (brüt kWh)": [r"batarya.*br[üu]t|br[üu]t.*batarya"],
             "Batarya kapasitesi (net kWh)": [r"batarya.*net|net.*batarya"],
             "Enerji Tüketimi (WLTP Kombine)": [r"enerji\s*t[üu]ketimi|wltp.*t[üu]ketim|\bt[üu]ketim\b"],
-            "Dahili AC şarj (kW)": [r"\bac\b.*şarj|\bdahili\s*ac"],
+            "Dahili AC şarj (kW)": [
+                r"\bac\b.*şarj(?!.*s[üu]re|.*dakika)",
+                r"\bdahili\s*ac(?!.*s[üu]re|.*dakika)"
+            ],
             "DC şarj gücü (kW)": [r"\bdc\b.*şarj.*g[üu]c[üu]|h[ıi]zl[ıi]\s*şarj"],
             "DC şarj 10-80% (dk)": [r"dc.*(?:10|%10)\s*[-–—]?\s*80|%10.*%80"],
-            "AC 11 kW Şarj Süresi (0% - 100%)": [r"\bac\b.*0.*100.*(s[üu]re|dolum)"],
+            "AC 11 kW Şarj Süresi (0% - 100%)": [
+                r"ac\s*şarj\s*s[üu]re", r"ac\s*s[üu]resi",
+                r"\bac\b.*0.*100.*(s[üu]re|dolum)"
+            ],
             "WLTP CO2 Emisyonu (g/km)": [r"\bco2\b|emisyon"],
             "Bagaj hacmi (dm3)": [r"bagaj"],
             "Ağırlık (Sürücü Dahil) (kg)": [r"ağ[ıi]rl[ıi]k"],
@@ -2427,6 +2563,26 @@ class ChatbotAPI:
         except Exception as e:
             # SDK sürümü farklı olabilir; sadece bilgi amaçlı
             self.logger.warning(f"vector_stores availability check failed: {e}")
+        # --- Skoda dışı marka/model filtreleri (kelime sınırı ile güvenli) ---
+        self.NON_SKODA_BRAND_PAT = re.compile(
+            r"(?:\balfa\s*romeo\b|\baudi\b|\bbmw\b|\bmercedes(?:-benz)?\b|\bvolkswagen\b|\bvw\b|\bseat\b|\bcupra\b|"
+            r"\bporsche\b|\bfiat\b|\bford\b|\bopel\b|\brenault\b|\bdacia\b|\bpeugeot\b|\bcitroen\b|\btoyota\b|"
+            r"\blexus\b|\bhonda\b|\bhyundai\b|\bkia\b|\bnissan\b|\bmazda\b|\bvolvo\b|\bsuzuki\b|\bsubaru\b|"
+            r"\bmitsubishi\b|\bjeep\b|\bland\s+rover\b|\brange\s+rover\b|\bjaguar\b|\btesla\b|\bmg\b|\bchery\b|"
+            r"\bbyd\b|\btogg\b)",
+            re.IGNORECASE
+        )
+        self.NON_SKODA_MODEL_PAT = re.compile(
+            r"(?:\bgolf\b|\bpassat\b|\bpolo\b|\btiguan\b|\bt-?\s?roc\b|\bt-?\s?cross\b|"
+            r"\bclio\b|\bm[eé]gane\b|\bfocus\b|\bfiesta\b|\bcivic\b|\bcorolla\b|\byaris\b|"
+            r"\b208\b|\b2008\b|\b3008\b|\b308\b|\b508\b|\bcorsa\b|\bastra\b|\begea\b|"
+            r"\bqashqai\b|\btucson\b|\bsportage\b|\bx-?trail\b|\bkona\b|\bceed\b|"
+            r"\bmazda\s*3\b|\bcx-30\b|\bcx-5\b|\bxc40\b|\bxc60\b|\bmodel\s*(?:3|s|x|y)\b)",
+            re.IGNORECASE
+        )
+        # __init__ sonunda
+        self._load_non_skoda_lists()
+
 
     def _setup_logger(self):
         logger = logging.getLogger("ChatbotAPI")
@@ -2599,7 +2755,7 @@ class ChatbotAPI:
                 pass
             except Exception as e:
                 self.logger.error(f"[BACKGROUND] DB yazma hatası: {str(e)}")
-                time.sleep(2)
+                
 
         self.logger.info("Background DB writer thread stopped.")
 
@@ -2852,6 +3008,10 @@ class ChatbotAPI:
         lower_corrected = corrected_message.lower().strip()
         user_models_in_msg = self._extract_models(corrected_message)
         price_intent = self._is_price_intent(corrected_message)
+        # _ask veya _generate_response başında, düzeltmelerden sonra:
+        if self._mentions_non_skoda(corrected_message):
+            return self.app.response_class("Üzgünüm sadece Skoda hakkında bilgi verebilirim.", mimetype="text/plain")
+
         if user_id not in self.user_states:
             self.user_states[user_id] = {}
             self.user_states[user_id]["threads"] = {}
@@ -2920,7 +3080,7 @@ class ChatbotAPI:
 
                     if cached_answer:
                         self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
-                        time.sleep(1)
+                        #time.sleep(1)
                         ans_bytes = cached_answer
                         if self._should_attach_site_link(corrected_message):
                             ans_bytes = self._with_site_link_appended(ans_bytes)
@@ -2992,7 +3152,7 @@ class ChatbotAPI:
 
                 if cached_answer:
                     self.logger.info("Fuzzy cache match bulundu, önbellekten yanıt dönülüyor.")
-                    time.sleep(1)
+                    #time.sleep(1)
                     ans_bytes = cached_answer
                     if self._should_attach_site_link(corrected_message):
                         ans_bytes = self._with_site_link_appended(ans_bytes)
@@ -3012,11 +3172,11 @@ class ChatbotAPI:
                     final_answer_parts.append(chunk)
                     yield chunk
             except Exception as ex:
-                error_text = f"Bir hata oluştu: {str(ex)}\n"
-                safe_err = error_text.encode("utf-8")
-                final_answer_parts.append(safe_err)
-                self.logger.error(f"caching_generator hata: {ex}")
-                yield self._with_site_link_appended(safe_err)
+                # Hata loglansın ama KULLANICIYA GÖSTERİLME-SİN.
+                self.logger.exception("caching_generator hata")
+                # Hiçbir şey yield etmeyin; aşağıdaki 'finally' yine çalışacak (kayıt vb.)
+                # İsterseniz burada sadece 'pass' bırakabilirsiniz.
+                pass
             finally:
                 # ➊ Her yanıta Vector Store kısa özeti ekleyin (mümkünse)
                 try:
@@ -3370,7 +3530,7 @@ class ChatbotAPI:
                 break
             if run.status == "failed":
                 raise RuntimeError(run.last_error["message"])
-            time.sleep(0.5)
+            #time.sleep(0.5)
 
         # Son mesajı al
         msgs = self.client.beta.threads.messages.list(thread_id=thread_id, order="desc", limit=5)
@@ -3384,6 +3544,9 @@ class ChatbotAPI:
             Koşullar: RAG_SUMMARY_EVERY_ANSWER=1, USE_OPENAI_FILE_SEARCH=1, vector store & asistan mevcut.
             """
             try:
+                if (self.user_states.get(user_id, {}) or {}).get("rag_head_delivered"):
+                    return
+
                 if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
                     return
                 if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
@@ -3427,8 +3590,21 @@ class ChatbotAPI:
     #  ROTA / MESAFE SORGUSU
     # ------------------------------------------------------------------
         # ---  YAKIT (benzin/dizel) SORUSU  ------------------------------------
+        # === SKODA-ONLY GUARD ==============================================
+        # _ask veya _generate_response başında, düzeltmelerden sonra:
+        #if self._mentions_non_skoda(corrected_message):
+         #   return self.app.response_class("Üzgünüm sadece Skoda hakkında bilgi verebilirim.", mimetype="text/plain")
+        corrected_message = user_message
+        if self._mentions_non_skoda(user_message):
+            # Tam olarak istenen cümle (ek link/ekstra metin yok)
+            yield "Üzgünüm sadece Skoda hakkında bilgi verebilirim".encode("utf-8")
+            return
+# ===================================================================
+
         
         self.logger.info(f"[_generate_response] Kullanıcı ({user_id}): {user_message}")
+    # <<< YENİ: Bu turda RAG cevabı üst blokta gösterildi mi?
+        self.user_states.setdefault(user_id, {})["rag_head_delivered"] = False
         if self._is_test_drive_intent(user_message):
             yield self._contact_link_html(
                 user_id=user_id,
@@ -3518,8 +3694,13 @@ class ChatbotAPI:
         # ve teknik/karşılaştırma bloklarına GİRMEDEN hemen önce:
         qa_bytes = self._answer_teknik_as_qa(user_message, user_id)
         if qa_bytes:
-            yield qa_bytes
+            qa_text = qa_bytes.decode("utf-8", errors="ignore")
+            gated = self._gate_to_table_or_image(qa_text)
+            if not gated:
+                return
+            yield gated
             return
+
 
         # --- TEKNİK KARŞILAŞTIRMA / KIYAS ---
         compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
@@ -3580,7 +3761,7 @@ class ChatbotAPI:
              lower_msg
         )
         if cat_match:
-            time.sleep(1)
+            #time.sleep(1)
             matched_model = cat_match.group(1)
             matched_trim = cat_match.group(2) or ""
             matched_category = cat_match.group(3)
@@ -3749,7 +3930,7 @@ class ChatbotAPI:
         pairs = extract_model_trim_pairs(lower_msg)
         is_image_req = self.utils.is_image_request(lower_msg)
         if len(pairs) >= 2 and is_image_req:
-            time.sleep(1)
+            #time.sleep(1)
             for (model, trim) in pairs:
                 yield f"<b>{model.title()} Görselleri</b><br>".encode("utf-8")
                 yield from self._show_single_random_color_image(model, trim)
@@ -3767,7 +3948,7 @@ class ChatbotAPI:
         )
         match = re.search(model_trim_image_pattern, lower_msg)
         if match:
-            time.sleep(1)
+            #time.sleep(1)
             matched_model = match.group(1)
             matched_trim = match.group(2) or ""
 
@@ -3826,7 +4007,7 @@ class ChatbotAPI:
                     if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
                         yield from self._yield_invalid_trim_message(found_model, found_trim)
                         return
-                    time.sleep(1)
+                    #time.sleep(1)
                     yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
                     return
                 else:
@@ -3877,7 +4058,7 @@ class ChatbotAPI:
                     if found_trim not in self.MODEL_VALID_TRIMS.get(pending_ops_model, []):
                         yield from self._yield_invalid_trim_message(pending_ops_model, found_trim)
                         return
-                    time.sleep(1)
+                    #time.sleep(1)
                     yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
                     return
                 else:
@@ -3991,11 +4172,15 @@ class ChatbotAPI:
             or any(kw in lower_msg for kw in ["teknik özellik","teknik veriler","teknik tablo","performans"])
             or wants_compare
         )
-        if self.USE_OPENAI_FILE_SEARCH and assistant_id and generic_info_intent and models_in_msg2:
+        # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
+        # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
+        prefer_rag_text = os.getenv("PREFER_RAG_TEXT", "1") == "1"
+
+        if self.USE_OPENAI_FILE_SEARCH and assistant_id and generic_info_intent:
             rag_out = self._ask_assistant(
                 user_id=user_id,
-                assistant_id=assistant_id,          # model odaklı asistan
-                content=user_message,               # kullanıcının cümlesi
+                assistant_id=assistant_id,
+                content=user_message,
                 timeout=60.0,
                 instructions_override=(
                     "Cevabı yalnızca bağlı dosya araması (file_search) ile bulduğun kaynaklara dayandır. "
@@ -4003,13 +4188,37 @@ class ChatbotAPI:
                 ),
                 ephemeral=False
             ) or ""
-            out_md = self.markdown_processor.transform_text_to_markdown(rag_out)
-            if '|' in out_md and '\n' in out_md:
-                out_md = fix_markdown_table(out_md)
+
+            # Boş/çok zayıf çıktı ise bridge'e bırak (mevcut akışa düşsün)
+            if not rag_out or not rag_out.strip():
+                pass  # → aşağıdaki mevcut akış devam eder (bridge vb.)
             else:
-                out_md = self._coerce_text_to_table_if_possible(out_md)
-            yield out_md.encode("utf-8")
-            return
+                out_md = self.markdown_processor.transform_text_to_markdown(rag_out)
+
+                # 1) Tablo/Görsel ise aynen geçir
+                gated = self._gate_to_table_or_image(out_md)
+                if gated:
+                    yield gated
+                    self.user_states[user_id]["rag_head_delivered"] = True
+                    return
+
+                # 2) Düz METİN ise tercih ayarına göre metni doğrudan teslim et
+                if prefer_rag_text:
+                    # Yerelde düzgünleştirip iletelim (site/test sürüş linki kuralları korunur)
+                    resp_bytes = self._deliver_locally(
+                        body=out_md,
+                        original_user_message=user_message,
+                        user_id=user_id
+                    )
+                    yield resp_bytes
+                    self.user_states[user_id]["rag_head_delivered"] = True
+                    return
+                else:
+                    # Eski davranışa dönmek isterseniz (metni bastırıp alttaki özetle yetinmek):
+                    self.logger.info("[GATE] RAG text suppressed by config; falling through to bridge.")
+            # Not: return ETMEYEREK bridge'e düşmesini sağlarız
+ 
+
 
         # 7.9) KÖPRÜ: Tablo/Görsel akışları haricinde — birinci servisten yanıt al,
 
@@ -4150,7 +4359,7 @@ class ChatbotAPI:
                 elif run.status == "failed":
                     yield self._with_site_link_appended("Yanıt oluşturulamadı.\n")
                     return
-                time.sleep(0.5)
+                #time.sleep(0.5)
 
             if not assistant_response:
                 yield self._with_site_link_appended("Yanıt alma zaman aşımına uğradı.\n")
@@ -4211,7 +4420,7 @@ class ChatbotAPI:
 
     def _yield_opsiyonel_table(self, user_id, user_message, model_name, trim_name):
         self.logger.info(f"_yield_opsiyonel_table() called => model={model_name}, trim={trim_name}")
-        time.sleep(1)
+        #time.sleep(1)
         table_yielded = False
 
         # Fabia
@@ -4435,7 +4644,7 @@ class ChatbotAPI:
         yield msg.encode("utf-8")
 
     def _yield_multi_enyaq_tables(self):
-        time.sleep(1)
+        #time.sleep(1)
 
         yield b"<b>Enyaq e Prestige 60 - Opsiyonel Tablosu</b><br>"
         yield ENYAQ_E_PRESTIGE_60_MD.encode("utf-8")
