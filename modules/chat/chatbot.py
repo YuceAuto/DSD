@@ -1,4 +1,4 @@
-import os 
+import os
 import time
 import logging
 import re
@@ -404,7 +404,159 @@ def remove_latex_and_formulas(text):
 
 class ChatbotAPI:
     import difflib
-    
+    def _enforce_assertive_tone(self, text: str) -> str:
+        """
+        Yumuşak/çekingen dili azaltır; kesin yargı tonunu güçlendirir.
+        Aşırıya kaçmadan, tipik hedging kalıplarını törpüler.
+        """
+        if not getattr(self, "ASSERTIVE_MODE", False) or not text:
+            return text
+
+        import re
+        s = text
+
+        # Yumuşatıcı/çekingen kalıpları azalt
+        patterns = [
+            (r"\bmuhtemelen\b", ""), 
+            (r"\bolabilir\b", "dır"),
+            (r"\bolası\b", ""), 
+            (r"\bgenellikle\b", ""),
+            (r"\bçoğu durumda\b", ""),
+            (r"\b(eğer|şayet)\b", ""),  # şartlı açılışları sadeleştir
+            (r"\bgibi görünüyor\b", "dır"),
+            (r"\bgörece\b", ""),
+            (r"\btahmini\b", ""),
+        ]
+        for pat, repl in patterns:
+            s = re.sub(pat, repl, s, flags=re.IGNORECASE)
+
+        # Fazla boşlukları toparla
+        s = re.sub(r"[ \t]+", " ", s)
+        s = re.sub(r"\n{3,}", "\n\n", s).strip()
+        return s
+
+    def _normalize_enyaq_trim(self, t: str) -> str:
+        """
+        JSONL'den gelen 'trim' değerini kanonik hale getirir.
+        Örn: 'es60', 'e sportline 60' -> 'e sportline 60'
+            'ces60', 'coupe e sportline 60' -> 'coupe e sportline 60'
+        """
+        t = (t or "").strip().lower()
+        if not t:
+            return ""
+        # VARIANT_TO_TRIM ve normalize_trim_str proje içinde mevcut
+        if t in VARIANT_TO_TRIM:
+            return VARIANT_TO_TRIM[t]
+        for v in normalize_trim_str(t):
+            if v in VARIANT_TO_TRIM:
+                return VARIANT_TO_TRIM[v]
+        # Enyaq’ın tanımlı trim’leriyle en yakın kanoniği seç
+        for canon in (self.MODEL_VALID_TRIMS.get("enyaq", []) or []):
+            variants = normalize_trim_str(canon)
+            if t in variants or any(v in t or t in v for v in variants):
+                return canon
+        return t
+
+
+    def _load_enyaq_ops_from_jsonl(self, path: str) -> dict[str, str]:
+        """
+        /mnt/data/... JSONL dosyasını okur, her trim için Markdown döndürür.
+        Kabul edilen alanlar (satır başına JSON objesi):
+        - 'trim' / 'variant' / 'donanim' (trim adı)
+        - 'markdown'/'md' (doğrudan md)
+        - 'table' (liste-liste; ilk satır başlık)
+        - 'features' ( [{'name':..,'status':..}] veya ['Yan perde hava yastığı', ...] )
+        - 'items' (['...','...'])
+        - Diğer anahtarlar -> Özellik/Değer tablosu
+        """
+        import json, os
+        out: dict[str, str] = {}
+        if not path or not os.path.exists(path):
+            return out
+
+        def to_md_from_table(rows):
+            if not isinstance(rows, list) or not rows:
+                return ""
+            if isinstance(rows[0], list):
+                header = [str(c) for c in rows[0]]
+                lines = ["| " + " | ".join(header) + " |",
+                        "|" + "|".join(["---"] * len(header)) + "|"]
+                for r in rows[1:]:
+                    if isinstance(r, list):
+                        lines.append("| " + " | ".join(str(c) for c in r) + " |")
+                return "\n".join(lines)
+            return ""
+
+        def to_md_from_features(feats):
+            if not isinstance(feats, list) or not feats:
+                return ""
+            lines = ["| Özellik | Durum |", "|---|---|"]
+            for it in feats:
+                if isinstance(it, dict):
+                    name = it.get("name") or it.get("feature") or it.get("özellik") or ""
+                    status = it.get("status") or it.get("durum") or it.get("state") or ""
+                else:
+                    name, status = str(it), ""
+                lines.append(f"| {name} | {status} |")
+            return "\n".join(lines)
+
+        def to_kv_table(d: dict):
+            kv = [(k, d[k]) for k in d.keys()]
+            lines = ["| Özellik | Değer |", "|---|---|"]
+            for k, v in kv:
+                lines.append(f"| {k} | {v} |")
+            return "\n".join(lines)
+
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                raw = (raw or "").strip()
+                if not raw:
+                    continue
+                try:
+                    rec = json.loads(raw)
+                except Exception:
+                    continue
+
+                trim_raw = rec.get("trim") or rec.get("variant") or rec.get("donanim") or rec.get("title") or ""
+                trim = self._normalize_enyaq_trim(trim_raw)
+                if not trim:
+                    # title içinde trim ima ediliyorsa yakala
+                    ttr = str(rec.get("title") or "")
+                    maybe = extract_trims(ttr.lower())
+                    if maybe:
+                        trim = self._normalize_enyaq_trim(next(iter(maybe)))
+                if not trim:
+                    # trim saptanamadıysa bu satırı atla (gruplamayı bozmamak için)
+                    continue
+
+                md = rec.get("markdown") or rec.get("md")
+                if not md:
+                    if rec.get("table"):
+                        md = to_md_from_table(rec["table"])
+                    elif rec.get("features"):
+                        md = to_md_from_features(rec["features"])
+                    elif rec.get("items"):
+                        md = "\n".join(f"- {str(x)}" for x in rec["items"])
+                    else:
+                        # meta alanları çıkar, kalanlarla KV tablosu yap
+                        ignore = {"model","trim","variant","donanim","title","markdown","md","table","features","items"}
+                        payload = {k: v for k, v in rec.items() if k not in ignore}
+                        md = to_kv_table(payload) if payload else ""
+
+                if not md:
+                    continue
+
+                # Projede mevcut yardımcılar:
+                if "|" in md and "\n" in md:
+                    md = fix_markdown_table(md)
+                else:
+                    md = self._coerce_text_to_table_if_possible(md)
+
+                prev = out.get(trim)
+                out[trim] = (prev + "\n\n" + md) if prev else md
+
+        return out
+
     # ChatbotAPI içinde
     def _load_non_skoda_lists(self):
         import json
@@ -651,34 +803,43 @@ class ChatbotAPI:
 
 
     def _expected_generic_data_for_question(self, user_message: str) -> tuple[str | None, dict]:
-        """
-        Teknik/opsiyonel/fiyat niyeti yoksa: modules/data içeriğinde (ALL_DATA_TEXTS) en iyi eşleşen
-        markdown'ı bulur. Uygun skor çıkarsa (eşik ~0.40) o metni döndürür.
-        """
         if not user_message:
             return None, {}
         if not getattr(self, "ALL_DATA_TEXTS", None):
             self._collect_all_data_texts()
 
-        models = self._extract_models(user_message)
+        models = list(self._extract_models(user_message))
         t = normalize_tr_text(user_message).lower()
 
+        # Yalnızca ilgili model(ler) ait içerikleri aday havuzuna al
+        def _doc_model_from_key(k: str) -> str:
+            head = k.split(".", 1)[0] if "." in k else k
+            head = head.replace("_data", "").replace("_teknik", "").strip().lower()
+            return head
+
+        items = []
+        if models:
+            allow = set(models)
+            for key, obj in self.ALL_DATA_TEXTS.items():
+                doc_mod = _doc_model_from_key(key)
+                lowtxt = normalize_tr_text(obj["text"]).lower()
+                if doc_mod in allow or any(m in lowtxt for m in allow):
+                    items.append((key, obj))
+        else:
+            items = list(self.ALL_DATA_TEXTS.items())
+
         best_score, best_text, best_key = 0.0, None, None
-        for key, obj in self.ALL_DATA_TEXTS.items():
+        for key, obj in items:
             txt = obj["text"]
             score = self._text_similarity_ratio(t, txt)
-            # Model adı metin veya anahtarda geçiyorsa ufak pozitif ayrımcılık yap
-            if models:
-                lowtxt = normalize_tr_text(txt).lower()
-                if any(m in key or m in lowtxt for m in models):
-                    score += 0.10
+            # Yumuşak pozitif ayrımcılık: model eşleşmesi zaten filtrede var; ek puan gerekmiyor
             if score > best_score:
                 best_score, best_text, best_key = score, txt, key
 
-        # Eşiği ihtiyaca göre ayarlayabilirsiniz (0.35–0.45 arası tipik)
         if best_text and best_score >= 0.40:
             return best_text, {"source": "data", "key": best_key, "score": round(best_score, 3)}
         return None, {}
+
 
     # ChatbotAPI sınıfı içinde:  [YENİ] DATA modül tarayıcıları
     def _iter_modules_data(self):
@@ -1194,13 +1355,28 @@ class ChatbotAPI:
             if "sportline" in t:      return SUPERB_E_SPORTLINE_PHEV_MD
             return None
         # Enyaq
+        # Enyaq
         if m == "enyaq":
+            # JSONL override varsa önce onu dene
+            if getattr(self, "ENYAQ_OPS_FROM_JSONL", None):
+                t_norm = self._normalize_enyaq_trim(t)
+                md = self.ENYAQ_OPS_FROM_JSONL.get(t_norm)
+                if not md:
+                    # Varyant eşanlamlarıyla bir kez daha dene
+                    for cand in normalize_trim_str(t_norm):
+                        md = self.ENYAQ_OPS_FROM_JSONL.get(self._normalize_enyaq_trim(cand))
+                        if md:
+                            break
+                if md:
+                    return md
+            # JSONL bulunmazsa eski sabitlere düş
             if "e prestige 60" in t:                     return ENYAQ_E_PRESTIGE_60_MD
             if ("coupe e sportline 60" in t) or ("e sportline 60" in t):
                 return ENYAQ_COUPE_E_SPORTLINE_60_MD
             if ("coupe e sportline 85x" in t) or ("e sportline 85x" in t):
                 return ENYAQ_COUPE_E_SPORTLINE_85X_MD
             return None
+
         # Elroq
         if m == "elroq":
             if "e prestige 60" in t: return ELROQ_E_PRESTIGE_60_MD
@@ -1265,38 +1441,49 @@ class ChatbotAPI:
 
         def _gate_bytes_from_text(txt: str) -> bytes:
             gated = self._gate_to_table_or_image(txt)
-            return gated if gated else b" "  # ' ' = üst blok gösterme
+            return gated if gated else b" "
 
-        if not expected_text:
-            # Referans yok → OpenAI/bridge cevabını getir, sonra KAPIDAN geçir
-            raw_bytes = self._deliver_via_test_assistant(
-                user_id=user_id,
-                answer_text=ai_answer_text,
-                original_user_message=user_message
-            )
-            raw_text = raw_bytes.decode("utf-8", errors="ignore")
-            return _gate_bytes_from_text(raw_text)
+        # >>> Yeni: model uyuşmazlığını engelle <<<
+        if getattr(self, "STRICT_MODEL_ONLY", False):
+            req_models = set(self._extract_models(user_message))
+            if req_models:
+                ans_models = set(self._count_models_in_text(ai_answer_text).keys())
+                # Cevapta model isimleri var ve bunlar istenen kümenin dışına taşıyorsa
+                if ans_models and not ans_models.issubset(req_models):
+                    # İlgili dosya içeriği varsa ona düş
+                    if expected_text:
+                        md = self.markdown_processor.transform_text_to_markdown(expected_text or "")
+                        if '|' in md and '\n' in md:
+                            md = fix_markdown_table(md)
+                        else:
+                            md = self._coerce_text_to_table_if_possible(md)
+                        return _gate_bytes_from_text(md)
+                    else:
+                        # İçerik yoksa: cevabı model dışı satırları ayıklayarak zorla daralt (son çare)
+                        others = (set(self.MODEL_CANONICALS) - req_models)
+                        norm_others = {normalize_tr_text(x).lower() for x in others}
+                        filtered = "\n".join(
+                            ln for ln in ai_answer_text.splitlines()
+                            if not any(no in normalize_tr_text(ln).lower() for no in norm_others)
+                        )
+                        filtered = self._enforce_assertive_tone(filtered)
+                        return _gate_bytes_from_text(filtered or " ")
 
-        # Referans var → benzerlik kararına göre seçim + KAPI
-        ratio = self._text_similarity_ratio(ai_answer_text, expected_text)
+        # Mevcut akış: benzerlik eşiğine göre karar
+        ratio = self._text_similarity_ratio(ai_answer_text, expected_text or "")
+        if expected_text and ratio < self.OPENAI_MATCH_THRESHOLD:
+            md = self.markdown_processor.transform_text_to_markdown(expected_text or "")
+            if '|' in md and '\n' in md:
+                md = fix_markdown_table(md)
+            else:
+                md = self._coerce_text_to_table_if_possible(md)
+            return _gate_bytes_from_text(md)
 
-        if ratio >= self.OPENAI_MATCH_THRESHOLD:
-            raw_bytes = self._deliver_via_test_assistant(
-                user_id=user_id,
-                answer_text=ai_answer_text,
-                original_user_message=user_message
-            )
-            raw_text = raw_bytes.decode("utf-8", errors="ignore")
-            return _gate_bytes_from_text(raw_text)
+        # Köprü metni ile devam (assertive ton uygulayalım)
+        ai_answer_text = self._enforce_assertive_tone(ai_answer_text or "")
+        raw_text = ai_answer_text
+        return _gate_bytes_from_text(raw_text)
 
-        # Dosya içeriğini kullanacağız → yine KAPI
-        md = self.markdown_processor.transform_text_to_markdown(expected_text or "")
-        if '|' in md and '\n' in md:
-            md = fix_markdown_table(md)
-        else:
-            md = self._coerce_text_to_table_if_possible(md)
-
-        return _gate_bytes_from_text(md)
 
 
 
@@ -2484,6 +2671,15 @@ class ChatbotAPI:
         self.worker_thread.start()
 
         self.CACHE_EXPIRY_SECONDS = 43200
+        
+        # === Davranış bayrakları (isteğiniz doğrultusunda) ===
+        self.ASSERTIVE_MODE = os.getenv("ASSERTIVE_MODE", "1") == "1"
+        self.STRICT_MODEL_ONLY = os.getenv("STRICT_MODEL_ONLY", "1") == "1"
+
+        # Vector Store kısa özetlerini ve RAG metnini yüzeye çıkarma
+        self.RAG_SUMMARY_EVERY_ANSWER = os.getenv("RAG_SUMMARY_EVERY_ANSWER", "0") == "1"
+        self.PREFER_RAG_TEXT = os.getenv("PREFER_RAG_TEXT", "0") == "1"
+
 
         self.MODEL_VALID_TRIMS = {
             "fabia": ["premium", "monte carlo"],
@@ -2545,6 +2741,31 @@ class ChatbotAPI:
         # --- init sonunda ---
         self._compile_spec_index()
         self._collect_all_data_texts()
+        # --- Enyaq opsiyonları JSONL ile override ---
+        self.ENYAQ_OPS_JSONL_PATH = os.getenv(
+            "ENYAQ_OPS_JSONL_PATH",
+            "/mnt/data/enyaq_enyaq_coupe_opsiyon_2025.jsonl"
+        )
+        self.ENYAQ_OPS_FROM_JSONL = {}
+        try:
+            if os.path.exists(self.ENYAQ_OPS_JSONL_PATH):
+                self.ENYAQ_OPS_FROM_JSONL = self._load_enyaq_ops_from_jsonl(self.ENYAQ_OPS_JSONL_PATH)
+                self.logger.info(f"[ENYAQ-OPS] JSONL yüklendi: {len(self.ENYAQ_OPS_FROM_JSONL)} trim")
+                # Vector Store’a eklenen “ALL_DATA_TEXTS” içinde eski Enyaq opsiyon md'lerini çıkar (çiftlenmeyi önle)
+                for k in list(self.ALL_DATA_TEXTS.keys()):
+                    if k in {
+                        "enyaq_data.ENYAQ_E_PRESTIGE_60_MD",
+                        "enyaq_data.ENYAQ_COUPE_E_SPORTLINE_60_MD",
+                        "enyaq_data.ENYAQ_COUPE_E_SPORTLINE_85X_MD",
+                    }:
+                        del self.ALL_DATA_TEXTS[k]
+                        self.logger.info(f"[KB] Eski Enyaq opsiyon kaldırıldı: {k}")
+        except Exception as e:
+            self.logger.error(f"[ENYAQ-OPS] JSONL yükleme hatası: {e}")
+
+
+
+
         self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
         # Her yanıta Vector Store özet bloğu eklensin mi? (varsayılan: açık)
         self.RAG_SUMMARY_EVERY_ANSWER = os.getenv("RAG_SUMMARY_EVERY_ANSWER", "1") == "1"
@@ -3543,6 +3764,8 @@ class ChatbotAPI:
             Her yanıta eklenen kısa 'Vector Store özeti' bloğunu üretir ve yield eder.
             Koşullar: RAG_SUMMARY_EVERY_ANSWER=1, USE_OPENAI_FILE_SEARCH=1, vector store & asistan mevcut.
             """
+            if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
+                return
             try:
                 if (self.user_states.get(user_id, {}) or {}).get("rag_head_delivered"):
                     return
@@ -4174,50 +4397,32 @@ class ChatbotAPI:
         )
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
-        prefer_rag_text = os.getenv("PREFER_RAG_TEXT", "1") == "1"
-
-        if self.USE_OPENAI_FILE_SEARCH and assistant_id and generic_info_intent:
+        # Yeni:
+        if self.USE_OPENAI_FILE_SEARCH and assistant_id and generic_info_intent and self.PREFER_RAG_TEXT:
             rag_out = self._ask_assistant(
                 user_id=user_id,
                 assistant_id=assistant_id,
                 content=user_message,
                 timeout=60.0,
                 instructions_override=(
-                    "Cevabı yalnızca bağlı dosya araması (file_search) ile bulduğun kaynaklara dayandır. "
-                    "Varsayım yapma; kısa ama doyurucu bir özet ver, gerekiyorsa 4–6 maddelik liste ekle."
+                    "Cevabı yalnızca bağlı dosya araması (file_search) kaynaklarına dayanarak hazırla. "
+                    "ÖZET YAZMA. Detaylı ve tutarlı, kesin ifadeler kullan. Kararsız/örtülü dil kullanma. "
+                    "Sadece ilgili model(ler) için yaz; başka modelleri dahil etme."
                 ),
                 ephemeral=False
             ) or ""
-
-            # Boş/çok zayıf çıktı ise bridge'e bırak (mevcut akışa düşsün)
-            if not rag_out or not rag_out.strip():
-                pass  # → aşağıdaki mevcut akış devam eder (bridge vb.)
-            else:
+            if rag_out.strip():
                 out_md = self.markdown_processor.transform_text_to_markdown(rag_out)
+                resp_bytes = self._deliver_locally(
+                    body=out_md,
+                    original_user_message=user_message,
+                    user_id=user_id
+                )
+                yield resp_bytes
+                self.user_states[user_id]["rag_head_delivered"] = True
+                return
+        # self.PREFER_RAG_TEXT false ise bu blok atlanır (RAG metni yüzeye çıkmaz)
 
-                # 1) Tablo/Görsel ise aynen geçir
-                gated = self._gate_to_table_or_image(out_md)
-                if gated:
-                    yield gated
-                    self.user_states[user_id]["rag_head_delivered"] = True
-                    return
-
-                # 2) Düz METİN ise tercih ayarına göre metni doğrudan teslim et
-                if prefer_rag_text:
-                    # Yerelde düzgünleştirip iletelim (site/test sürüş linki kuralları korunur)
-                    resp_bytes = self._deliver_locally(
-                        body=out_md,
-                        original_user_message=user_message,
-                        user_id=user_id
-                    )
-                    yield resp_bytes
-                    self.user_states[user_id]["rag_head_delivered"] = True
-                    return
-                else:
-                    # Eski davranışa dönmek isterseniz (metni bastırıp alttaki özetle yetinmek):
-                    self.logger.info("[GATE] RAG text suppressed by config; falling through to bridge.")
-            # Not: return ETMEYEREK bridge'e düşmesini sağlarız
- 
 
 
         # 7.9) KÖPRÜ: Tablo/Görsel akışları haricinde — birinci servisten yanıt al,
@@ -4644,8 +4849,26 @@ class ChatbotAPI:
         yield msg.encode("utf-8")
 
     def _yield_multi_enyaq_tables(self):
-        #time.sleep(1)
+        # JSONL içeriği yüklüyse sırasıyla yayınla
+        if getattr(self, "ENYAQ_OPS_FROM_JSONL", None):
+            order = [
+                "e prestige 60",
+                "coupe e sportline 60",
+                "coupe e sportline 85x",
+                "e sportline 60",
+                "e sportline 85x",
+            ]
+            for i, tr in enumerate(order):
+                md = self.ENYAQ_OPS_FROM_JSONL.get(tr)
+                if not md:
+                    continue
+                yield f"<b>Enyaq {tr.title()} - Opsiyonel Tablosu</b><br>".encode("utf-8")
+                yield md.encode("utf-8")
+                if i < len(order) - 1:
+                    yield b"<hr style='margin:15px 0;'>"
+            return
 
+        # JSONL yoksa eski sabitleri kullan
         yield b"<b>Enyaq e Prestige 60 - Opsiyonel Tablosu</b><br>"
         yield ENYAQ_E_PRESTIGE_60_MD.encode("utf-8")
         yield b"<hr style='margin:15px 0;'>"
@@ -4663,4 +4886,4 @@ class ChatbotAPI:
     def shutdown(self):
         self.stop_worker = True
         self.worker_thread.join(5.0)
-        self.logger.info("ChatbotAPI shutdown complete.") 
+        self.logger.info("ChatbotAPI shutdown complete.")  
