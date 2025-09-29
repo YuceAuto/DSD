@@ -404,6 +404,62 @@ def remove_latex_and_formulas(text):
 
 class ChatbotAPI:
     import difflib
+    def _strip_source_mentions(self, text: str) -> str:
+        """
+        Yanıtta olabilecek tüm 'kaynak' izlerini temizler:
+        - Özel citation token'ları
+        - 【...】 biçimli referanslar
+        - [1], [1,2] gibi numaralı dipnotlar
+        - 'Kaynak:', 'Source:', 'Referans:' ile başlayan satırlar
+        - Satır içi '(Kaynak: ...)' parantezleri
+        (Tablo, HTML ve normal metinle güvenli şekilde çalışır.)
+        """
+        import re
+        if not text:
+            return text
+
+        s = text
+
+        # 1) Özel citation token'ları
+        s = re.sub(r"]+", "", s)
+        s = re.sub(r"]+", "", s)
+
+        # 2) '【...】' tarzı referans blokları
+        s = re.sub(r"【[^】]+】", "", s)
+
+        # 3) 'turn...' gibi çalışma id'leri (gözükürse)
+        s = re.sub(r"\bturn\d+\w+\d+\b", "", s)
+
+        # 4) [1], [1,2] vb. numaralı dipnotlar
+        s = re.sub(r"\[\s*\d+(?:\s*[-,;]\s*\d+)*\s*\]", "", s)
+
+        # 5) Satır başında 'Kaynak:' / 'Source:' / 'Referans:' / 'Citation:'
+        s = re.sub(r"(?im)^(?:kaynak|source|referans|citation)s?\s*:\s*.*$", "", s)
+
+        # 6) Satır içi '(Kaynak: ...)' / '(Source: ...)'
+        s = re.sub(r"(?i)\(\s*(?:kaynak|source|referans|citation)s?\s*:\s*[^)]+\)", "", s)
+
+        # 7) Görsel/biçim temizliği
+        s = re.sub(r"[ \t]+\n", "\n", s)
+        s = re.sub(r"\n{3,}", "\n\n", s)
+        s = re.sub(r"[ \t]{2,}", " ", s)
+
+        return s.strip()
+
+
+    def _sanitize_bytes(self, payload) -> bytes:
+        """
+        Bayrağa göre (HIDE_SOURCES) metinden kaynak/citation izlerini temizleyip bytes döner.
+        Tüm dışarı giden parçalara uygulanır.
+        """
+        if isinstance(payload, (bytes, bytearray)):
+            s = payload.decode("utf-8", errors="ignore")
+        else:
+            s = str(payload or "")
+        if getattr(self, "HIDE_SOURCES", False):
+            s = self._strip_source_mentions(s)
+        return s.encode("utf-8")
+
     def _enforce_assertive_tone(self, text: str) -> str:
         """
         Yumuşak/çekingen dili azaltır; kesin yargı tonunu güçlendirir.
@@ -1867,7 +1923,8 @@ class ChatbotAPI:
                 timeout=60.0,
                 instructions_override=(
                     "Sadece düzgün bir Markdown tablo yaz. Kod bloğu kullanma. "
-                    "Veri eksikse hücreyi ‘—’ ile doldur; özür/uyarı ekleme."
+                    "Veri eksikse hücreyi ‘—’ ile doldur; özür/uyarı ekleme. "
+                    "Kesinlikle kaynak/citation/dosya adı/URL veya belge kimliği yazma."
                 ),
                 ephemeral=True   # <-- NEW
             ) or ""
@@ -2003,7 +2060,8 @@ class ChatbotAPI:
             timeout=60.0,
             instructions_override=(
                 "Sadece düzgün bir Markdown tablo yaz; kod bloğu yok; Türkçe; "
-                "veri yetersizse ‘—’; özür/ret metni yazma."
+                "veri yetersizse ‘—’; özür/ret metni yazma. "
+                "Kesinlikle kaynak/citation/dosya adı/URL veya belge kimliği yazma."
             ),
             ephemeral=True   # her çağrıda temiz thread
         ) or ""
@@ -3306,7 +3364,9 @@ class ChatbotAPI:
                         if self._should_attach_site_link(corrected_message):
                             ans_bytes = self._with_site_link_appended(ans_bytes)
 
+                        ans_bytes = self._sanitize_bytes(ans_bytes)  # (YENİ)
                         return self.app.response_class(ans_bytes, mimetype="text/plain")
+
 
         # --- YENİ SON ---
         # Model tespitinden asistan ID'si seç
@@ -3378,7 +3438,9 @@ class ChatbotAPI:
                     if self._should_attach_site_link(corrected_message):
                         ans_bytes = self._with_site_link_appended(ans_bytes)
 
+                    ans_bytes = self._sanitize_bytes(ans_bytes)  # (YENİ)
                     return self.app.response_class(ans_bytes, mimetype="text/plain")
+
                     
 
         final_answer_parts = []
@@ -3386,12 +3448,15 @@ class ChatbotAPI:
         def caching_generator():
             try:
                 for chunk in self._generate_response(corrected_message, user_id, name_surname):
-                    # ---> Güvenli: her parçayı bytes'a çevir
                     if not isinstance(chunk, (bytes, bytearray)):
                         chunk = str(chunk).encode("utf-8")
 
+                    # (YENİ) Tüm parçalarda kaynak/citation temizliği
+                    chunk = self._sanitize_bytes(chunk)
+
                     final_answer_parts.append(chunk)
                     yield chunk
+
             except Exception as ex:
                 # Hata loglansın ama KULLANICIYA GÖSTERİLME-SİN.
                 self.logger.exception("caching_generator hata")
@@ -3405,8 +3470,10 @@ class ChatbotAPI:
                         user_id=user_id,
                         user_message=corrected_message
                     ):
+                        rag_chunk = self._sanitize_bytes(rag_chunk)  # (YENİ)
                         final_answer_parts.append(rag_chunk)
                         yield rag_chunk
+
                 except Exception as _e:
                     self.logger.error(f"[RAG-SUMMARY] streaming failed: {_e}")
 
@@ -3792,7 +3859,8 @@ class ChatbotAPI:
                         "Madde biçimi: '- ' ile başlayan sade Markdown listesi. "
                         "Varsayım yapma; emin değilsen kısaca belirt. "
                         "Tablo, görsel veya kod bloğu üretme; sadece kısa özet yaz. "
-                        "Türkçe yaz."
+                        "Türkçe yaz. "
+                        "Kesinlikle kaynak/citation/dosya adı/URL veya belge kimliği yazma."
                     ),
                     ephemeral=True
                 ) or ""
