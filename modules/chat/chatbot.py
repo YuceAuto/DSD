@@ -403,30 +403,80 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+    def _enable_file_search_on_assistants_split(self):
+        """
+        Her assistant'ı kendi modeline ait vector store ile iliştirir.
+        ASSISTANT_NAME_MAP: {assistant_id: "enyaq"} gibi.
+        VECTOR_STORES_BY_MODEL: {"enyaq": "<vs_id>", ...}
+        """
+        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
+            return
+
+        # VS haritasını yükle (diskte vs_map.json)
+        if not getattr(self, "VECTOR_STORES_BY_MODEL", None):
+            self.VECTOR_STORES_BY_MODEL = self._load_vs_map() or {}
+
+        for asst_id, model in (self.ASSISTANT_NAME_MAP or {}).items():
+            if not asst_id or not model:
+                continue
+
+            vs_id = (self.VECTOR_STORES_BY_MODEL or {}).get(model.lower())
+            if not vs_id:
+                self.logger.warning(f"[KB-SPLIT] {model} için VS bulunamadı; asistan bağlanamadı: {asst_id}")
+                continue
+
+            try:
+                a = self.client.beta.assistants.retrieve(asst_id)
+                # Araçlar listesinde file_search mutlaka olsun (tekrarı engelle)
+                tools = []
+                seen_fs = False
+                for t in (a.tools or []):
+                    t_type = getattr(t, "type", None) or (t.get("type") if isinstance(t, dict) else None)
+                    if t_type == "file_search":
+                        seen_fs = True
+                    tools.append({"type": t_type} if t_type else {"type": "file_search"})
+                if not seen_fs:
+                    tools.append({"type": "file_search"})
+
+                self.client.beta.assistants.update(
+                    assistant_id=asst_id,
+                    tools=tools,
+                    tool_resources={"file_search": {"vector_store_ids": [vs_id]}},
+                )
+                self.logger.info(f"[KB-SPLIT] {model} -> Assistant {asst_id} VS={vs_id} bağlı.")
+
+            except Exception as e:
+                self.logger.error(f"[KB-SPLIT] Assistant update failed for {asst_id}: {e}")
+
     import difflib
     # --- NEW: VS id haritasını diske yaz/oku
     # --- NEW: mesaja göre VS seçimi
     def _file_search_tool_resources_for(self, user_message: str | None, models: list[str] | None = None):
         if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
             return None
-        # Mesajdan model çıkarımı
+
         selected = list(models or []) or list(self._extract_models(user_message))
         if not selected:
-            # Model yoksa tüm VS’ler (veya isterseniz boş bırakıp RAG’i devre dışı)
-            vs_ids = list((self.VECTOR_STORES_BY_MODEL or {}).values())
-        else:
-            vs_ids = []
-            for m in selected:
-                vs_id = (self.VECTOR_STORES_BY_MODEL or {}).get(m)
-                if vs_id:
-                    vs_ids.append(vs_id)
-            # Hiçbiri eşleşmediyse yine genişlet
-            if not vs_ids:
-                vs_ids = list((self.VECTOR_STORES_BY_MODEL or {}).values())
+            # İstersen bağlamdan (aktif assistant) model çekebilirsin:
+            # asst_id = self.user_states.get(user_id, {}).get("assistant_id")  # user_id parametresi ekleyebilirsen
+            # ctx_model = self.ASSISTANT_NAME_MAP.get(asst_id, "")
+            # if ctx_model: selected = [ctx_model]
+            # Eğer yine yoksa kapat:
+            self.logger.info("[KB-SPLIT] Model tespit edilemedi; file_search devre dışı.")
+            return None
+
+        vs_ids = []
+        for m in selected:
+            vs_id = (self.VECTOR_STORES_BY_MODEL or {}).get(m.lower())
+            if vs_id:
+                vs_ids.append(vs_id)
 
         if not vs_ids:
+            self.logger.warning(f"[KB-SPLIT] Seçilen modeller için VS yok: {selected}")
             return None
+
         return {"file_search": {"vector_store_ids": vs_ids}}
+
 
     def _load_vs_map(self) -> dict:
         try:
@@ -2993,10 +3043,19 @@ class ChatbotAPI:
         self.RAG_SUMMARY_EVERY_ANSWER = os.getenv("RAG_SUMMARY_EVERY_ANSWER", "1") == "1"
         self.logger.info(f"[KB] USE_OPENAI_FILE_SEARCH = {self.USE_OPENAI_FILE_SEARCH}")
 
-        if self.USE_OPENAI_FILE_SEARCH:
-            self.logger.info("[KB] Initializing vector store upload...")
+        # __init__ içinde, .env okunduktan SONRA konumlandır
+        self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
+        self.USE_MODEL_SPLIT = os.getenv("USE_MODEL_SPLIT", "0") == "1"
+
+        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
+            self.logger.info("[KB-SPLIT] Model-bazlı Vector Store yükleme...")
+            self._ensure_vector_stores_by_model_and_upload()
+            self._enable_file_search_on_assistants_split()   # <-- yeni fonksiyon (aşağıda)
+        elif self.USE_OPENAI_FILE_SEARCH:
+            self.logger.info("[KB] Single-store (SkodaKB) modu...")
             self._ensure_vector_store_and_upload()
             self._enable_file_search_on_assistants()
+ 
 
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         # Debug: Hangi vector_stores API yüzeyi mevcut?
@@ -3036,7 +3095,11 @@ class ChatbotAPI:
             # Eski tek-dosya yolu (gerekirse koruyun)
             # self._ensure_vector_store_and_upload()
             pass
-
+        # __init__ sonunda, mevcut bayrakların yanına ekleyin:
+        self.ALWAYS_USE_ASSISTANT_VS = os.getenv("ALWAYS_USE_ASSISTANT_VS", "1") == "1"
+        self.RAG_PASSTHROUGH        = os.getenv("RAG_PASSTHROUGH", "1") == "1"
+        self.BRIDGE_DISABLED        = os.getenv("BRIDGE_DISABLED", "1") == "1"
+       
 
     def _setup_logger(self):
         logger = logging.getLogger("ChatbotAPI")
@@ -3961,13 +4024,19 @@ class ChatbotAPI:
         tool_resources_override: dict | None = None,   # NEW
     ) -> str:
         # File Search vector store’u varsa tool_resources hazırla
+        #tr = tool_resources_override
+        #if (not tr) and getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "USE_MODEL_SPLIT", False):
+        #    tr = self._file_search_tool_resources_for(content)
         tr = tool_resources_override
-        if (not tr) and getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "USE_MODEL_SPLIT", False):
+        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT and self.ALWAYS_USE_ASSISTANT_VS:
+            # asistanın üzerinde zaten VS bağlı; burada mesajdan VS türetmeyin
+            tr = tool_resources_override  # (çağıran özellikle bir şey yollarsa sadece onu kullan)
+        elif (not tr) and self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
+            # geri uyumluluk: MESAJDAN VS türetmek isterseniz (eski davranış)
             tr = self._file_search_tool_resources_for(content)
-
-        # RAG kapsamı belirlediysek ephemeral thread kullanmak en güvenlisi
-        use_ephemeral = ephemeral or bool(tr)
-
+            # RAG kapsamı belirlediysek ephemeral thread kullanmak en güvenlisi
+ 
+        use_ephemeral = ephemeral or bool(tr) or self.USE_MODEL_SPLIT
         if use_ephemeral:
             t = self.client.beta.threads.create(tool_resources=tr) if tr else self.client.beta.threads.create()
             thread_id = t.id
@@ -3980,7 +4049,6 @@ class ChatbotAPI:
             run_kwargs["instructions"] = instructions_override
 
         run = self.client.beta.threads.runs.create(**run_kwargs)
-
         # Bekleme
         start = time.time()
         while time.time() - start < timeout:
@@ -4155,14 +4223,13 @@ class ChatbotAPI:
             return
         # _generate_response içinde, price/test-drive kontrollerinden SONRA
         # ve teknik/karşılaştırma bloklarına GİRMEDEN hemen önce:
-        qa_bytes = self._answer_teknik_as_qa(user_message, user_id)
-        if qa_bytes:
-            qa_text = qa_bytes.decode("utf-8", errors="ignore")
-            gated = self._gate_to_table_or_image(qa_text)
-            if not gated:
+        # YENİ: RAG öncelikliyse teknik-QA devre dışı
+        if not self.PREFER_RAG_TEXT:
+            qa_bytes = self._answer_teknik_as_qa(user_message, user_id)
+            if qa_bytes:
+                yield self._sanitize_bytes(qa_bytes)  # tabloya zorlamadan ilet
                 return
-            yield gated
-            return
+
 
 
         # --- TEKNİK KARŞILAŞTIRMA / KIYAS ---
@@ -4645,21 +4712,18 @@ class ChatbotAPI:
                 content=user_message,
                 timeout=60.0,
                 instructions_override=(
+                    # Sadece dosya aramasıyla yanıt; tablo zorlaması yok; kaynak yazma yok
                     "Cevabı yalnızca bağlı dosya araması (file_search) kaynaklarına dayanarak hazırla. "
-                    "ÖZET YAZMA. Detaylı ve tutarlı, kesin ifadeler kullan. Kararsız/örtülü dil kullanma. "
-                    "Sadece ilgili model(ler) için yaz; başka modelleri dahil etme."
+                    "Metni OLDUĞU GİBİ aktar; tablo/HTML üretme zorunluluğu yok; kaynak/citation yazma. "
+                    "Yalnızca bu asistanın modeline ait bilgilerden yararlan."
                 ),
-                ephemeral=True,
-                tool_resources_override=self._file_search_tool_resources_for(user_message)
+                ephemeral=True
+                # tool_resources_override=None -> asistanın VS’i kullanılacak (Bkz. 2. adım)
             ) or ""
             if rag_out.strip():
-                out_md = self.markdown_processor.transform_text_to_markdown(rag_out)
-                resp_bytes = self._deliver_locally(
-                    body=out_md,
-                    original_user_message=user_message,
-                    user_id=user_id
-                )
-                yield resp_bytes
+                # Kaynak/köprü izlerini temizle ama tabloya çevirmeyelim:
+                clean = self._strip_source_mentions(rag_out) if getattr(self, "HIDE_SOURCES", False) else rag_out
+                yield self._sanitize_bytes(clean)  # → bytes
                 self.user_states[user_id]["rag_head_delivered"] = True
                 return
         # self.PREFER_RAG_TEXT false ise bu blok atlanır (RAG metni yüzeye çıkmaz)
@@ -4667,21 +4731,21 @@ class ChatbotAPI:
 
 
         # 7.9) KÖPRÜ: Tablo/Görsel akışları haricinde — birinci servisten yanıt al,
+        bridge_answer = ""
+        bridge_table_md = bridge_table_html = bridge_table_title = ""
+        bridge_table_flag = False
 
+        if not getattr(self, "BRIDGE_DISABLED", False):
 
-        try:
-            bridge = self._proxy_first_service_answer(user_message=user_message, user_id=user_id)
-            bridge_answer      = (bridge.get("answer") or "").strip()
-            bridge_table_md    = (bridge.get("table_md") or "").strip() if isinstance(bridge, dict) else ""
-            bridge_table_html  = (bridge.get("table_html") or "").strip() if isinstance(bridge, dict) else ""
-            bridge_table_title = (bridge.get("table_title") or "").strip() if isinstance(bridge, dict) else ""
-            bridge_table_flag  = bool(bridge.get("table_intent")) if isinstance(bridge, dict) else False
-        except Exception:
-            bridge_answer = ""
-            bridge_table_md = ""
-            bridge_table_html = ""
-            bridge_table_title = ""
-            bridge_table_flag = False
+            try:
+                 bridge = self._proxy_first_service_answer(user_message=user_message, user_id=user_id)
+                 bridge_answer      = (bridge.get("answer") or "").strip()
+                 bridge_table_md    = (bridge.get("table_md") or "").strip() if isinstance(bridge, dict) else ""
+                 bridge_table_html  = (bridge.get("table_html") or "").strip() if isinstance(bridge, dict) else ""
+                 bridge_table_title = (bridge.get("table_title") or "").strip() if isinstance(bridge, dict) else ""
+                 bridge_table_flag  = bool(bridge.get("table_intent")) if isinstance(bridge, dict) else False
+            except Exception:
+                pass
 
         # --- YENİ: TABLO SİNYALİ VARSA BİRİNCİ KODU BIRAK, SORUYU 'TEST' ASİSTANA BAŞTAN YÖNLENDİR ---
         if bridge_table_flag or bridge_table_md or bridge_table_html or self._looks_like_table_intent(bridge_answer):
@@ -4723,98 +4787,40 @@ class ChatbotAPI:
         # (Bridge boş dönerse normal '8) OpenAI API' yerel akışınıza düşsün.)
 
         # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
+        # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
         if not assistant_id:
             yield self._with_site_link_appended("Uygun bir asistan bulunamadı.\n")
             return
 
         try:
-            threads_dict = self.user_states[user_id].get("threads", {})
-            thread_id = threads_dict.get(assistant_id)
+            content = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=assistant_id,
+                content=user_message,
+                timeout=60.0,
+                instructions_override=None,
+                ephemeral=True if self.USE_MODEL_SPLIT else False,
+                tool_resources_override=self._file_search_tool_resources_for(user_message)
+            ) or ""
 
-            # Thread yoksa oluştur
-            if not thread_id:
-                new_thread = self.client.beta.threads.create(
-                    messages=[{"role": "user", "content": user_message}]
-                )
-                thread_id = new_thread.id
-                threads_dict[assistant_id] = thread_id
-                self.user_states[user_id]["threads"] = threads_dict
-            else:
-                # Mevcut threade yeni kullanıcı mesajını ekle
-                self.client.beta.threads.messages.create(
-                    thread_id=thread_id,
-                    role="user",
-                    content=user_message
-                )
+            content_md = self.markdown_processor.transform_text_to_markdown(content)
+            if '|' in content_md and '\n' in content_md:
+                content_md = fix_markdown_table(content_md)
 
-            # Asistan ile koş
-            run = self.client.beta.threads.runs.create(
-                thread_id=thread_id,
-                assistant_id=assistant_id
+            final_bytes = self._apply_file_validation_and_route(
+                user_id=user_id,
+                user_message=user_message,
+                ai_answer_text=content_md
             )
-
-            start_time = time.time()
-            timeout = 60
-            assistant_response = ""
-
-            # run tamamlanana veya fail olana kadar bekle
-            while time.time() - start_time < timeout:
-                run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
-                if run.status == "completed":
-                    try:
-                        # SDK sürümünüz destekliyorsa run_id ile daraltın
-                        msg_response = self.client.beta.threads.messages.list(
-                            thread_id=thread_id,
-                            run_id=run.id,
-                            order="desc",
-                            limit=5
-                        )
-                    except TypeError:
-                        # Eski SDK: run_id parametresi yoksa sadece en yeni mesajlara bak
-                        msg_response = self.client.beta.threads.messages.list(
-                            thread_id=thread_id,
-                            order="desc",
-                            limit=5
-                        )
-
-                    latest_assistant = next((m for m in msg_response.data if m.role == "assistant"), None)
-                    if not latest_assistant:
-                        yield self._with_site_link_appended("Asistan yanıtı bulunamadı.\n")
-                        break
-
-                    parts = []
-                    for part in latest_assistant.content:
-                        if getattr(part, "type", None) == "text":
-                            parts.append(part.text.value)
-                    content = "\n".join(parts).strip()
-
-                    content_md = self.markdown_processor.transform_text_to_markdown(content)
-                    if '|' in content_md and '\n' in content_md:
-                        content_md = fix_markdown_table(content_md)
-
-                    assistant_response = content
-                    # [YENİ] Teslim etmeden önce dosya ile kıyas + karar
-                    final_bytes = self._apply_file_validation_and_route(
-                        user_id=user_id,
-                        user_message=user_message,
-                        ai_answer_text=content_md
-                    )
-                    yield final_bytes
-                    break
-
-                elif run.status == "failed":
-                    yield self._with_site_link_appended("Yanıt oluşturulamadı.\n")
-                    return
-                #time.sleep(0.5)
-
-            if not assistant_response:
-                yield self._with_site_link_appended("Yanıt alma zaman aşımına uğradı.\n")
-                return
+            yield final_bytes
+            return
 
         except Exception as e:
             error_msg = f"Hata: {str(e)}\n"
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
             yield self._with_site_link_appended(error_msg.encode("utf-8"))
+            return
+
 
     def _yield_invalid_trim_message(self, model, invalid_trim):
         msg = f"{model.title()} {invalid_trim.title()} modelimiz bulunmamaktadır.<br>"
@@ -5127,4 +5133,5 @@ class ChatbotAPI:
     def shutdown(self):
         self.stop_worker = True
         self.worker_thread.join(5.0)
-        self.logger.info("ChatbotAPI shutdown complete.")  
+        self.logger.info("ChatbotAPI shutdown complete.") 
+ 
