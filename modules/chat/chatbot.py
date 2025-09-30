@@ -404,6 +404,170 @@ def remove_latex_and_formulas(text):
 
 class ChatbotAPI:
     import difflib
+    # --- NEW: VS id haritasını diske yaz/oku
+    # --- NEW: mesaja göre VS seçimi
+    def _file_search_tool_resources_for(self, user_message: str | None, models: list[str] | None = None):
+        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
+            return None
+        # Mesajdan model çıkarımı
+        selected = list(models or []) or list(self._extract_models(user_message))
+        if not selected:
+            # Model yoksa tüm VS’ler (veya isterseniz boş bırakıp RAG’i devre dışı)
+            vs_ids = list((self.VECTOR_STORES_BY_MODEL or {}).values())
+        else:
+            vs_ids = []
+            for m in selected:
+                vs_id = (self.VECTOR_STORES_BY_MODEL or {}).get(m)
+                if vs_id:
+                    vs_ids.append(vs_id)
+            # Hiçbiri eşleşmediyse yine genişlet
+            if not vs_ids:
+                vs_ids = list((self.VECTOR_STORES_BY_MODEL or {}).values())
+
+        if not vs_ids:
+            return None
+        return {"file_search": {"vector_store_ids": vs_ids}}
+
+    def _load_vs_map(self) -> dict:
+        try:
+            p = os.getenv("KB_VS_MAP_PATH", os.path.join(self.app.static_folder, "kb", "vs_map.json"))
+            if os.path.exists(p):
+                import json
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            self.logger.warning(f"[KB-SPLIT] vs_map yüklenemedi: {e}")
+        return {}
+
+    def _save_vs_map(self, m: dict):
+        try:
+            p = os.getenv("KB_VS_MAP_PATH", os.path.join(self.app.static_folder, "kb", "vs_map.json"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            import json
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(m, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.warning(f"[KB-SPLIT] vs_map yazılamadı: {e}")
+
+    # --- NEW: model bazlı VS oluşturup ilgili dosyayı yükler
+    def _ensure_vector_stores_by_model_and_upload(self):
+        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
+            return
+        vs_api = self._vs_api()
+        if not vs_api:
+            self.logger.warning("[KB-SPLIT] Vector Stores API yok; atlandı.")
+            return
+
+        # 1) Dosyaları üret
+        model_files = self._export_all_model_files()
+
+        # 2) Mevcut haritayı yükle
+        self.VECTOR_STORES_BY_MODEL = self._load_vs_map() or {}
+
+        for model, fpath in model_files.items():
+            try:
+                vs_id = self.VECTOR_STORES_BY_MODEL.get(model)
+                if not vs_id:
+                    vs = vs_api.create(name=f"SkodaKB_{model.title()}")
+                    vs_id = vs.id
+                    self.VECTOR_STORES_BY_MODEL[model] = vs_id
+
+                # Dosyayı yükle
+                with open(fpath, "rb") as f:
+                    file_obj = self.client.files.create(file=f, purpose="assistants")
+
+                files_api = getattr(vs_api, "files", None)
+                batches_api = getattr(vs_api, "file_batches", None)
+                if files_api and hasattr(files_api, "create_and_poll"):
+                    files_api.create_and_poll(vector_store_id=vs_id, file_id=file_obj.id)
+                elif batches_api and hasattr(batches_api, "upload_and_poll"):
+                    with open(fpath, "rb") as f2:
+                        batches_api.upload_and_poll(vector_store_id=vs_id, files=[f2])
+                else:
+                    files_api.create(vector_store_id=vs_id, file_id=file_obj.id)
+
+                self.logger.info(f"[KB-SPLIT] {model} -> VS={vs_id} yükleme tamam.")
+            except Exception as e:
+                self.logger.error(f"[KB-SPLIT] {model} yükleme hatası: {e}")
+
+        # 3) Haritayı kalıcılaştır
+        self._save_vs_map(self.VECTOR_STORES_BY_MODEL)
+
+    # --- NEW: fiyat tablosunu mode’e göre filtreleyen küçük yardımcı
+    def _filter_price_md_for_model(self, model: str) -> str | None:
+        try:
+            base = FIYAT_LISTESI_MD.strip().splitlines()
+            if len(base) < 2:
+                return None
+            header, sep, body = base[0], base[1], base[2:]
+            tags = set()
+            up = model.lower()
+            if up == "octavia":
+                tags.update({"OCTAVIA", "OCTAVIA COMBI"})
+            elif up == "superb":
+                tags.update({"SUPERB", "SUPERB COMBI"})
+            else:
+                tags.add(model.upper())
+            rows = []
+            for row in body:
+                parts = row.split("|")
+                if len(parts) > 2:
+                    first = parts[1].strip().upper()
+                    if any(tag in first for tag in tags):
+                        rows.append(row)
+            md = "\n".join([header, sep] + (rows or body))
+            return fix_markdown_table(md)
+        except Exception:
+            return None
+
+    # --- NEW: tek model için derlenmiş içerik dosyası üretir
+    def _export_model_file(self, model: str) -> str:
+        out_dir = os.path.join(self.app.static_folder, "kb")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"KB_{model.title()}.md")
+
+        sections = []
+
+        def add(title, body):
+            if body and str(body).strip():
+                sections.append(f"# {title}\n\n{str(body).strip()}\n")
+
+        # 1) Teknik tablo
+        add(f"{model.title()} — Teknik Özellikler", self.TECH_SPEC_TABLES.get(model, ""))
+
+        # 2) Standart donanımlar
+        add(f"{model.title()} — Standart Donanımlar", self.STANDART_DONANIM_TABLES.get(model, ""))
+
+        # 3) Opsiyonel donanımlar (tüm trimler)
+        for tr in self.MODEL_VALID_TRIMS.get(model, []):
+            md = self._lookup_opsiyonel_md(model, tr)
+            add(f"{model.title()} {tr.title()} — Opsiyonel Donanımlar", md)
+
+        # 3b) Enyaq JSONL override varsa ekle
+        if model == "enyaq" and getattr(self, "ENYAQ_OPS_FROM_JSONL", None):
+            for t, md in self.ENYAQ_OPS_FROM_JSONL.items():
+                add(f"Enyaq {t.title()} — Opsiyonel Donanımlar (JSONL)", md)
+
+        # 4) (Opsiyonel) Model‑filtreli fiyat listesi
+        price_md = self._filter_price_md_for_model(model)
+        if price_md:
+            add(f"{model.title()} — Fiyat Listesi", price_md)
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(sections))
+        return path
+
+    # --- NEW: tüm modelleri üret
+    def _export_all_model_files(self) -> dict[str, str]:
+        paths = {}
+        for model in self.MODEL_VALID_TRIMS.keys():
+            try:
+                p = self._export_model_file(model)
+                paths[model] = p
+            except Exception as e:
+                self.logger.error(f"[KB-SPLIT] {model} dosya üretimi başarısız: {e}")
+        return paths
+
     def _strip_source_mentions(self, text: str) -> str:
         """
         Yanıtta olabilecek tüm 'kaynak' izlerini temizler:
@@ -2861,6 +3025,17 @@ class ChatbotAPI:
         )
         # __init__ sonunda
         self._load_non_skoda_lists()
+        # __init__ sonunda:
+        self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
+        self.USE_MODEL_SPLIT = os.getenv("USE_MODEL_SPLIT", "0") == "1"
+
+        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
+            self.logger.info("[KB-SPLIT] Model-bazlı Vector Store yükleme...")
+            self._ensure_vector_stores_by_model_and_upload()
+        else:
+            # Eski tek-dosya yolu (gerekirse koruyun)
+            # self._ensure_vector_store_and_upload()
+            pass
 
 
     def _setup_logger(self):
@@ -3782,28 +3957,24 @@ class ChatbotAPI:
         content: str,
         timeout: float = 60.0,
         instructions_override: str | None = None,
-        ephemeral: bool = False
+        ephemeral: bool = False,
+        tool_resources_override: dict | None = None,   # NEW
     ) -> str:
         # File Search vector store’u varsa tool_resources hazırla
-        tr = None
-        if getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "VECTOR_STORE_ID", ""):
-            tr = {"file_search": {"vector_store_ids": [self.VECTOR_STORE_ID]}}
+        tr = tool_resources_override
+        if (not tr) and getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "USE_MODEL_SPLIT", False):
+            tr = self._file_search_tool_resources_for(content)
 
-        # Thread seçimi
-        if ephemeral:
-            # Ephemeral → her çağrıda temiz thread
-            if tr:
-                t = self.client.beta.threads.create(tool_resources=tr)
-            else:
-                t = self.client.beta.threads.create()
+        # RAG kapsamı belirlediysek ephemeral thread kullanmak en güvenlisi
+        use_ephemeral = ephemeral or bool(tr)
+
+        if use_ephemeral:
+            t = self.client.beta.threads.create(tool_resources=tr) if tr else self.client.beta.threads.create()
             thread_id = t.id
         else:
             thread_id = self._ensure_thread(user_id, assistant_id, tool_resources=tr)
 
-        # Mesajı ekle
         self.client.beta.threads.messages.create(thread_id=thread_id, role="user", content=content)
-
-        # Run oluştur
         run_kwargs = {"thread_id": thread_id, "assistant_id": assistant_id}
         if instructions_override:
             run_kwargs["instructions"] = instructions_override
@@ -3862,7 +4033,8 @@ class ChatbotAPI:
                         "Türkçe yaz. "
                         "Kesinlikle kaynak/citation/dosya adı/URL veya belge kimliği yazma."
                     ),
-                    ephemeral=True
+                    ephemeral=True,
+                    tool_resources_override=self._file_search_tool_resources_for(user_message)
                 ) or ""
 
                 out_md = self.markdown_processor.transform_text_to_markdown(rag_text)
@@ -4477,7 +4649,8 @@ class ChatbotAPI:
                     "ÖZET YAZMA. Detaylı ve tutarlı, kesin ifadeler kullan. Kararsız/örtülü dil kullanma. "
                     "Sadece ilgili model(ler) için yaz; başka modelleri dahil etme."
                 ),
-                ephemeral=False
+                ephemeral=True,
+                tool_resources_override=self._file_search_tool_resources_for(user_message)
             ) or ""
             if rag_out.strip():
                 out_md = self.markdown_processor.transform_text_to_markdown(rag_out)
