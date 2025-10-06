@@ -403,6 +403,64 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+    def _vs_tool_res(self, vs_id: str | None):
+        """Verilen VS için tool_resources objesi hazırla."""
+        return {"file_search": {"vector_store_ids": [vs_id]}} if vs_id else None
+
+    def _rag_model_tool_res(self, user_message: str, model_hint: str | None = None):
+        """Model-özel VS için tool_resources hazırla (model hint yoksa msg'den çıkar)."""
+        model = (model_hint or "").lower().strip() if model_hint else None
+        if not model:
+            ms = list(self._extract_models(user_message))
+            model = ms[0] if ms else None
+        return self._file_search_tool_resources_for(user_message, models=[model]) if model else None
+
+    def _ask_rag_with_fallback(self, user_id: str, assistant_id: str, user_message: str,
+                            model_hint: str | None = None, timeout: float = 45.0):
+        """
+        1) Model-özel VS ile cevap üret.
+        2) Cevap yoksa veya 'NO_HIT' geldiyse global SkodaKB VS ile tekrar dene.
+        3) Yine yoksa ('none') döner.
+        """
+        sentinel = getattr(self, "RAG_NO_HIT_SENTINEL", "__NO_RAG_HIT__")
+        instr = (
+            "Cevabı yalnızca bağlı dosya araması (file_search) sonuçlarına dayanarak hazırla. "
+            f"Eğer ilgili belge bulunamazsa hiçbir açıklama eklemeden SADECE {sentinel} yaz. "
+            "Tablo/HTML üretme; kaynak/citation/dosya adı yazma; Türkçe yaz."
+        )
+
+        # (1) Model-özel VS
+        tr_model = self._rag_model_tool_res(user_message, model_hint=model_hint)
+        if tr_model:
+            out = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=assistant_id,
+                content=user_message,
+                timeout=timeout,
+                instructions_override=instr,
+                ephemeral=True,
+                tool_resources_override=tr_model
+            ) or ""
+            if out and sentinel not in out:
+                return out, "model"
+
+        # (2) Global SkodaKB VS fallback
+        if getattr(self, "VECTOR_STORE_ID", ""):
+            tr_global = self._vs_tool_res(self.VECTOR_STORE_ID)
+            out2 = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=assistant_id,
+                content=user_message,
+                timeout=timeout,
+                instructions_override=instr,
+                ephemeral=True,
+                tool_resources_override=tr_global
+            ) or ""
+            if out2 and sentinel not in out2:
+                return out2, "global"
+
+        return "", "none"
+
     def _enable_file_search_on_assistants_split(self):
         """
         Her assistant'ı kendi modeline ait vector store ile iliştirir.
@@ -3046,11 +3104,20 @@ class ChatbotAPI:
         # __init__ içinde, .env okunduktan SONRA konumlandır
         self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
         self.USE_MODEL_SPLIT = os.getenv("USE_MODEL_SPLIT", "0") == "1"
+        self.RAG_NO_HIT_SENTINEL = os.getenv("RAG_NO_HIT_SENTINEL", "__NO_RAG_HIT__")
 
         if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
             self.logger.info("[KB-SPLIT] Model-bazlı Vector Store yükleme...")
             self._ensure_vector_stores_by_model_and_upload()
             self._enable_file_search_on_assistants_split()   # <-- yeni fonksiyon (aşağıda)
+            # --- NEW: Model-split modunda da global (SkodaKB) store'u fallback için hazırla ---
+            try:
+                # SkodaKB.md üret + OpenAI Files'a yükle + global Vector Store'a ekle
+                self._ensure_vector_store_and_upload()   # self.VECTOR_STORE_ID set edilir
+                self.logger.info("[KB-SPLIT] Global fallback SkodaKB hazır (VECTOR_STORE_ID=%s)", self.VECTOR_STORE_ID)
+            except Exception as e:
+                self.logger.warning("[KB-SPLIT] Global fallback store hazırlanamadi: %s", e)
+
         elif self.USE_OPENAI_FILE_SEARCH:
             self.logger.info("[KB] Single-store (SkodaKB) modu...")
             self._ensure_vector_store_and_upload()
@@ -4706,26 +4773,27 @@ class ChatbotAPI:
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
         # Yeni:
         if self.USE_OPENAI_FILE_SEARCH and assistant_id and generic_info_intent and self.PREFER_RAG_TEXT:
-            rag_out = self._ask_assistant(
+            # Model ipucunu mesajdan çıkar (varsa)
+            primary_model = None
+            ms = list(self._extract_models(user_message))
+            if ms:
+                primary_model = ms[0]
+
+            rag_out, src = self._ask_rag_with_fallback(
                 user_id=user_id,
                 assistant_id=assistant_id,
-                content=user_message,
-                timeout=60.0,
-                instructions_override=(
-                    # Sadece dosya aramasıyla yanıt; tablo zorlaması yok; kaynak yazma yok
-                    "Cevabı yalnızca bağlı dosya araması (file_search) kaynaklarına dayanarak hazırla. "
-                    "Metni OLDUĞU GİBİ aktar; tablo/HTML üretme zorunluluğu yok; kaynak/citation yazma. "
-                    "Yalnızca bu asistanın modeline ait bilgilerden yararlan."
-                ),
-                ephemeral=True
-                # tool_resources_override=None -> asistanın VS’i kullanılacak (Bkz. 2. adım)
-            ) or ""
+                user_message=user_message,
+                model_hint=primary_model,
+                timeout=60.0
+            )
+
             if rag_out.strip():
-                # Kaynak/köprü izlerini temizle ama tabloya çevirmeyelim:
                 clean = self._strip_source_mentions(rag_out) if getattr(self, "HIDE_SOURCES", False) else rag_out
-                yield self._sanitize_bytes(clean)  # → bytes
+                self.logger.info(f"[RAG] delivered via '{src}' store")  # 'model' veya 'global'
+                yield self._sanitize_bytes(clean)
                 self.user_states[user_id]["rag_head_delivered"] = True
                 return
+
         # self.PREFER_RAG_TEXT false ise bu blok atlanır (RAG metni yüzeye çıkmaz)
 
 
