@@ -22,57 +22,19 @@ from modules.config import Config
 from modules.utils import Utils
 from modules.db import create_tables, save_to_db, send_email, get_db_connection, update_customer_answer
 
-# -- ENYAQ tabloları
-from modules.data.enyaq_data import (
-    ENYAQ_E_PRESTIGE_60_MD,
-    ENYAQ_COUPE_E_SPORTLINE_60_MD,
-    ENYAQ_COUPE_E_SPORTLINE_85X_MD
-)
-# -- ELROQ tablosu
-from modules.data.elroq_data import ELROQ_E_PRESTIGE_60_MD
-
-# Fabia, Kamiq, Scala tabloları
-from modules.data.scala_data import (
-    SCALA_ELITE_MD,
-    SCALA_PREMIUM_MD,
-    SCALA_MONTE_CARLO_MD
-)
-from modules.data.kamiq_data import (
-    KAMIQ_ELITE_MD,
-    KAMIQ_PREMIUM_MD,
-    KAMIQ_MONTE_CARLO_MD
-)
-from modules.data.fabia_data import (
-    FABIA_PREMIUM_MD,
-    FABIA_MONTE_CARLO_MD
-)
-
-# Karoq tabloları
-from modules.data.karoq_data import (
-    KAROQ_PREMIUM_MD,
-    KAROQ_PRESTIGE_MD,
-    KAROQ_SPORTLINE_MD
-)
-from modules.data.kodiaq_data import (
-    KODIAQ_PREMIUM_MD,
-    KODIAQ_PRESTIGE_MD,
-    KODIAQ_SPORTLINE_MD,
-    KODIAQ_RS_MD
-)
-
-from modules.data.octavia_data import (
-    OCTAVIA_ELITE_MD,
-    OCTAVIA_PREMIUM_MD,
-    OCTAVIA_PRESTIGE_MD,
-    OCTAVIA_SPORTLINE_MD,
-    OCTAVIA_RS_MD
-)
-from modules.data.superb_data import (
-    SUPERB_PREMIUM_MD,
-    SUPERB_PRESTIGE_MD,
-    SUPERB_LK_CRYSTAL_MD,
-    SUPERB_E_SPORTLINE_PHEV_MD
-)
+# -- ENYAQ tabloları 
+from modules.data.enyaq_data import ENYAQ_DATA_MD 
+# -- ELROQ tablosu 
+from modules.data.elroq_data import ELROQ_DATA_MD 
+# Fabia, Kamiq, Scala tabloları 
+from modules.data.scala_data import SCALA_DATA_MD 
+from modules.data.kamiq_data import KAMIQ_DATA_MD 
+from modules.data.fabia_data import FABIA_DATA_MD 
+# Karoq tabloları 
+from modules.data.karoq_data import KAROQ_DATA_MD 
+from modules.data.kodiaq_data import KODIAQ_DATA_MD 
+from modules.data.octavia_data import OCTAVIA_DATA_MD 
+from modules.data.superb_data import SUPERB_DATA_MD
 from modules.data.test_data import (
     TEST_E_PRESTIGE_60_MD,
     TEST_PREMIUM_MD,
@@ -110,85 +72,38 @@ from modules.data.elroq_teknik import(
 # -- Fiyat tablosu
 from modules.data.fiyat_data import FIYAT_LISTESI_MD
 # -- FABIA
-from modules.data.fabia_data import (
-    FABIA_PREMIUM_MD,
-    FABIA_MONTE_CARLO_MD,
-    FABIA_DONANIM_LISTESI_MD
-)
+
 from modules.data.fabia_teknik import FABIA_TEKNIK_MD
 
 # -- SCALA
-from modules.data.scala_data import (
-    SCALA_ELITE_MD,
-    SCALA_PREMIUM_MD,
-    SCALA_MONTE_CARLO_MD,
-    SCALA_DONANIM_LISTESI_MD
-)
+
 from modules.data.scala_teknik import SCALA_TEKNIK_MD
 
 # -- KAMIQ
-from modules.data.kamiq_data import (
-    KAMIQ_ELITE_MD,
-    KAMIQ_PREMIUM_MD,
-    KAMIQ_MONTE_CARLO_MD,
-    KAMIQ_DONANIM_LISTESI_MD
-)
+
 from modules.data.kamiq_teknik import KAMIQ_TEKNIK_MD
 
 # -- KAROQ
-from modules.data.karoq_data import (
-    KAROQ_PREMIUM_MD,
-    KAROQ_PRESTIGE_MD,
-    KAROQ_SPORTLINE_MD,
-    KAROQ_DONANIM_LISTESI_MD
-)
+
 from modules.data.karoq_teknik import KAROQ_TEKNIK_MD
 
 # -- KODIAQ
-from modules.data.kodiaq_data import (
-    KODIAQ_PREMIUM_MD,
-    KODIAQ_PRESTIGE_MD,
-    KODIAQ_SPORTLINE_MD,
-    KODIAQ_RS_MD,
-    KODIAQ_DONANIM_LISTESI_MD
-)
+
 from modules.data.kodiaq_teknik import KODIAQ_TEKNIK_MD
 
 # -- OCTAVIA
-from modules.data.octavia_data import (
-    OCTAVIA_ELITE_MD,
-    OCTAVIA_PREMIUM_MD,
-    OCTAVIA_PRESTIGE_MD,
-    OCTAVIA_SPORTLINE_MD,
-    OCTAVIA_RS_MD,
-    OCTAVIA_DONANIM_LISTESI_MD
-)
+
 from modules.data.octavia_teknik import OCTAVIA_TEKNIK_MD
 
 # -- SUPERB
-from modules.data.superb_data import (
-    SUPERB_PREMIUM_MD,
-    SUPERB_PRESTIGE_MD,
-    SUPERB_LK_CRYSTAL_MD,
-    SUPERB_E_SPORTLINE_PHEV_MD,
-    SUPERB_DONANIM_LISTESI_MD
-)
+
 from modules.data.superb_teknik import SUPERB_TEKNIK_MD
 
 # -- ENYAQ
-from modules.data.enyaq_data import (
-    ENYAQ_E_PRESTIGE_60_MD,
-    ENYAQ_COUPE_E_SPORTLINE_60_MD,
-    ENYAQ_COUPE_E_SPORTLINE_85X_MD,
-    ENYAQ_DONANIM_LISTESI_MD
-)
+
 from modules.data.enyaq_teknik import ENYAQ_TEKNIK_MD
 
 # -- ELROQ
-from modules.data.elroq_data import (
-    ELROQ_E_PRESTIGE_60_MD,
-    ELROQ_DONANIM_LISTESI_MD
-)
 from modules.data.elroq_teknik import ELROQ_TEKNIK_MD
 import math
 from modules.data.ev_specs import EV_RANGE_KM, FUEL_SPECS   # 1. adımda oluşturduk
@@ -403,63 +318,89 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
-    def _vs_tool_res(self, vs_id: str | None):
-        """Verilen VS için tool_resources objesi hazırla."""
-        return {"file_search": {"vector_store_ids": [vs_id]}} if vs_id else None
+    def _get_vs_id_for_model(self, model: str) -> str | None:
+        if not getattr(self, "VECTOR_STORES_BY_MODEL", None):
+            self.VECTOR_STORES_BY_MODEL = self._load_vs_map() or {}
+        return (self.VECTOR_STORES_BY_MODEL or {}).get((model or "").lower())
 
-    def _rag_model_tool_res(self, user_message: str, model_hint: str | None = None):
-        """Model-özel VS için tool_resources hazırla (model hint yoksa msg'den çıkar)."""
-        model = (model_hint or "").lower().strip() if model_hint else None
-        if not model:
-            ms = list(self._extract_models(user_message))
-            model = ms[0] if ms else None
-        return self._file_search_tool_resources_for(user_message, models=[model]) if model else None
-
-    def _ask_rag_with_fallback(self, user_id: str, assistant_id: str, user_message: str,
-                            model_hint: str | None = None, timeout: float = 45.0):
+    def _ask_across_models_rag(self,
+                            user_id: str,
+                            assistant_id: str,
+                            content: str,
+                            models: list[str],
+                            *,
+                            mode: str = "text",                # "text" | "bullets"
+                            timeout: float = 60.0,
+                            title_sections: bool = True,
+                            instructions_override: str | None = None) -> str:
         """
-        1) Model-özel VS ile cevap üret.
-        2) Cevap yoksa veya 'NO_HIT' geldiyse global SkodaKB VS ile tekrar dene.
-        3) Yine yoksa ('none') döner.
+        Çok‑modelli soruları her modelin kendi VS’iyle teker teker çalıştırır,
+        sonuçları birleştirir. Thread başına tek VS kısıtını böyle aşarız.
+        mode="bullets" => her modelden 2–4 madde istenir (RAG özet için ideal).
         """
-        sentinel = getattr(self, "RAG_NO_HIT_SENTINEL", "__NO_RAG_HIT__")
-        instr = (
-            "Cevabı yalnızca bağlı dosya araması (file_search) sonuçlarına dayanarak hazırla. "
-            f"Eğer ilgili belge bulunamazsa hiçbir açıklama eklemeden SADECE {sentinel} yaz. "
-            "Tablo/HTML üretme; kaynak/citation/dosya adı yazma; Türkçe yaz."
-        )
+        out_parts = []
+        for m in models:
+            vs_id = self._get_vs_id_for_model(m)
+            if not vs_id:
+                self.logger.warning(f"[MULTI-RAG] VS not found for model={m}; skipping.")
+                continue
 
-        # (1) Model-özel VS
-        tr_model = self._rag_model_tool_res(user_message, model_hint=model_hint)
-        if tr_model:
-            out = self._ask_assistant(
+            tr_single = {"file_search": {"vector_store_ids": [vs_id]}}
+
+            instr = instructions_override
+            if not instr:
+                if mode == "bullets":
+                    instr = (
+                        f"Yalnızca dosya araması sonuçlarına dayan. "
+                        f"{m.title()} özelinde 2–4 kısa madde yaz; her madde '- ' ile başlasın. "
+                        f"Kaynak/citation yazma; tablo/HTML üretme."
+                    )
+                else:
+                    instr = (
+                        f"Cevabı yalnızca dosya araması sonuçlarına dayanarak yaz. "
+                        f"{m.title()} ile ilgili içerik dışına çıkma. Kaynak/citation yazma."
+                    )
+
+            text = self._ask_assistant(
                 user_id=user_id,
                 assistant_id=assistant_id,
-                content=user_message,
+                content=content,
                 timeout=timeout,
                 instructions_override=instr,
                 ephemeral=True,
-                tool_resources_override=tr_model
+                tool_resources_override=tr_single
             ) or ""
-            if out and sentinel not in out:
-                return out, "model"
 
-        # (2) Global SkodaKB VS fallback
-        if getattr(self, "VECTOR_STORE_ID", ""):
-            tr_global = self._vs_tool_res(self.VECTOR_STORE_ID)
-            out2 = self._ask_assistant(
-                user_id=user_id,
-                assistant_id=assistant_id,
-                content=user_message,
-                timeout=timeout,
-                instructions_override=instr,
-                ephemeral=True,
-                tool_resources_override=tr_global
-            ) or ""
-            if out2 and sentinel not in out2:
-                return out2, "global"
+            text = (self._strip_source_mentions(text)
+                    if getattr(self, "HIDE_SOURCES", False) else text).strip()
 
-        return "", "none"
+            if not text:
+                continue
+
+            if mode == "bullets":
+                # Madde başlarına model etiketi ekleyelim: "- [Elroq] ..."
+                lines = [ln for ln in text.splitlines() if ln.strip().startswith("-")]
+                tagged = [f"- [{m.title()}] {ln[1:].strip()}" for ln in lines] or [f"- [{m.title()}] Veri bulunamadı."]
+                out_parts.append("\n".join(tagged))
+            else:
+                if title_sections:
+                    out_parts.append(f"**{m.title()}**\n\n{text}")
+                else:
+                    out_parts.append(text)
+
+        return "\n\n".join([p for p in out_parts if p.strip()])
+
+    def _multi_model_tool_resources(self, message: str) -> dict | None:
+        """
+        Mesaj 2+ model içeriyorsa, o modellere ait VS’leri birlikte döndürür.
+        Tek modelde None döner (asistanın üzerindeki VS kullanılır).
+        """
+        if not (getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "USE_MODEL_SPLIT", False)):
+            return None
+        models = list(self._extract_models(message))
+        if len(models) >= 2:
+            return self._file_search_tool_resources_for(message, models=models)
+        return None
 
     def _enable_file_search_on_assistants_split(self):
         """
@@ -632,8 +573,8 @@ class ChatbotAPI:
     def _export_model_file(self, model: str) -> str:
         out_dir = os.path.join(self.app.static_folder, "kb")
         os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, f"KB_{model.title()}.md")
-
+        #path = os.path.join(out_dir, f"KB_{model.title()}.md")
+        path = os.path.join(out_dir, f"SkodaKB_{model.lower()}.md")
         sections = []
 
         def add(title, body):
@@ -1149,9 +1090,9 @@ class ChatbotAPI:
         if models:
             allow = set(models)
             for key, obj in self.ALL_DATA_TEXTS.items():
+                # sadece ilgili modelin modülü
                 doc_mod = _doc_model_from_key(key)
-                lowtxt = normalize_tr_text(obj["text"]).lower()
-                if doc_mod in allow or any(m in lowtxt for m in allow):
+                if doc_mod in allow:
                     items.append((key, obj))
         else:
             items = list(self.ALL_DATA_TEXTS.items())
@@ -1639,76 +1580,43 @@ class ChatbotAPI:
 
         # Fabia
         if m == "fabia":
-            if "premium" in t:        return FABIA_PREMIUM_MD
-            if "monte" in t:          return FABIA_MONTE_CARLO_MD
-            return None
+            
+            return FABIA_DATA_MD
         # Scala
         if m == "scala":
-            if "elite" in t:          return SCALA_ELITE_MD
-            if "premium" in t:        return SCALA_PREMIUM_MD
-            if "monte" in t:          return SCALA_MONTE_CARLO_MD
-            return None
+             
+            return SCALA_DATA_MD
         # Kamiq
         if m == "kamiq":
-            if "elite" in t:          return KAMIQ_ELITE_MD
-            if "premium" in t:        return KAMIQ_PREMIUM_MD
-            if "monte" in t:          return KAMIQ_MONTE_CARLO_MD
-            return None
+             
+            return KAMIQ_DATA_MD
         # Karoq
         if m == "karoq":
-            if "premium" in t:        return KAROQ_PREMIUM_MD
-            if "prestige" in t:       return KAROQ_PRESTIGE_MD
-            if "sportline" in t:      return KAROQ_SPORTLINE_MD
-            return None
+             
+            return KAROQ_DATA_MD
         # Kodiaq
         if m == "kodiaq":
-            if "premium" in t:        return KODIAQ_PREMIUM_MD
-            if "prestige" in t:       return KODIAQ_PRESTIGE_MD
-            if "sportline" in t:      return KODIAQ_SPORTLINE_MD
-            if "rs" in t:             return KODIAQ_RS_MD
-            return None
+             
+            return KODIAQ_DATA_MD
         # Octavia
         if m == "octavia":
-            if "elite" in t:          return OCTAVIA_ELITE_MD
-            if "premium" in t:        return OCTAVIA_PREMIUM_MD
-            if "prestige" in t:       return OCTAVIA_PRESTIGE_MD
-            if "sportline" in t:      return OCTAVIA_SPORTLINE_MD
-            if "rs" in t:             return OCTAVIA_RS_MD
-            return None
+             
+            return OCTAVIA_DATA_MD
         # Superb
         if m == "superb":
-            if "premium" in t:        return SUPERB_PREMIUM_MD
-            if "prestige" in t:       return SUPERB_PRESTIGE_MD
-            if ("l&k" in t) or ("crystal" in t): return SUPERB_LK_CRYSTAL_MD
-            if "sportline" in t:      return SUPERB_E_SPORTLINE_PHEV_MD
-            return None
+             
+            return SUPERB_DATA_MD
         # Enyaq
         # Enyaq
         if m == "enyaq":
             # JSONL override varsa önce onu dene
-            if getattr(self, "ENYAQ_OPS_FROM_JSONL", None):
-                t_norm = self._normalize_enyaq_trim(t)
-                md = self.ENYAQ_OPS_FROM_JSONL.get(t_norm)
-                if not md:
-                    # Varyant eşanlamlarıyla bir kez daha dene
-                    for cand in normalize_trim_str(t_norm):
-                        md = self.ENYAQ_OPS_FROM_JSONL.get(self._normalize_enyaq_trim(cand))
-                        if md:
-                            break
-                if md:
-                    return md
-            # JSONL bulunmazsa eski sabitlere düş
-            if "e prestige 60" in t:                     return ENYAQ_E_PRESTIGE_60_MD
-            if ("coupe e sportline 60" in t) or ("e sportline 60" in t):
-                return ENYAQ_COUPE_E_SPORTLINE_60_MD
-            if ("coupe e sportline 85x" in t) or ("e sportline 85x" in t):
-                return ENYAQ_COUPE_E_SPORTLINE_85X_MD
-            return None
+             
+            return ENYAQ_DATA_MD
 
         # Elroq
         if m == "elroq":
-            if "e prestige 60" in t: return ELROQ_E_PRESTIGE_60_MD
-            return None
+             
+            return ELROQ_DATA_MD
 
         return None
 
@@ -2959,15 +2867,15 @@ class ChatbotAPI:
 
         # 2) Standart donanım listeleri ayrı dursun
         self.STANDART_DONANIM_TABLES = {
-            "fabia":   FABIA_DONANIM_LISTESI_MD,
-            "scala":   SCALA_DONANIM_LISTESI_MD,
-            "kamiq":   KAMIQ_DONANIM_LISTESI_MD,
-            "karoq":   KAROQ_DONANIM_LISTESI_MD,
-            "kodiaq":  KODIAQ_DONANIM_LISTESI_MD,
-            "octavia": OCTAVIA_DONANIM_LISTESI_MD,
-            "superb":  SUPERB_DONANIM_LISTESI_MD,
-            "enyaq":   ENYAQ_DONANIM_LISTESI_MD,
-            "elroq":   ELROQ_DONANIM_LISTESI_MD,
+            "fabia":   FABIA_DATA_MD,
+            "scala":   SCALA_DATA_MD,
+            "kamiq":   KAMIQ_DATA_MD,
+            "karoq":   KAROQ_DATA_MD,
+            "kodiaq":  KODIAQ_DATA_MD,
+            "octavia": OCTAVIA_DATA_MD,
+            "superb":  SUPERB_DATA_MD,
+            "enyaq":   ENYAQ_DATA_MD,
+            "elroq":   ELROQ_DATA_MD,
         }
 
         self.logger = logger if logger else self._setup_logger()
@@ -3104,20 +3012,11 @@ class ChatbotAPI:
         # __init__ içinde, .env okunduktan SONRA konumlandır
         self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
         self.USE_MODEL_SPLIT = os.getenv("USE_MODEL_SPLIT", "0") == "1"
-        self.RAG_NO_HIT_SENTINEL = os.getenv("RAG_NO_HIT_SENTINEL", "__NO_RAG_HIT__")
 
         if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
             self.logger.info("[KB-SPLIT] Model-bazlı Vector Store yükleme...")
             self._ensure_vector_stores_by_model_and_upload()
             self._enable_file_search_on_assistants_split()   # <-- yeni fonksiyon (aşağıda)
-            # --- NEW: Model-split modunda da global (SkodaKB) store'u fallback için hazırla ---
-            try:
-                # SkodaKB.md üret + OpenAI Files'a yükle + global Vector Store'a ekle
-                self._ensure_vector_store_and_upload()   # self.VECTOR_STORE_ID set edilir
-                self.logger.info("[KB-SPLIT] Global fallback SkodaKB hazır (VECTOR_STORE_ID=%s)", self.VECTOR_STORE_ID)
-            except Exception as e:
-                self.logger.warning("[KB-SPLIT] Global fallback store hazırlanamadi: %s", e)
-
         elif self.USE_OPENAI_FILE_SEARCH:
             self.logger.info("[KB] Single-store (SkodaKB) modu...")
             self._ensure_vector_store_and_upload()
@@ -4090,19 +3989,31 @@ class ChatbotAPI:
         ephemeral: bool = False,
         tool_resources_override: dict | None = None,   # NEW
     ) -> str:
-        # File Search vector store’u varsa tool_resources hazırla
-        #tr = tool_resources_override
-        #if (not tr) and getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "USE_MODEL_SPLIT", False):
-        #    tr = self._file_search_tool_resources_for(content)
+        # --- Tool resources çözümü (multi‑model öncelikli) ---
         tr = tool_resources_override
-        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT and self.ALWAYS_USE_ASSISTANT_VS:
-            # asistanın üzerinde zaten VS bağlı; burada mesajdan VS türetmeyin
-            tr = tool_resources_override  # (çağıran özellikle bir şey yollarsa sadece onu kullan)
-        elif (not tr) and self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
-            # geri uyumluluk: MESAJDAN VS türetmek isterseniz (eski davranış)
-            tr = self._file_search_tool_resources_for(content)
-            # RAG kapsamı belirlediysek ephemeral thread kullanmak en güvenlisi
- 
+        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
+            models_in_msg = list(self._extract_models(content))
+            is_multi = len(models_in_msg) >= 2
+            if tr is None:
+                if is_multi:
+                    # 2+ model: assistant üstündeki tek VS’i bypass edip ilgili TÜM VS'leri bağla
+                    tr = self._file_search_tool_resources_for(content, models=models_in_msg)
+                elif not self.ALWAYS_USE_ASSISTANT_VS:
+                    # Tek modelde davranışınız aynı kalsın: ALWAYS_USE_ASSISTANT_VS=1 ise asistanın VS'i devreye girer
+                    tr = self._file_search_tool_resources_for(content, models=models_in_msg or None)
+
+        # --- Güvenlik: API thread başına sadece 1 VS kabul ediyor ---
+        if tr and "file_search" in tr:
+            try:
+                vs_ids = tr["file_search"].get("vector_store_ids") or []
+                if isinstance(vs_ids, list) and len(vs_ids) > 1:
+                    self.logger.warning(
+                        f"[ASK] Multiple VS detected ({vs_ids}); clamping to first due to API limit."
+                    )
+                    tr = {"file_search": {"vector_store_ids": [vs_ids[0]]}}
+                self.logger.info(f"[ASK] FileSearch VS={tr['file_search'].get('vector_store_ids')}")
+            except Exception:
+                pass
         use_ephemeral = ephemeral or bool(tr) or self.USE_MODEL_SPLIT
         if use_ephemeral:
             t = self.client.beta.threads.create(tool_resources=tr) if tr else self.client.beta.threads.create()
@@ -4133,53 +4044,69 @@ class ChatbotAPI:
                 return m.content[0].text.value
         return "Yanıt bulunamadı."
     def _yield_rag_summary_block(self, user_id: str, user_message: str):
-            """
-            Her yanıta eklenen kısa 'Vector Store özeti' bloğunu üretir ve yield eder.
-            Koşullar: RAG_SUMMARY_EVERY_ANSWER=1, USE_OPENAI_FILE_SEARCH=1, vector store & asistan mevcut.
-            """
-            if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
+        """
+        Her yanıta kısa bir RAG özeti ekler. Split ve tek‑mağaza modlarında çalışır.
+        """
+        if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
+            return
+        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
+            return
+        try:
+            # Aynı yanıtta iki kez yazma
+            if (self.user_states.get(user_id, {}) or {}).get("rag_head_delivered"):
                 return
-            try:
-                if (self.user_states.get(user_id, {}) or {}).get("rag_head_delivered"):
-                    return
 
-                if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
-                    return
-                if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
-                    return
-                if not getattr(self, "VECTOR_STORE_ID", ""):
-                    return
-                assistant_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
-                if not assistant_id:
-                    return
+            assistant_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
+            if not assistant_id:
+                return
 
-                # Ephemeral thread -> her çağrıda file_search tool_resources garanti
+            # Hangi tool_resources?
+            # Hangi tool_resources?
+            # 2+ model varsa: tüm VS'leri birlikte bağla; tek modelde asistan VS'i yeter.
+            models = list(self._extract_models(user_message))
+            if len(models) >= 2 and self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
+                # Çok‑model: aggregator ile her model için ayrı VS çağrısı
+                rag_text = self._ask_across_models_rag(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    content=user_message,
+                    models=models,
+                    mode="bullets",
+                    timeout=45.0
+                )
+            else:
+                # Tek model / tek mağaza: mevcut davranış
+                tr = None
+                if self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
+                    # Tek modelde asistan üstündeki VS kullanılacak; override yollama
+                    tr = None
+                elif getattr(self, "VECTOR_STORE_ID", ""):
+                    tr = {"file_search": {"vector_store_ids": [self.VECTOR_STORE_ID]}}
+                else:
+                    return
                 rag_text = self._ask_assistant(
                     user_id=user_id,
                     assistant_id=assistant_id,
                     content=user_message,
                     timeout=45.0,
                     instructions_override=(
-                        "Yalnızca bağlı dosya araması (file_search) sonuçlarına dayanarak, "
-                        "kullanıcının sorusunu 3–6 maddelik kısa bir özet halinde açıkla. "
-                        "Madde biçimi: '- ' ile başlayan sade Markdown listesi. "
-                        "Varsayım yapma; emin değilsen kısaca belirt. "
-                        "Tablo, görsel veya kod bloğu üretme; sadece kısa özet yaz. "
-                        "Türkçe yaz. "
-                        "Kesinlikle kaynak/citation/dosya adı/URL veya belge kimliği yazma."
+                        "Yalnızca dosya araması sonuçlarına dayanarak 3–6 madde yaz; '- ' ile başlasın. "
+                        "Kaynak/citation yazma; tablo/HTML üretme."
                     ),
                     ephemeral=True,
-                    tool_resources_override=self._file_search_tool_resources_for(user_message)
+                    tool_resources_override=tr
                 ) or ""
-
-                out_md = self.markdown_processor.transform_text_to_markdown(rag_text)
-                if '|' in out_md and '\n' in out_md:
-                    out_md = fix_markdown_table(out_md)
-                block = "\n\n\n\n" + out_md.strip() + "\n"
-                yield block.encode("utf-8")
-            except Exception as e:
-                self.logger.error(f"[RAG-SUMMARY] failed: {e}")
-                return
+            out_md = self.markdown_processor.transform_text_to_markdown(rag_text)
+            if '|' in out_md and '\n' in out_md:
+                out_md = fix_markdown_table(out_md)
+            block = "\n\n\n\n" + out_md.strip() + "\n"
+            # (İsteğe bağlı debug) hangi VS ile çalıştık?
+            if tr and "file_search" in tr:
+                self.logger.info(f"[RAG-SUMMARY] tool_resources VS={tr['file_search'].get('vector_store_ids')}")
+            yield block.encode("utf-8")
+        except Exception as e:
+            self.logger.error(f"[RAG-SUMMARY] failed: {e}")
+            return
     ##############################################################################
 # ChatbotAPI._generate_response
 ##############################################################################
@@ -4773,27 +4700,42 @@ class ChatbotAPI:
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
         # Yeni:
         if self.USE_OPENAI_FILE_SEARCH and assistant_id and generic_info_intent and self.PREFER_RAG_TEXT:
-            # Model ipucunu mesajdan çıkar (varsa)
-            primary_model = None
-            ms = list(self._extract_models(user_message))
-            if ms:
-                primary_model = ms[0]
-
-            rag_out, src = self._ask_rag_with_fallback(
-                user_id=user_id,
-                assistant_id=assistant_id,
-                user_message=user_message,
-                model_hint=primary_model,
-                timeout=60.0
-            )
-
+             
+            models = list(self._extract_models(user_message))
+            if len(models) >= 2 and self.USE_MODEL_SPLIT:
+                # Çok‑model: her model için ayrı VS, sonuçları bölüm başlıklarıyla birleştir
+                rag_out = self._ask_across_models_rag(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    content=user_message,
+                    models=models,
+                    mode="text",
+                    timeout=60.0,
+                    title_sections=True,
+                    instructions_override=(
+                        "Cevabı yalnızca dosya araması kaynaklarına dayanarak yaz. "
+                        "Kaynak/citation yazma; tablo/HTML zorunlu değil."
+                    )
+                )
+            else:
+                rag_out = self._ask_assistant(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    content=user_message,
+                    timeout=60.0,
+                    instructions_override=(
+                        "Cevabı yalnızca dosya araması kaynaklarına dayanarak yaz. "
+                        "Kaynak/citation yazma; tablo/HTML zorunlu değil."
+                    ),
+                    ephemeral=True,
+                    tool_resources_override=None
+                ) or "",
             if rag_out.strip():
+                # Kaynak/köprü izlerini temizle ama tabloya çevirmeyelim:
                 clean = self._strip_source_mentions(rag_out) if getattr(self, "HIDE_SOURCES", False) else rag_out
-                self.logger.info(f"[RAG] delivered via '{src}' store")  # 'model' veya 'global'
-                yield self._sanitize_bytes(clean)
+                yield self._sanitize_bytes(clean)  # → bytes
                 self.user_states[user_id]["rag_head_delivered"] = True
                 return
-
         # self.PREFER_RAG_TEXT false ise bu blok atlanır (RAG metni yüzeye çıkmaz)
 
 
@@ -4861,14 +4803,26 @@ class ChatbotAPI:
             return
 
         try:
-            content = self._ask_assistant(
-                user_id=user_id,
-                assistant_id=assistant_id,
-                content=user_message,
-                timeout=60.0,
-                instructions_override=None,
-                ephemeral=True if self.USE_MODEL_SPLIT else False,
-                tool_resources_override=self._file_search_tool_resources_for(user_message)
+            models = list(self._extract_models(user_message))
+            if len(models) >= 2 and self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
+                content = self._ask_across_models_rag(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    content=user_message,
+                    models=models,
+                    mode="text",
+                    timeout=60.0,
+                    title_sections=True
+                ) or ""
+            else:
+                content = self._ask_assistant(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    content=user_message,
+                    timeout=60.0,
+                    instructions_override=None,
+                    ephemeral=True if self.USE_MODEL_SPLIT else False,
+                    tool_resources_override=None
             ) or ""
 
             content_md = self.markdown_processor.transform_text_to_markdown(content)
