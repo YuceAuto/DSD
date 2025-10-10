@@ -1,4 +1,4 @@
-import os
+import os 
 import time
 import logging
 import re
@@ -318,11 +318,113 @@ def remove_latex_and_formulas(text):
 
 
 class ChatbotAPI:
+    # ChatbotAPI içinde, yardımcı fonksiyonlar arasına ekleyin
+    def _compare_with_skodakb(
+        self,
+        user_id: str,
+        assistant_id: str | None,
+        user_message: str,
+        models: list[str],
+        only_keywords: list[str] | None = None
+    ) -> str:
+        """
+        Çoklu model teknik karşılaştırmayı tek mağaza (SkodaKB.md) üzerinden RAG ile üretir.
+        Çıktı: SADECE Markdown tablo (kod bloğu yok).
+        """
+        try:
+            if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
+                return ""
+            vs_id = getattr(self, "VECTOR_STORE_ID", "")
+            if not vs_id or not models or len(models) < 2:
+                return ""
+
+            cols = ", ".join(m.title() for m in models)
+            filt_line = ""
+            if only_keywords:
+                # Kullanıcı "sadece beygir, tork, 0-100" gibi filtre yazdıysa
+                filt_line = "Yalnızca şu başlıkları kapsa: " + ", ".join(only_keywords) + ". "
+
+            instr = (
+                "Cevabı YALNIZCA dosya araması sonuçlarına dayanarak üret. "
+                "SADECE düzgün bir Markdown TABLO yaz; kod bloğu (```) kullanma, kaynak/citation yazma. "
+                "İlk sütun başlığı 'Özellik' olsun; diğer sütunlar sırasıyla " + cols + " olsun. "
+                + filt_line +
+                "Veri yoksa hücreyi '—' bırak. Öncelik: 0-100 km/h (sn), Maks. hız, Maks. güç (kW/PS), "
+                "Maks. tork (Nm), WLTP tüketim/menzil, Boyutlar (Uz./Gen./Yük., Dingil mesafesi), "
+                "Bagaj hacmi, Lastikler. Tablo dışında hiçbir şey yazma."
+            )
+
+            out = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=assistant_id or self.user_states.get(user_id, {}).get("assistant_id"),
+                content=user_message,
+                timeout=60.0,
+                instructions_override=instr,
+                ephemeral=True,  # thread geçici olsun
+                # 🔴 Tek mağaza: SkodaKB (VECTOR_STORE_ID). Model-bazlı VS'leri BYPASS eder.
+                tool_resources_override={"file_search": {"vector_store_ids": [vs_id]}}
+            ) or ""
+
+            # Tablo post-process
+            md = self.markdown_processor.transform_text_to_markdown(out)
+            if '|' in md and '\n' in md:
+                md = fix_markdown_table(md)
+            else:
+                md = self._coerce_text_to_table_if_possible(md)
+            if getattr(self, "HIDE_SOURCES", False):
+                md = self._strip_source_mentions(md)
+            return md.strip()
+        except Exception as e:
+            self.logger.error(f"[_compare_with_skodakb] failed: {e}")
+            return ""
+
+    def _synthesize_multi_model_one_liner(self,
+                                        user_id: str,
+                                        assistant_id: str,
+                                        question: str,
+                                        snippets_by_model: dict[str, str]) -> str:
+        """
+        {model: 'metin'} sözlüğünden yola çıkarak SORU'yu tek cümleyle yanıtlar.
+        Sayı varsa farkı hesaplamasını, aralıkta muhafazakâr farkı yazmasını ister.
+        """
+        if not snippets_by_model:
+            return ""
+
+        lines = []
+        for m, s in snippets_by_model.items():
+            if not s.strip():
+                continue
+            # çok uzayan cevapları kıs diye ufak kırpma (opsiyonel)
+            lines.append(f"- [{m.title()}] {s.strip()[:600]}")
+
+        joined = "\n".join(lines)
+
+        # Sentez yönergesi — tek cümle, farkı hesapla, kaynak/citation yok
+        instr = (
+            "Aşağıdaki model‑özetlerinden yola çıkarak soruyu TEK net Türkçe cümleyle yanıtla. "
+            "Sayılar varsa farkı kendin hesapla (örn. 160 ve 180 km/s → 20 km/s fark). "
+            "Aralık varsa en muhafazakâr farkı belirt (örn. 160–180 vs 160 → 0–20 km/s). "
+            "Veri eksikse kısaca 'X için veri yok' de. Maddeleme, tablo, kaynak veya dipnot yazma."
+        )
+
+        prompt = f"Soru: {question}\n\nModel‑Özetleri:\n{joined}\n\nGörev: {instr}"
+
+        out = self._ask_assistant(
+            user_id=user_id,
+            assistant_id=assistant_id,
+            content=prompt,
+            timeout=40.0,
+            ephemeral=True
+        ) or ""
+
+        return self._strip_source_mentions(out).strip()
+
     def _get_vs_id_for_model(self, model: str) -> str | None:
         if not getattr(self, "VECTOR_STORES_BY_MODEL", None):
             self.VECTOR_STORES_BY_MODEL = self._load_vs_map() or {}
         return (self.VECTOR_STORES_BY_MODEL or {}).get((model or "").lower())
 
+    # ChatbotAPI içinde – _ask_across_models_rag imzasını genişlet
     def _ask_across_models_rag(self,
                             user_id: str,
                             assistant_id: str,
@@ -332,13 +434,16 @@ class ChatbotAPI:
                             mode: str = "text",                # "text" | "bullets"
                             timeout: float = 60.0,
                             title_sections: bool = True,
-                            instructions_override: str | None = None) -> str:
+                            instructions_override: str | None = None,
+                            return_dict: bool = False   # ← YENİ
+                            ) -> str | dict[str, str]:
         """
         Çok‑modelli soruları her modelin kendi VS’iyle teker teker çalıştırır,
-        sonuçları birleştirir. Thread başına tek VS kısıtını böyle aşarız.
-        mode="bullets" => her modelden 2–4 madde istenir (RAG özet için ideal).
+        sonuçları birleştirir veya return_dict=True ise {model:metin} döndürür.
         """
         out_parts = []
+        collected: dict[str, str] = {}   # ← YENİ: model→metin
+
         for m in models:
             vs_id = self._get_vs_id_for_model(m)
             if not vs_id:
@@ -353,7 +458,7 @@ class ChatbotAPI:
                     instr = (
                         f"Yalnızca dosya araması sonuçlarına dayan. "
                         f"{m.title()} özelinde 2–4 kısa madde yaz; her madde '- ' ile başlasın. "
-                        f"Kaynak/citation yazma; tablo/HTML üretme."
+                        f"Sayı/ölçüleri mümkünse açıkça ver. Kaynak/citation yazma; tablo/HTML üretme."
                     )
                 else:
                     instr = (
@@ -377,8 +482,9 @@ class ChatbotAPI:
             if not text:
                 continue
 
+            collected[m.lower()] = text  # ← YENİ: sözlüğe koy
+
             if mode == "bullets":
-                # Madde başlarına model etiketi ekleyelim: "- [Elroq] ..."
                 lines = [ln for ln in text.splitlines() if ln.strip().startswith("-")]
                 tagged = [f"- [{m.title()}] {ln[1:].strip()}" for ln in lines] or [f"- [{m.title()}] Veri bulunamadı."]
                 out_parts.append("\n".join(tagged))
@@ -388,7 +494,11 @@ class ChatbotAPI:
                 else:
                     out_parts.append(text)
 
+        if return_dict:
+            return collected
+
         return "\n\n".join([p for p in out_parts if p.strip()])
+
 
     def _multi_model_tool_resources(self, message: str) -> dict | None:
         """
@@ -1366,6 +1476,10 @@ class ChatbotAPI:
         2) Bulamazsa donanım listesi (madde işaretli satırlar) içinde tarar.
         3) Kısa ve net yanıt döner.
         """
+        models = list(self._extract_models(user_message))
+        if len(models) != 1:
+            return None  # çoklu modelde QA tekil cevabı bastırmasın
+
         requested = self._find_requested_specs(user_message)
         models = list(self._extract_models(user_message))
 
@@ -1527,50 +1641,40 @@ class ChatbotAPI:
         return fix_markdown_table(md) if md else None
 
     def _expected_teknik_md_for_question(self, user_message: str) -> tuple[str | None, dict]:
-        """
-        Soru 'teknik' içeriyorsa doğru teknik tabloyu (tek model) veya karşılaştırma tablosunu (çoklu) üretir.
-        Geri dönüş: (md, meta)  meta: {'source':'teknik', 'models':[...]}
-        """
-        lower_msg = user_message.lower()
-        teknik_keywords = [
-            "teknik özellik", "teknik veriler", "teknik veri", "motor özellik",
-            "motor donanım", "motor teknik", "teknik tablo", "teknik", "performans"
-        ]
-        compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
-        has_teknik = any(kw in lower_msg for kw in teknik_keywords)
-        wants_compare = any(ck in lower_msg for ck in compare_keywords)
-        if not has_teknik:
+        lower_msg = normalize_tr_text(user_message).lower()
+        models = list(self._extract_models(user_message))
+
+        has_teknik = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)
+        wants_compare = any(kw in lower_msg for kw in (
+            "karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs.","fark","hangisi","daha "
+        ))
+        if not (has_teknik or wants_compare):
             return None, {}
 
-        models_in_msg = list(self._extract_models(user_message))
-        pairs_for_order = extract_model_trim_pairs(lower_msg)
-        ordered_models = []
-        for m, _ in pairs_for_order:
-            if m not in ordered_models:
-                ordered_models.append(m)
-        if len(ordered_models) < len(models_in_msg):
-            for m in models_in_msg:
-                if m not in ordered_models:
-                    ordered_models.append(m)
-        valid = [m for m in ordered_models if m in self.TECH_SPEC_TABLES]
-
-        # Çoklu karşılaştırma
-        if wants_compare or len(valid) >= 2:
+        if len(models) >= 2:
+            pairs = extract_model_trim_pairs(lower_msg)
+            ordered = []
+            for m, _ in pairs:
+                if m not in ordered:
+                    ordered.append(m)
+            for m in models:
+                if m not in ordered:
+                    ordered.append(m)
+            valid = [m for m in ordered if m in self.TECH_SPEC_TABLES]
             if len(valid) >= 2:
-                md = self._build_teknik_comparison_table(valid)
-                return (md or None), {"source":"teknik", "models": valid}
+                only = self._detect_spec_filter_keywords(lower_msg)
+                md = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
+                return md, {"source": "teknik", "models": valid}
             return None, {}
 
-        # Tek model
-        model = None
-        if len(models_in_msg) == 1:
-            model = models_in_msg[0]
-        elif ordered_models:
-            model = ordered_models[0]
-        if model and model in self.TECH_SPEC_TABLES:
-            return (self.TECH_SPEC_TABLES[model] or None), {"source":"teknik", "models":[model]}
-
+        # tek model
+        model = models[0] if models else None
+        if model:
+            md = self._get_teknik_md_for_model(model)
+            return md, {"source": "teknik", "models": [model]}
         return None, {}
+
+
 
     def _lookup_opsiyonel_md(self, model: str, trim: str) -> str | None:
         """Model + trim'e göre opsiyonel donanım markdown'ını döndürür."""
@@ -2836,6 +2940,7 @@ class ChatbotAPI:
         self.LONG_TABLE_WORDS   = int(os.getenv("LONG_TABLE_WORDS", "800"))    # tablo/kaynak için kelime eşiği
         self.LONG_TABLE_ROWS    = int(os.getenv("LONG_TABLE_ROWS", "60"))      # tablo satır eşiği
         self.LONG_TOKENS        = int(os.getenv("LONG_TOKENS", "6500"))        # güvenlik tavanı (yaklaşık token)
+        self.COMPARE_USE_GLOBAL_KB = os.getenv("COMPARE_USE_GLOBAL_KB", "1") == "1"
 
         self.FIRST_SERVICE_URL   = os.getenv("FIRST_SERVICE_URL", "http://127.0.0.1:5000/api/raw_answer")
         self.FIRST_SHARED_SECRET = os.getenv("FIRST_SHARED_SECRET", "")
@@ -3013,14 +3118,15 @@ class ChatbotAPI:
         self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
         self.USE_MODEL_SPLIT = os.getenv("USE_MODEL_SPLIT", "0") == "1"
 
-        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
-            self.logger.info("[KB-SPLIT] Model-bazlı Vector Store yükleme...")
-            self._ensure_vector_stores_by_model_and_upload()
-            self._enable_file_search_on_assistants_split()   # <-- yeni fonksiyon (aşağıda)
-        elif self.USE_OPENAI_FILE_SEARCH:
-            self.logger.info("[KB] Single-store (SkodaKB) modu...")
+        if self.USE_OPENAI_FILE_SEARCH:
+            # 1) Her zaman tek mağaza (SkodaKB) → VECTOR_STORE_ID garanti
             self._ensure_vector_store_and_upload()
             self._enable_file_search_on_assistants()
+
+            # 2) Ek olarak model-bazlı mağazalar gerekiyorsa
+            if self.USE_MODEL_SPLIT:
+                self._ensure_vector_stores_by_model_and_upload()
+                self._enable_file_search_on_assistants_split()
  
 
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -4044,15 +4150,11 @@ class ChatbotAPI:
                 return m.content[0].text.value
         return "Yanıt bulunamadı."
     def _yield_rag_summary_block(self, user_id: str, user_message: str):
-        """
-        Her yanıta kısa bir RAG özeti ekler. Split ve tek‑mağaza modlarında çalışır.
-        """
         if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
             return
         if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
             return
         try:
-            # Aynı yanıtta iki kez yazma
             if (self.user_states.get(user_id, {}) or {}).get("rag_head_delivered"):
                 return
 
@@ -4060,12 +4162,10 @@ class ChatbotAPI:
             if not assistant_id:
                 return
 
-            # Hangi tool_resources?
-            # Hangi tool_resources?
-            # 2+ model varsa: tüm VS'leri birlikte bağla; tek modelde asistan VS'i yeter.
             models = list(self._extract_models(user_message))
+            tr = None  # 🔧 önce tanımla
+
             if len(models) >= 2 and self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
-                # Çok‑model: aggregator ile her model için ayrı VS çağrısı
                 rag_text = self._ask_across_models_rag(
                     user_id=user_id,
                     assistant_id=assistant_id,
@@ -4075,15 +4175,13 @@ class ChatbotAPI:
                     timeout=45.0
                 )
             else:
-                # Tek model / tek mağaza: mevcut davranış
-                tr = None
                 if self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
-                    # Tek modelde asistan üstündeki VS kullanılacak; override yollama
                     tr = None
                 elif getattr(self, "VECTOR_STORE_ID", ""):
                     tr = {"file_search": {"vector_store_ids": [self.VECTOR_STORE_ID]}}
                 else:
                     return
+
                 rag_text = self._ask_assistant(
                     user_id=user_id,
                     assistant_id=assistant_id,
@@ -4096,17 +4194,21 @@ class ChatbotAPI:
                     ephemeral=True,
                     tool_resources_override=tr
                 ) or ""
-            out_md = self.markdown_processor.transform_text_to_markdown(rag_text)
+
+            out_md = self.markdown_processor.transform_text_to_markdown(rag_text or "")
             if '|' in out_md and '\n' in out_md:
                 out_md = fix_markdown_table(out_md)
             block = "\n\n\n\n" + out_md.strip() + "\n"
-            # (İsteğe bağlı debug) hangi VS ile çalıştık?
-            if tr and "file_search" in tr:
+
+            # tr sadece set edildiyse logla
+            if tr and isinstance(tr, dict) and "file_search" in tr:
                 self.logger.info(f"[RAG-SUMMARY] tool_resources VS={tr['file_search'].get('vector_store_ids')}")
             yield block.encode("utf-8")
+
         except Exception as e:
             self.logger.error(f"[RAG-SUMMARY] failed: {e}")
             return
+
     ##############################################################################
 # ChatbotAPI._generate_response
 ##############################################################################
@@ -4224,7 +4326,103 @@ class ChatbotAPI:
                 yield self._sanitize_bytes(qa_bytes)  # tabloya zorlamadan ilet
                 return
 
+        lower_msg = normalize_tr_text(user_message).lower()
 
+        # 1) Teknik niyet → GENİŞ tetikleyici (sizde zaten var)
+        has_teknik_word = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)
+        # (self.TEKNIK_TRIGGERS içinde "ağırlık", "0-100", "menzil" vs. var)
+
+        # 2) Kıyas niyeti → “fark/hangisi/daha” da dahil
+        compare_triggers = ("karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs.","fark","hangisi","daha ")
+        wants_compare = any(t in lower_msg for t in compare_triggers)
+
+        # ChatbotAPI._generate_response(...) içinde, price/test-drive kontrollerinden sonra
+        # ve teknik tablo/karşılaştırma tablosuna girmeden önce şu bloğu ekleyin:
+
+        # === YENİ: 2+ model + 'fark/hangisi/daha/vs/karşılaştır' niyeti → tek cümle sentez ===
+        models_in_msg2 = list(self._extract_models(user_message))
+        compare_triggers = ("fark", "hangisi", "karşılaştır", "kıyas", "vs", "daha ")
+        if (len(models_in_msg2) >= 2 and any(t in lower_msg for t in compare_triggers)
+            and not (self.COMPARE_USE_GLOBAL_KB and (wants_compare or has_teknik_word))):
+            if not assistant_id:
+                assistant_id = self.user_states[user_id].get("assistant_id")
+
+            # 1) Her model için kısa RAG çıktısı (sözlük olarak)
+            per_model = self._ask_across_models_rag(
+                user_id=user_id,
+                assistant_id=assistant_id,
+                content=user_message,
+                models=models_in_msg2,
+                mode="bullets",               # kısa, sayısal odaklı maddelerle gelsin
+                timeout=45.0,
+                title_sections=False,
+                # “fark”ı bulmayı kolaylaştırmak için sayıları açık yazdırmaya itiyoruz:
+                instructions_override=(
+                    "Sorudaki konuyu netleştiren 2–4 kısa madde yaz; varsa sayıları/metrikleri açıkça ver. "
+                    "Genel tanıtım metni yazma; sadece soruya yarayan gerçekleri dök."
+                ),
+                return_dict=True              # ← tek cümle sentez için şart
+            )
+
+            if per_model:
+                one_liner = self._synthesize_multi_model_one_liner(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    question=user_message,
+                    snippets_by_model=per_model
+                )
+                if one_liner:
+                    yield self._sanitize_bytes(one_liner)
+                    return
+
+        # --- NİYET SİNYALLERİ (tek kaynak) ---
+        lower_msg = normalize_tr_text(user_message).lower()
+        models_in_msg = list(self._extract_models(user_message))
+
+        has_teknik = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)  # 'ağırlık' dahil
+        wants_compare = any(kw in lower_msg for kw in (
+            "karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs.","fark","hangisi","daha "
+        ))
+        # --- 2+ model + (teknik veya kıyas)  =>  ÖNCE TABLO ---
+        if len(models_in_msg) >= 2 and (has_teknik or wants_compare):
+            # Mesajdaki sırayı koru
+            pairs = extract_model_trim_pairs(lower_msg)
+            ordered = []
+            for m, _ in pairs:
+                if m not in ordered:
+                    ordered.append(m)
+            for m in models_in_msg:
+                if m not in ordered:
+                    ordered.append(m)
+
+            valid = [m for m in ordered if m in self.TECH_SPEC_TABLES]
+            if len(valid) >= 2:
+                only = self._detect_spec_filter_keywords(lower_msg)
+
+                # 2.A) SkodaKB (tek mağaza) varsa önce onu dene
+                if self.USE_OPENAI_FILE_SEARCH and self.COMPARE_USE_GLOBAL_KB and getattr(self, "VECTOR_STORE_ID", ""):
+                    md_rag = self._compare_with_skodakb(
+                        user_id=user_id,
+                        assistant_id=self.user_states[user_id].get("assistant_id"),
+                        user_message=user_message,
+                        models=valid,
+                        only_keywords=(only or None)
+                    )
+                    if md_rag:
+                        title = " vs ".join(m.title() for m in valid)
+                        yield f"<b>{title} — Teknik Özellikler Karşılaştırması (SkodaKB)</b><br>".encode("utf-8")
+                        yield (md_rag + "\n\n").encode("utf-8")
+                        # RAG özetini bastır
+                        self.user_states[user_id]["rag_head_delivered"] = True
+                        return
+
+                # 2.B) Global yoksa: yerel teknik tablolardan kıyas
+                md_local = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
+                title = " vs ".join(m.title() for m in valid)
+                yield f"<b>{title} — Teknik Özellikler Karşılaştırması</b><br>".encode("utf-8")
+                yield (md_local + "\n\n").encode("utf-8")
+                self.user_states[user_id]["rag_head_delivered"] = True
+                return
 
         # --- TEKNİK KARŞILAŞTIRMA / KIYAS ---
         compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
@@ -4251,23 +4449,46 @@ class ChatbotAPI:
                     ordered_models.append(m)
 
         if has_teknik_word and (wants_compare or len(ordered_models) >= 2):
-            # En az iki geçerli model?
             valid = [m for m in ordered_models if m in self.TECH_SPEC_TABLES]
             if len(valid) < 2:
-                # En az iki geçerli teknik tablo yoksa devam et (tek model akışına düşsün)
                 pass
             else:
-                only = self._detect_spec_filter_keywords(lower_msg)  # opsiyonel: 'sadece ...'
-                md = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
-                if not md:
+                # 1) Önce SkodaKB.md ile RAG tablosu (tek mağaza)
+                if self.COMPARE_USE_GLOBAL_KB and self.USE_OPENAI_FILE_SEARCH and getattr(self, "VECTOR_STORE_ID", ""):
+                    only = self._detect_spec_filter_keywords(lower_msg)
+                    md_rag = self._compare_with_skodakb(
+                        user_id=user_id,
+                        assistant_id=assistant_id,
+                        user_message=user_message,
+                        models=valid,
+                        only_keywords=(only or None)
+                    )
+                    if md_rag:
+                        title = " vs ".join([m.title() for m in valid])
+                        yield f"<b>{title} — Teknik Özellikler Karşılaştırması (SkodaKB)</b><br>".encode("utf-8")
+                        yield (md_rag + "\n\n").encode("utf-8")
+                        # İsteğe bağlı: “karşılaştırmaya ekle” linkleri aynı kalsın
+                        others = [m for m in self.MODEL_VALID_TRIMS.keys() if m not in valid and m in self.TECH_SPEC_TABLES]
+                        if others:
+                            links = "<b>Karşılaştırmaya ekle:</b><br>"
+                            for m in others:
+                                cmd = (" ".join(valid) + f" ve {m} teknik özellikler karşılaştırma").strip()
+                                safe_cmd = cmd.replace("'", "\\'")
+                                links += f"""&bull; <a href="#" onclick="sendMessage('{safe_cmd}');return false;">{m.title()}</a><br>"""
+                            yield links.encode("utf-8")
+                        return
+
+                # 2) RAG çıkmazsa eski yerel tabloya düş (mevcut davranış)
+                only = self._detect_spec_filter_keywords(lower_msg)
+                md_local = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
+                if not md_local:
                     yield "Karşılaştırma için uygun teknik tablo bulunamadı.<br>".encode("utf-8")
                     return
 
                 title = " vs ".join([m.title() for m in valid])
                 yield f"<b>{title} — Teknik Özellikler Karşılaştırması</b><br>".encode("utf-8")
-                yield (md + "\n\n").encode("utf-8")
+                yield (md_local + "\n\n").encode("utf-8")
 
-                # Hızlı ekleme linkleri (kullanıcı deneyimi)
                 others = [m for m in self.MODEL_VALID_TRIMS.keys() if m not in valid and m in self.TECH_SPEC_TABLES]
                 if others:
                     links = "<b>Karşılaştırmaya ekle:</b><br>"
@@ -4277,6 +4498,7 @@ class ChatbotAPI:
                         links += f"""&bull; <a href="#" onclick="sendMessage('{safe_cmd}');return false;">{m.title()}</a><br>"""
                     yield links.encode("utf-8")
                 return
+
 
         # 1) Kategori eşleşmesi
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
@@ -4696,6 +4918,16 @@ class ChatbotAPI:
             or any(kw in lower_msg for kw in ["teknik özellik","teknik veriler","teknik tablo","performans"])
             or wants_compare
         )
+        lower_msg = user_message.lower()
+        price_intent = self._is_price_intent(user_message)
+
+        # 🔧 Bunları en üstte tek yerde tanımlayın
+        compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
+        wants_compare = any(ck in lower_msg for ck in compare_keywords)
+
+        # __init__'te zaten tanımlı olan TEKNIK_TRIGGERS'ı kullanın
+        has_teknik_word = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)
+
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
         # Yeni:
@@ -4729,7 +4961,7 @@ class ChatbotAPI:
                     ),
                     ephemeral=True,
                     tool_resources_override=None
-                ) or "",
+                ) or ""
             if rag_out.strip():
                 # Kaynak/köprü izlerini temizle ama tabloya çevirmeyelim:
                 clean = self._strip_source_mentions(rag_out) if getattr(self, "HIDE_SOURCES", False) else rag_out
