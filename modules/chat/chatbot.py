@@ -14,7 +14,9 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from collections import Counter
 from flask import stream_with_context  # en üste diğer Flask importlarının yanına
-
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(usecwd=True), override=True)
+import numpy as np
 # Aşağıdaki import'lar sizin projenizdeki dosya yollarına göre uyarlanmalıdır:
 from modules.managers.image_manager import ImageManager
 from modules.managers.markdown_utils import MarkdownProcessor
@@ -29,7 +31,7 @@ from modules.data.elroq_data import ELROQ_DATA_MD
 # Fabia, Kamiq, Scala tabloları 
 from modules.data.scala_data import SCALA_DATA_MD 
 from modules.data.kamiq_data import KAMIQ_DATA_MD 
-from modules.data.fabia_data import FABIA_DATA_MD 
+from modules.data.fabia_data import FABIA_DATA_MD   
 # Karoq tabloları 
 from modules.data.karoq_data import KAROQ_DATA_MD 
 from modules.data.kodiaq_data import KODIAQ_DATA_MD 
@@ -315,417 +317,512 @@ def remove_latex_and_formulas(text):
     # Baş ve son boşluk
     text = text.strip()
     return text
-
+import contextlib
+try:
+    import pyodbc
+except Exception:
+    pyodbc = None
 
 class ChatbotAPI:
-    # ChatbotAPI içinde, yardımcı fonksiyonlar arasına ekleyin
-    def _compare_with_skodakb(
-        self,
-        user_id: str,
-        assistant_id: str | None,
-        user_message: str,
-        models: list[str],
-        only_keywords: list[str] | None = None
-    ) -> str:
-        """
-        Çoklu model teknik karşılaştırmayı tek mağaza (SkodaKB.md) üzerinden RAG ile üretir.
-        Çıktı: SADECE Markdown tablo (kod bloğu yok).
-        """
+    import difflib
+    # =====================[ HYBRID RAG – Yardımcılar ]=====================
+
+    # Embedding ayarları (ENV ile override edilebilir)
+    def _embed_model_name(self) -> str:
+        return os.getenv("EMBED_MODEL", "text-embedding-3-large")
+
+    def _embed_dim(self) -> int:
+        # text-embedding-3-large → 3072, küçük model kullanırsan değiştir
         try:
-            if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
-                return ""
-            vs_id = getattr(self, "VECTOR_STORE_ID", "")
-            if not vs_id or not models or len(models) < 2:
-                return ""
+            return int(os.getenv("EMBED_DIM", "3072"))
+        except:
+            return 3072
 
-            cols = ", ".join(m.title() for m in models)
-            filt_line = ""
-            if only_keywords:
-                # Kullanıcı "sadece beygir, tork, 0-100" gibi filtre yazdıysa
-                filt_line = "Yalnızca şu başlıkları kapsa: " + ", ".join(only_keywords) + ". "
+    def _to_bytes_float32(self, vec: np.ndarray) -> bytes:
+        assert vec.dtype == np.float32
+        return vec.tobytes()
 
-            instr = (
-                "Cevabı YALNIZCA dosya araması sonuçlarına dayanarak üret. "
-                "SADECE düzgün bir Markdown TABLO yaz; kod bloğu (```) kullanma, kaynak/citation yazma. "
-                "İlk sütun başlığı 'Özellik' olsun; diğer sütunlar sırasıyla " + cols + " olsun. "
-                + filt_line +
-                "Veri yoksa hücreyi '—' bırak. Öncelik: 0-100 km/h (sn), Maks. hız, Maks. güç (kW/PS), "
-                "Maks. tork (Nm), WLTP tüketim/menzil, Boyutlar (Uz./Gen./Yük., Dingil mesafesi), "
-                "Bagaj hacmi, Lastikler. Tablo dışında hiçbir şey yazma."
-            )
+    def _from_bytes_float32(self, b: bytes) -> np.ndarray:
+        return np.frombuffer(b, dtype=np.float32)
 
-            out = self._ask_assistant(
-                user_id=user_id,
-                assistant_id=assistant_id or self.user_states.get(user_id, {}).get("assistant_id"),
-                content=user_message,
-                timeout=60.0,
-                instructions_override=instr,
-                ephemeral=True,  # thread geçici olsun
-                # 🔴 Tek mağaza: SkodaKB (VECTOR_STORE_ID). Model-bazlı VS'leri BYPASS eder.
-                tool_resources_override={"file_search": {"vector_store_ids": [vs_id]}}
-            ) or ""
+    def _cosine(self, a: np.ndarray, b: np.ndarray) -> float:
+        denom = (np.linalg.norm(a) * np.linalg.norm(b))
+        return float(np.dot(a, b) / denom) if denom > 0 else 0.0
 
-            # Tablo post-process
-            md = self.markdown_processor.transform_text_to_markdown(out)
-            if '|' in md and '\n' in md:
-                md = fix_markdown_table(md)
-            else:
-                md = self._coerce_text_to_table_if_possible(md)
-            if getattr(self, "HIDE_SOURCES", False):
-                md = self._strip_source_mentions(md)
-            return md.strip()
-        except Exception as e:
-            self.logger.error(f"[_compare_with_skodakb] failed: {e}")
-            return ""
+    def _guess_model_for_query(self, query: str) -> str | None:
+        mset = self._extract_models(query or "")
+        if mset:
+            return list(mset)[0].upper()
+        return None
 
-    def _synthesize_multi_model_one_liner(self,
-                                        user_id: str,
-                                        assistant_id: str,
-                                        question: str,
-                                        snippets_by_model: dict[str, str]) -> str:
-        """
-        {model: 'metin'} sözlüğünden yola çıkarak SORU'yu tek cümleyle yanıtlar.
-        Sayı varsa farkı hesaplamasını, aralıkta muhafazakâr farkı yazmasını ister.
-        """
-        if not snippets_by_model:
-            return ""
+    def _relevant_table_hints(self, query: str) -> list[str]:
+        q = (query or "").lower()
+        hints = []
+        if any(k in q for k in ["fiyat","anahtar teslim","ötv","price","liste"]):
+            hints.append("PriceList")
+        if any(k in q for k in ["donanım","özellik","paket","equipment"]):
+            hints.append("EquipmentList")
+        if any(k in q for k in ["menzil","batarya","şarj","kwh","ev","phev"]):
+            hints.append("BatterySpecs")
+        if not hints:
+            hints = ["PriceList","EquipmentList"]
+        return hints
 
-        lines = []
-        for m, s in snippets_by_model.items():
-            if not s.strip():
+    def _row_to_text(self, table_name: str, row: dict) -> str:
+        parts = [f"Tablo={table_name}"]
+        for k, v in row.items():
+            if v is None: 
                 continue
-            # çok uzayan cevapları kıs diye ufak kırpma (opsiyonel)
-            lines.append(f"- [{m.title()}] {s.strip()[:600]}")
+            s = str(v).strip()
+            if s:
+                parts.append(f"{k}: {s}")
+        return " | ".join(parts)
 
-        joined = "\n".join(lines)
+    # ------------------- Indexleme: Tablolardan KbVectors’a -------------------
 
-        # Sentez yönergesi — tek cümle, farkı hesapla, kaynak/citation yok
-        instr = (
-            "Aşağıdaki model‑özetlerinden yola çıkarak soruyu TEK net Türkçe cümleyle yanıtla. "
-            "Sayılar varsa farkı kendin hesapla (örn. 160 ve 180 km/s → 20 km/s fark). "
-            "Aralık varsa en muhafazakâr farkı belirt (örn. 160–180 vs 160 → 0–20 km/s). "
-            "Veri eksikse kısaca 'X için veri yok' de. Maddeleme, tablo, kaynak veya dipnot yazma."
+    def _kb_index_one_table(self, table_name: str, limit: int = 10000) -> int:
+        conn = self._sql_conn()
+        cur  = conn.cursor()
+        try:
+            cur.execute(f"SELECT TOP {limit} * FROM [dbo].[{table_name}] WITH (NOLOCK)")
+            cols = [c[0] for c in cur.description] if cur.description else []
+            rows = cur.fetchall()
+        except Exception as e:
+            self.logger.error(f"[KB-IDX] {table_name} okunamadı: {e}")
+            conn.close()
+            return 0
+
+        if not rows:
+            conn.close()
+            return 0
+
+        # Satırları metne çevir
+        docs, metas = [], []
+        for r in rows:
+            d = {cols[i]: r[i] for i in range(len(cols))}
+            txt = self._row_to_text(table_name, d)
+            if len(txt) >= 5:
+                docs.append(txt)
+                metas.append({
+                    "model": (self._guess_model_for_query(table_name) or self._guess_model_for_query(txt) or "GENERIC").upper(),
+                    "table_name": table_name,
+                    "row_key": None
+                })
+
+        if not docs:
+            conn.close()
+            return 0
+
+        # Embedding üret (batched)
+        BATCH = 256
+        inserted = 0
+        for i in range(0, len(docs), BATCH):
+            chunk = docs[i:i+BATCH]
+            try:
+                em = self.client.embeddings.create(model=self._embed_model_name(), input=chunk)
+            except Exception as e:
+                self.logger.error(f"[KB-IDX] embeddings error: {e}")
+                break
+            vecs = [np.array(it.embedding, dtype=np.float32) for it in em.data]
+
+            for j, vec in enumerate(vecs):
+                m = metas[i+j]
+                try:
+                    cur.execute("""
+                        INSERT INTO dbo.KbVectors (model, table_name, row_key, text, dim, embedding)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (m["model"], m["table_name"], m["row_key"], chunk[j], self._embed_dim(), self._to_bytes_float32(vec)))
+                    inserted += 1
+                except Exception as e:
+                    self.logger.error(f"[KB-IDX] insert fail: {e}")
+            conn.commit()
+
+        conn.close()
+        return inserted
+
+    def _kb_index_all(self) -> dict:
+        """
+        sys.tables’tan dinamik olarak tüm PriceList_%1 ve EquipmentList_%1 tablolarını tarar,
+        KbVectors’a embedding yazar. (Tek tuş ReIndex için)
+        """
+        patterns = ["PriceList\\_%", "EquipmentList\\_%"]  # BatterySpecs_* varsa ekleyebilirsin
+        conn = self._sql_conn()
+        cur  = conn.cursor()
+        tabs = []
+        for pat in patterns:
+            cur.execute("""
+                SELECT t.name
+                FROM sys.tables t
+                WHERE t.name LIKE ? ESCAPE '\\'
+                ORDER BY t.name
+            """, (pat,))
+            tabs += [r[0] for r in cur.fetchall()]
+        conn.close()
+
+        out = {}
+        for t in tabs:
+            try:
+                n = self._kb_index_one_table(t, limit=10000)
+                out[t] = n
+                self.logger.info(f"[KB-IDX] {t} → {n} vektör")
+            except Exception as e:
+                self.logger.error(f"[KB-IDX] {t} hata: {e}")
+                out[t] = 0
+        return out
+
+    # ------------------- Vektör Arama + Cevap -------------------
+
+    def _kb_vector_search(self, query: str, k: int = 12) -> list[tuple[float, dict]]:
+        # 1) query embedding
+        try:
+            qe = self.client.embeddings.create(model=self._embed_model_name(), input=query).data[0].embedding
+        except Exception as e:
+            self.logger.error(f"[KB-SEARCH] embed fail: {e}")
+            return []
+        qv = np.array(qe, dtype=np.float32)
+
+        # 2) ön filtre (model ve tablo ipuçları)
+        model_hint  = (self._guess_model_for_query(query) or "").upper()
+        table_hints = self._relevant_table_hints(query)
+
+        where = []
+        params = []
+        if model_hint:
+            where.append("model = ?")
+            params.append(model_hint)
+        if table_hints:
+            where.append("(" + " OR ".join(["table_name LIKE ?"]*len(table_hints)) + ")")
+            params += [h + "%" for h in table_hints]
+        where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+        conn = self._sql_conn()
+        cur  = conn.cursor()
+        cur.execute(f"""
+            SELECT TOP 1000 id, model, table_name, text, dim, embedding
+            FROM dbo.KbVectors WITH (NOLOCK)
+            {where_sql}
+            ORDER BY id DESC
+        """, params)
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return []
+
+        scored = []
+        for r in rows:
+            emb = self._from_bytes_float32(r[5])
+            score = self._cosine(qv, emb)
+            scored.append((score, dict(id=r[0], model=r[1], table=r[2], text=r[3])))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[:k]
+
+    def _answer_with_hybrid_rag(self, query: str) -> str:
+        """
+        KbVectors’tan top-k bağlamı getir, OpenAI’ye 'sadece bu bağlamla' yanıt üret.
+        """
+        top = self._kb_vector_search(query, k=15)
+        context = "\n".join([f"- [{round(s,3)}] {d['text']}" for s,d in top])
+
+        sys = ("Sadece verilen bağlamdaki bilgilere dayanarak yanıt ver. "
+            "Bağlamda yoksa 'veritabanında karşılığı bulunamadı' de. "
+            "Kıyas gerekiyorsa rakamları net yaz.")
+        usr = f"Kullanıcı sorusu: {query}\n\nBağlam (SQL kaynaklı kayıtlar):\n{context}"
+
+        try:
+            resp = self.client.chat.completions.create(
+                model=os.getenv("GEN_MODEL", "gpt-4o-mini"),
+                messages=[{"role":"system","content":sys},
+                        {"role":"user","content":usr}],
+                temperature=0.2
+            )
+            return (resp.choices[0].message.content or "").strip()
+        except Exception as e:
+            self.logger.error(f"[KB-ANS] chat fail: {e}")
+            return ""
+
+    def _answer_via_rag_only(self, user_id: str, assistant_id: str, user_message: str) -> bytes:
+        """
+        Yalnızca vector store (file_search) kaynaklarından cevap üretir.
+        Hiçbir sonuç yoksa 'KB’de yok' der ve genel bilgiye düşmez.
+        """
+        if not (self.USE_OPENAI_FILE_SEARCH and self.VECTOR_STORE_ID and assistant_id):
+            return "Bilgi tabanına (RAG) erişilemiyor.".encode("utf-8")
+
+        instructions = (
+            "Cevabı YALNIZCA bağlı dosya araması (file_search) sonuçlarına dayanarak ver. "
+            "Genel bilgi kullanma, varsayım yapma. "
+            "Eğer dosya araması içinde ilgili kanıt/bölüm bulamazsan "
+            "kısa ve net şekilde 'Bu konuda SQL tabanlı bilgi tabanımda kayıt yok.' de. "
+            "Tablo gerekiyorsa düzgün Markdown tablo kullan, aksi halde düz metin ver. "
+            "Kaynak/URL/kimlik yazma."
         )
-
-        prompt = f"Soru: {question}\n\nModel‑Özetleri:\n{joined}\n\nGörev: {instr}"
-
         out = self._ask_assistant(
             user_id=user_id,
             assistant_id=assistant_id,
-            content=prompt,
-            timeout=40.0,
-            ephemeral=True
+            content=user_message,
+            timeout=60.0,
+            instructions_override=instructions,
+            ephemeral=True  # Her çağrıda temiz thread
         ) or ""
 
-        return self._strip_source_mentions(out).strip()
+        out_md = self.markdown_processor.transform_text_to_markdown(out)
+        if '|' in out_md and '\n' in out_md:
+            out_md = fix_markdown_table(out_md)
+        resp = self._deliver_locally(out_md, original_user_message=user_message, user_id=user_id)
+        return resp
 
-    def _get_vs_id_for_model(self, model: str) -> str | None:
-        if not getattr(self, "VECTOR_STORES_BY_MODEL", None):
-            self.VECTOR_STORES_BY_MODEL = self._load_vs_map() or {}
-        return (self.VECTOR_STORES_BY_MODEL or {}).get((model or "").lower())
-
-    # ChatbotAPI içinde – _ask_across_models_rag imzasını genişlet
-    def _ask_across_models_rag(self,
-                            user_id: str,
-                            assistant_id: str,
-                            content: str,
-                            models: list[str],
-                            *,
-                            mode: str = "text",                # "text" | "bullets"
-                            timeout: float = 60.0,
-                            title_sections: bool = True,
-                            instructions_override: str | None = None,
-                            return_dict: bool = False   # ← YENİ
-                            ) -> str | dict[str, str]:
+    def _sql_conn(self):
         """
-        Çok‑modelli soruları her modelin kendi VS’iyle teker teker çalıştırır,
-        sonuçları birleştirir veya return_dict=True ise {model:metin} döndürür.
+        MSSQL'e güvenli bağlantı açar. Öncelik: SQLSERVER_CONN_STR env var.
+        Dönüş: pyodbc.Connection
         """
-        out_parts = []
-        collected: dict[str, str] = {}   # ← YENİ: model→metin
+        if pyodbc is None:
+            raise RuntimeError("pyodbc yüklü değil. `pip install pyodbc` ile kurun.")
 
-        for m in models:
-            vs_id = self._get_vs_id_for_model(m)
-            if not vs_id:
-                self.logger.warning(f"[MULTI-RAG] VS not found for model={m}; skipping.")
-                continue
+        cs = os.getenv("SQLSERVER_CONN_STR", "").strip()
+        if not cs:
+            # (Geliştirici ortamı için güvenli olmayan fallback – PROD'da .env kullanın)
+            cs = (
+                "DRIVER={ODBC Driver 17 for SQL Server};"
+                "SERVER=10.0.0.20\\SQLYC;"
+                "DATABASE=SkodaBot;"
+                "UID=skodabot;"
+                "PWD=Skodabot.2024;"
+            )
+        return pyodbc.connect(cs)
 
-            tr_single = {"file_search": {"vector_store_ids": [vs_id]}}
-
-            instr = instructions_override
-            if not instr:
-                if mode == "bullets":
-                    instr = (
-                        f"Yalnızca dosya araması sonuçlarına dayan. "
-                        f"{m.title()} özelinde 2–4 kısa madde yaz; her madde '- ' ile başlasın. "
-                        f"Sayı/ölçüleri mümkünse açıkça ver. Kaynak/citation yazma; tablo/HTML üretme."
-                    )
-                else:
-                    instr = (
-                        f"Cevabı yalnızca dosya araması sonuçlarına dayanarak yaz. "
-                        f"{m.title()} ile ilgili içerik dışına çıkma. Kaynak/citation yazma."
-                    )
-
-            text = self._ask_assistant(
-                user_id=user_id,
-                assistant_id=assistant_id,
-                content=content,
-                timeout=timeout,
-                instructions_override=instr,
-                ephemeral=True,
-                tool_resources_override=tr_single
-            ) or ""
-
-            text = (self._strip_source_mentions(text)
-                    if getattr(self, "HIDE_SOURCES", False) else text).strip()
-
-            if not text:
-                continue
-
-            collected[m.lower()] = text  # ← YENİ: sözlüğe koy
-
-            if mode == "bullets":
-                lines = [ln for ln in text.splitlines() if ln.strip().startswith("-")]
-                tagged = [f"- [{m.title()}] {ln[1:].strip()}" for ln in lines] or [f"- [{m.title()}] Veri bulunamadı."]
-                out_parts.append("\n".join(tagged))
-            else:
-                if title_sections:
-                    out_parts.append(f"**{m.title()}**\n\n{text}")
-                else:
-                    out_parts.append(text)
-
-        if return_dict:
-            return collected
-
-        return "\n\n".join([p for p in out_parts if p.strip()])
-
-
-    def _multi_model_tool_resources(self, message: str) -> dict | None:
+    # --- SQL'den KB tablolarını topla
+    def _fetch_kb_tables_from_sql(self) -> dict[str, list[dict]]:
         """
-        Mesaj 2+ model içeriyorsa, o modellere ait VS’leri birlikte döndürür.
-        Tek modelde None döner (asistanın üzerindeki VS kullanılır).
+        Yeni: sadece EquipmentList_, Imported_ ve PriceList_ tablolarını okur.
         """
-        if not (getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "USE_MODEL_SPLIT", False)):
-            return None
-        models = list(self._extract_models(message))
-        if len(models) >= 2:
-            return self._file_search_tool_resources_for(message, models=models)
-        return None
+        tables = [
+            "EquipmentList_KODA_FABIA_MY_20251",
+            "EquipmentList_KODA_KAMIQ_MY_20251",
+            "EquipmentList_KODA_KAROQ_MY_20251",
+            "EquipmentList_KODA_KODIAQ_MY_20251",
+            "EquipmentList_KODA_OCTAVIA_MY_20251",
+            "EquipmentList_KODA_SCALA_MY_20251",
+            "EquipmentList_KODA_SUPERB_MY_20251",
+            "Imported_Elroq1",
+            "Imported_Enyaq1",
+            "Imported_KODA_ELROQ_MY_20251",
+            "Imported_KODA_ENYAQ__ENYAQ_Coup1",
+            "Imported_KODA_FABIA_MY_20251",
+            "Imported_KODA_KAMIQ_MY_20251",
+            "Imported_KODA_OCTAVIA_MY_20251",
+            "Imported_KODA_SCALA_MY_20251",
+            "PriceList_KODA_ELROQ_MY_20251",
+            "PriceList_KODA_ENYAQ__ENYAQ_Coup1",
+            "PriceList_KODA_FABIA_MY_20251",
+            "PriceList_KODA_KAMIQ_MY_20251",
+            "PriceList_KODA_KAROQ_MY_20251",
+            "PriceList_KODA_KODIAQ_MY_20251",
+            "PriceList_KODA_OCTAVIA_MY_20251",
+            "PriceList_KODA_SCALA_MY_20251",
+            "PriceList_KODA_SUPERB_MY_20251",
+        ]
 
-    def _enable_file_search_on_assistants_split(self):
-        """
-        Her assistant'ı kendi modeline ait vector store ile iliştirir.
-        ASSISTANT_NAME_MAP: {assistant_id: "enyaq"} gibi.
-        VECTOR_STORES_BY_MODEL: {"enyaq": "<vs_id>", ...}
-        """
-        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
-            return
-
-        # VS haritasını yükle (diskte vs_map.json)
-        if not getattr(self, "VECTOR_STORES_BY_MODEL", None):
-            self.VECTOR_STORES_BY_MODEL = self._load_vs_map() or {}
-
-        for asst_id, model in (self.ASSISTANT_NAME_MAP or {}).items():
-            if not asst_id or not model:
-                continue
-
-            vs_id = (self.VECTOR_STORES_BY_MODEL or {}).get(model.lower())
-            if not vs_id:
-                self.logger.warning(f"[KB-SPLIT] {model} için VS bulunamadı; asistan bağlanamadı: {asst_id}")
-                continue
-
-            try:
-                a = self.client.beta.assistants.retrieve(asst_id)
-                # Araçlar listesinde file_search mutlaka olsun (tekrarı engelle)
-                tools = []
-                seen_fs = False
-                for t in (a.tools or []):
-                    t_type = getattr(t, "type", None) or (t.get("type") if isinstance(t, dict) else None)
-                    if t_type == "file_search":
-                        seen_fs = True
-                    tools.append({"type": t_type} if t_type else {"type": "file_search"})
-                if not seen_fs:
-                    tools.append({"type": "file_search"})
-
-                self.client.beta.assistants.update(
-                    assistant_id=asst_id,
-                    tools=tools,
-                    tool_resources={"file_search": {"vector_store_ids": [vs_id]}},
-                )
-                self.logger.info(f"[KB-SPLIT] {model} -> Assistant {asst_id} VS={vs_id} bağlı.")
-
-            except Exception as e:
-                self.logger.error(f"[KB-SPLIT] Assistant update failed for {asst_id}: {e}")
-
-    import difflib
-    # --- NEW: VS id haritasını diske yaz/oku
-    # --- NEW: mesaja göre VS seçimi
-    def _file_search_tool_resources_for(self, user_message: str | None, models: list[str] | None = None):
-        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
-            return None
-
-        selected = list(models or []) or list(self._extract_models(user_message))
-        if not selected:
-            # İstersen bağlamdan (aktif assistant) model çekebilirsin:
-            # asst_id = self.user_states.get(user_id, {}).get("assistant_id")  # user_id parametresi ekleyebilirsen
-            # ctx_model = self.ASSISTANT_NAME_MAP.get(asst_id, "")
-            # if ctx_model: selected = [ctx_model]
-            # Eğer yine yoksa kapat:
-            self.logger.info("[KB-SPLIT] Model tespit edilemedi; file_search devre dışı.")
-            return None
-
-        vs_ids = []
-        for m in selected:
-            vs_id = (self.VECTOR_STORES_BY_MODEL or {}).get(m.lower())
-            if vs_id:
-                vs_ids.append(vs_id)
-
-        if not vs_ids:
-            self.logger.warning(f"[KB-SPLIT] Seçilen modeller için VS yok: {selected}")
-            return None
-
-        return {"file_search": {"vector_store_ids": vs_ids}}
-
-
-    def _load_vs_map(self) -> dict:
+        out: dict[str, list[dict]] = {}
         try:
-            p = os.getenv("KB_VS_MAP_PATH", os.path.join(self.app.static_folder, "kb", "vs_map.json"))
-            if os.path.exists(p):
-                import json
-                with open(p, "r", encoding="utf-8") as f:
-                    return json.load(f)
-        except Exception as e:
-            self.logger.warning(f"[KB-SPLIT] vs_map yüklenemedi: {e}")
-        return {}
+            conn = self._sql_conn()
+            cur = conn.cursor()
+            for fqtn in tables:
+                try:
+                    cur.execute(f"SELECT * FROM {fqtn}")
+                    cols = [c[0] for c in cur.description] if cur.description else []
+                    rows = cur.fetchall()
+                    out[fqtn] = [dict(zip(cols, map(self._safe_cell, r))) for r in rows]
+                    self.logger.info(f"[SQL] {fqtn}: {len(out[fqtn])} satır")
+                except Exception as e:
+                    self.logger.error(f"[SQL] {fqtn} okunamadı: {e}")
+                    out[fqtn] = []
+        finally:
+            with contextlib.suppress(Exception): cur.close()
+            with contextlib.suppress(Exception): conn.close()
+        return out
 
-    def _save_vs_map(self, m: dict):
-        try:
-            p = os.getenv("KB_VS_MAP_PATH", os.path.join(self.app.static_folder, "kb", "vs_map.json"))
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            import json
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump(m, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            self.logger.warning(f"[KB-SPLIT] vs_map yazılamadı: {e}")
 
-    # --- NEW: model bazlı VS oluşturup ilgili dosyayı yükler
-    def _ensure_vector_stores_by_model_and_upload(self):
-        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
-            return
-        vs_api = self._vs_api()
-        if not vs_api:
-            self.logger.warning("[KB-SPLIT] Vector Stores API yok; atlandı.")
-            return
+    def _safe_cell(self, v):
+        """SQL hücresini yazılabilir string'e çevirir (None → '—'; pipes kaçışlanır)."""
+        if v is None:
+            return "—"
+        s = str(v)
+        # Markdown boru kaçırma (| → \|)
+        return s.replace("|", "\\|")
 
-        # 1) Dosyaları üret
-        model_files = self._export_all_model_files()
+    # --- Yardımcı: satır listesi → Markdown tablo
+    def _rows_to_markdown_table(self, rows: list[dict], *, prefer_cols: list[str] | None = None, chunk: int = 1000) -> str:
+        """
+        Büyük tabloları parça parça Markdown'a çevirir. prefer_cols başa alınır.
+        chunk: satır başına maksimum satır sayısı (büyük veride parçalara böler).
+        """
+        if not rows:
+            return "_(Kayıt bulunamadı)_\n"
 
-        # 2) Mevcut haritayı yükle
-        self.VECTOR_STORES_BY_MODEL = self._load_vs_map() or {}
+        # Kolon sıralaması (model/trim/spec/value gibi alanları öne al)
+        cols = list(rows[0].keys())
+        prefer = [c for c in (prefer_cols or []) if c in cols]
+        rest = [c for c in cols if c not in prefer]
+        cols = prefer + rest
 
-        for model, fpath in model_files.items():
-            try:
-                vs_id = self.VECTOR_STORES_BY_MODEL.get(model)
-                if not vs_id:
-                    vs = vs_api.create(name=f"SkodaKB_{model.title()}")
-                    vs_id = vs.id
-                    self.VECTOR_STORES_BY_MODEL[model] = vs_id
+        def render_block(block_rows: list[dict]) -> str:
+            header = "| " + " | ".join(cols) + " |"
+            sep    = "|" + "|".join(["---"] * len(cols)) + "|"
+            body   = []
+            for r in block_rows:
+                body.append("| " + " | ".join(self._safe_cell(r.get(c, "—")) for c in cols) + " |")
+            return "\n".join([header, sep] + body)
 
-                # Dosyayı yükle
-                with open(fpath, "rb") as f:
-                    file_obj = self.client.files.create(file=f, purpose="assistants")
+        md_parts = []
+        for i in range(0, len(rows), chunk):
+            part = rows[i:i+chunk]
+            md_parts.append(render_block(part))
+        return "\n\n".join(md_parts) + "\n"
 
-                files_api = getattr(vs_api, "files", None)
-                batches_api = getattr(vs_api, "file_batches", None)
-                if files_api and hasattr(files_api, "create_and_poll"):
-                    files_api.create_and_poll(vector_store_id=vs_id, file_id=file_obj.id)
-                elif batches_api and hasattr(batches_api, "upload_and_poll"):
-                    with open(fpath, "rb") as f2:
-                        batches_api.upload_and_poll(vector_store_id=vs_id, files=[f2])
-                else:
-                    files_api.create(vector_store_id=vs_id, file_id=file_obj.id)
+    # --- SQL verisini alan adı başlıklarıyla bölümlere ayırıp Markdown üret
+    def _export_openai_kb_from_sql(self) -> list[str]:
+        """
+        _fetch_kb_tables_from_sql() ile çekilen:
+        - EquipmentList_*
+        - Imported_*
+        - PriceList_*
+        tablolarını Markdown'a çevirip /static/kb altına yazar.
 
-                self.logger.info(f"[KB-SPLIT] {model} -> VS={vs_id} yükleme tamam.")
-            except Exception as e:
-                self.logger.error(f"[KB-SPLIT] {model} yükleme hatası: {e}")
+        Dönüş: Üretilen dosyaların tam yol listesi.
+        """
+        import os
+        import re
 
-        # 3) Haritayı kalıcılaştır
-        self._save_vs_map(self.VECTOR_STORES_BY_MODEL)
-
-    # --- NEW: fiyat tablosunu mode’e göre filtreleyen küçük yardımcı
-    def _filter_price_md_for_model(self, model: str) -> str | None:
-        try:
-            base = FIYAT_LISTESI_MD.strip().splitlines()
-            if len(base) < 2:
-                return None
-            header, sep, body = base[0], base[1], base[2:]
-            tags = set()
-            up = model.lower()
-            if up == "octavia":
-                tags.update({"OCTAVIA", "OCTAVIA COMBI"})
-            elif up == "superb":
-                tags.update({"SUPERB", "SUPERB COMBI"})
-            else:
-                tags.add(model.upper())
-            rows = []
-            for row in body:
-                parts = row.split("|")
-                if len(parts) > 2:
-                    first = parts[1].strip().upper()
-                    if any(tag in first for tag in tags):
-                        rows.append(row)
-            md = "\n".join([header, sep] + (rows or body))
-            return fix_markdown_table(md)
-        except Exception:
-            return None
-
-    # --- NEW: tek model için derlenmiş içerik dosyası üretir
-    def _export_model_file(self, model: str) -> str:
+        data = self._fetch_kb_tables_from_sql()
         out_dir = os.path.join(self.app.static_folder, "kb")
         os.makedirs(out_dir, exist_ok=True)
-        #path = os.path.join(out_dir, f"KB_{model.title()}.md")
-        path = os.path.join(out_dir, f"SkodaKB_{model.lower()}.md")
-        sections = []
 
-        def add(title, body):
-            if body and str(body).strip():
-                sections.append(f"# {title}\n\n{str(body).strip()}\n")
+        file_paths: list[str] = []
 
-        # 1) Teknik tablo
-        add(f"{model.title()} — Teknik Özellikler", self.TECH_SPEC_TABLES.get(model, ""))
+        # ---- Yardımcılar ---------------------------------------------------------
+        def _classify(tbl_name: str) -> str:
+            """Tablo adından tip çıkar (equipment/price/imported/other)."""
+            t = (tbl_name or "").lower()
+            if t.startswith("equipmentlist_"):
+                return "equipment"
+            if t.startswith("pricelist_"):
+                return "price"
+            if t.startswith("imported_"):
+                return "imported"
+            return "other"
 
-        # 2) Standart donanımlar
-        add(f"{model.title()} — Standart Donanımlar", self.STANDART_DONANIM_TABLES.get(model, ""))
+        def _human_title(tbl_name: str) -> str:
+            """Markdown başlığı için okunur bir başlık üret."""
+            cls = _classify(tbl_name)
+            prefix = {
+                "equipment": "Donanım Listesi",
+                "price": "Fiyat Listesi",
+                "imported": "İthal/Ürün Aktarım",
+                "other": "Tablo",
+            }.get(cls, "Tablo")
+            pretty = tbl_name.replace("__", "_").replace("_", " ").strip()
+            return f"{prefix} — {pretty}"
 
-        # 3) Opsiyonel donanımlar (tüm trimler)
-        for tr in self.MODEL_VALID_TRIMS.get(model, []):
-            md = self._lookup_opsiyonel_md(model, tr)
-            add(f"{model.title()} {tr.title()} — Opsiyonel Donanımlar", md)
+        def _prefer_cols_for(tbl_name: str, cols: list[str]) -> list[str]:
+            """
+            Kolon sırası: tablo tipine göre anlamlı kolonları öne al,
+            diğerlerini orijinal adlarıyla sona ekle.
+            """
+            low_to_orig = {c.lower(): c for c in cols}
 
-        # 3b) Enyaq JSONL override varsa ekle
-        if model == "enyaq" and getattr(self, "ENYAQ_OPS_FROM_JSONL", None):
-            for t, md in self.ENYAQ_OPS_FROM_JSONL.items():
-                add(f"Enyaq {t.title()} — Opsiyonel Donanımlar (JSONL)", md)
+            def _resolve(order: list[str]) -> list[str]:
+                ordered, seen = [], set()
+                for want in order:
+                    key = want.lower()
+                    if key in low_to_orig and low_to_orig[key] not in seen:
+                        ordered.append(low_to_orig[key])
+                        seen.add(low_to_orig[key])
+                for c in cols:
+                    if c not in seen:
+                        ordered.append(c)
+                        seen.add(c)
+                return ordered
 
-        # 4) (Opsiyonel) Model‑filtreli fiyat listesi
-        price_md = self._filter_price_md_for_model(model)
-        if price_md:
-            add(f"{model.title()} — Fiyat Listesi", price_md)
+            common = ["Model", "ModelName", "Trim", "Variant", "Name", "Title", "Description"]
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(sections))
-        return path
+            cls = _classify(tbl_name)
+            if cls == "equipment":
+                prefer = [
+                    "Model", "ModelName", "Trim", "Variant",
+                    "Equipment", "Donanim", "Name", "Title",
+                    "Status", "StdOps", "Value", "Code", "Description",
+                ]
+            elif cls == "price":
+                prefer = [
+                    "Model", "ModelName", "Trim", "Variant",
+                    "Body", "Fuel", "Powertrain",
+                    "Price", "ListPrice", "AnahtarTeslim", "Currency",
+                    "EffectiveDate",
+                ]
+            elif cls == "imported":
+                prefer = [
+                    "Model", "ModelName", "Trim", "Variant",
+                    "Attribute", "Name", "Title",
+                    "Value", "Unit", "Code", "Description",
+                ]
+            else:
+                prefer = common + ["Value", "Unit", "Price"]
 
-    # --- NEW: tüm modelleri üret
-    def _export_all_model_files(self) -> dict[str, str]:
-        paths = {}
-        for model in self.MODEL_VALID_TRIMS.keys():
+            return _resolve(prefer)
+
+        # ---- Markdown üretimi -----------------------------------------------------
+        for tbl_name, rows in (data or {}).items():
+            if not rows:
+                self.logger.warning(f"[SQL→MD] {tbl_name}: boş/okunamadı, atlandı.")
+                continue
+
+            cols = list(rows[0].keys()) if isinstance(rows[0], dict) else []
+            prefer_cols = _prefer_cols_for(tbl_name, cols)
+
+            title = f"# {_human_title(tbl_name)}\n\n"
+            md = title + self._rows_to_markdown_table(rows, prefer_cols=prefer_cols, chunk=1200)
+
+            # Dosya adı güvenli hale getir
+            safe_file = re.sub(r"[^0-9A-Za-z_.-]+", "_", f"{tbl_name}.sql.md")
+            out_path = os.path.join(out_dir, safe_file)
+
             try:
-                p = self._export_model_file(model)
-                paths[model] = p
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(md)
+                file_paths.append(out_path)
+                self.logger.info(f"[SQL→MD] yazıldı: {out_path} (rows={len(rows)})")
             except Exception as e:
-                self.logger.error(f"[KB-SPLIT] {model} dosya üretimi başarısız: {e}")
-        return paths
+                self.logger.error(f"[SQL→MD] {tbl_name} yazılamadı: {e}")
+
+        # Hiç dosya oluşmadıysa bilgilendirici placeholder
+        if not file_paths:
+            placeholder = os.path.join(out_dir, "KB_EMPTY.sql.md")
+            with open(placeholder, "w", encoding="utf-8") as f:
+                f.write("# SQL Çıktısı Boş\n\nSeçili tablolar okunamadı veya satır getirmedi.\n")
+            file_paths.append(placeholder)
+            self.logger.warning("[SQL→MD] kayıt yok, KB_EMPTY.sql.md üretildi.")
+
+        self.logger.info(f"[SQL→MD] Toplam {len(file_paths)} dosya üretildi.")
+        return file_paths
+
+    def _is_image_intent_local(self, text: str) -> bool:
+        """
+        Görsel niyetini yerelde tespit eder (utils.is_image_request'e ek destek).
+        - Eşanlamlılar (görsel/resim/foto/fotograf/fotoğraf...) varsa True
+        - Veya 'göster / nasıl görün...' fiilleri + bir model adı birlikte geçiyorsa True
+        """
+        t = normalize_tr_text(text or "").lower()
+        if self.IMAGE_SYNONYM_RE.search(t):
+            return True
+
+        has_verb = (
+            re.search(r"\bg[öo]ster(?:ir|)\b", t) or
+            re.search(r"nas[ıi]l\s+g[öo]r[üu]n", t)
+        )
+        return bool(has_verb and self._extract_models(t))
 
     def _strip_source_mentions(self, text: str) -> str:
         """
@@ -1200,9 +1297,9 @@ class ChatbotAPI:
         if models:
             allow = set(models)
             for key, obj in self.ALL_DATA_TEXTS.items():
-                # sadece ilgili modelin modülü
                 doc_mod = _doc_model_from_key(key)
-                if doc_mod in allow:
+                lowtxt = normalize_tr_text(obj["text"]).lower()
+                if doc_mod in allow or any(m in lowtxt for m in allow):
                     items.append((key, obj))
         else:
             items = list(self.ALL_DATA_TEXTS.items())
@@ -1364,41 +1461,56 @@ class ChatbotAPI:
 
             # 1) Vector store yoksa oluştur
             if not self.VECTOR_STORE_ID:
-                vs = vs_api.create(name=self.VECTOR_STORE_NAME)   # yeni SDK’larda tepe isim-uzayı
+                vs = vs_api.create(name=self.VECTOR_STORE_NAME)
                 self.VECTOR_STORE_ID = vs.id
 
-            # 2) KB dosyasını üret ve OpenAI Files’a yükle
-            kb_path = self._export_openai_glossary_text()
-            with open(kb_path, "rb") as f:
-                file_obj = self.client.files.create(file=f, purpose="assistants")
+            # 2) Kaynak dosyaları hazırla
+            file_paths = []
+            if getattr(self, "RAG_FROM_SQL_ONLY", False):
+                # >>> SADECE MSSQL'den üretilen markdown dosyaları <<<
+                file_paths = self._export_openai_kb_from_sql()
+            else:
+                # Karışık kaynak (mevcut davranış)
+                kb_path = self._export_openai_glossary_text()
+                file_paths = [kb_path]
 
-            # 3) Vector store'a iliştir (mevcut yardımcıyı kullan; yoksa alternatif)
+            if not file_paths:
+                self.logger.warning("[KB] Yüklenecek dosya yok.")
+                return
+
+            # 3) Her dosyayı OpenAI Files'a yükle ve vector store'a iliştir
+            uploaded_ids = []
+            for p in file_paths:
+                with open(p, "rb") as f:
+                    file_obj = self.client.files.create(file=f, purpose="assistants")
+                    uploaded_ids.append(file_obj.id)
+
             files_api = getattr(vs_api, "files", None)
             batches_api = getattr(vs_api, "file_batches", None)
 
-            if files_api and hasattr(files_api, "create_and_poll"):
-                files_api.create_and_poll(
-                    vector_store_id=self.VECTOR_STORE_ID,
-                    file_id=file_obj.id,
-                )
-            elif batches_api and hasattr(batches_api, "upload_and_poll"):
-                # Bazı sürümlerde tek seferde stream vererek yüklemek gerekir
-                with open(kb_path, "rb") as f2:
+            if batches_api and hasattr(batches_api, "upload_and_poll"):
+                # Tek seferde toplu yükleme (destekliyse)
+                with open(file_paths[0], "rb") as f0:  # API imzası dosya objesi isterse dummy açılış
                     batches_api.upload_and_poll(
                         vector_store_id=self.VECTOR_STORE_ID,
-                        files=[f2],
+                        files=[open(p, "rb") for p in file_paths]
+                    )
+            elif files_api and hasattr(files_api, "create_and_poll"):
+                for fid in uploaded_ids:
+                    files_api.create_and_poll(
+                        vector_store_id=self.VECTOR_STORE_ID,
+                        file_id=fid
                     )
             else:
-                # En basit geri dönüş: iliştir ve poll etmeden geç
-                files_api.create(
-                    vector_store_id=self.VECTOR_STORE_ID,
-                    file_id=file_obj.id,
-                )
+                # Basit iliştirme
+                for fid in uploaded_ids:
+                    files_api.create(vector_store_id=self.VECTOR_STORE_ID, file_id=fid)
 
-            self.logger.info(f"[KB] Uploaded to vector store: {self.VECTOR_STORE_ID}")
+            self.logger.info(f"[KB] Uploaded {len(uploaded_ids)} files to vector store: {self.VECTOR_STORE_ID}")
 
         except Exception as e:
             self.logger.error(f"[KB] Vector store init skipped: {e}")
+
 
     def _enable_file_search_on_assistants(self):
         if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
@@ -1406,35 +1518,33 @@ class ChatbotAPI:
         if not getattr(self, "VECTOR_STORE_ID", ""):
             return
 
-        ids = set(list(self.ASSISTANT_CONFIG.keys()) +
-                ([self.TEST_ASSISTANT_ID] if self.TEST_ASSISTANT_ID else []))
-
+        ids = set(list(self.ASSISTANT_CONFIG.keys()) + ([self.TEST_ASSISTANT_ID] if self.TEST_ASSISTANT_ID else []))
         for asst_id in ids:
             if not asst_id:
                 continue
             try:
+                # RAG_ONLY ise araçları 'sadece file_search' yap
+                tools = [{"type": "file_search"}] if getattr(self, "RAG_ONLY", False) else []
                 a = self.client.beta.assistants.retrieve(asst_id)
-
-                # Mevcut araçları normalize et (dict/nesne fark etmesin)
-                tools = []
-                for t in (a.tools or []):
-                    t_type = getattr(t, "type", None)
-                    if not t_type and isinstance(t, dict):
-                        t_type = t.get("type")
-                    if t_type:
-                        tools.append({"type": t_type})
-
-                if not any(t["type"] == "file_search" for t in tools):
-                    tools.append({"type": "file_search"})
+                if not tools:
+                    # RAG_ONLY değilse mevcut araçlara file_search ekle
+                    tools = []
+                    for t in (a.tools or []):
+                        t_type = getattr(t, "type", None) or (t.get("type") if isinstance(t, dict) else None)
+                        if t_type:
+                            tools.append({"type": t_type})
+                    if not any(t["type"] == "file_search" for t in tools):
+                        tools.append({"type": "file_search"})
 
                 self.client.beta.assistants.update(
                     assistant_id=asst_id,
                     tools=tools,
                     tool_resources={"file_search": {"vector_store_ids": [self.VECTOR_STORE_ID]}},
                 )
-                self.logger.info(f"[KB] file_search enabled on {asst_id}")
+                self.logger.info(f"[KB] file_search enabled on {asst_id} (RAG_ONLY={self.RAG_ONLY})")
             except Exception as e:
                 self.logger.error(f"[KB] assistant update failed for {asst_id}: {e}")
+
 
     def _find_requested_specs(self, text: str) -> list[str]:
         """
@@ -1476,10 +1586,6 @@ class ChatbotAPI:
         2) Bulamazsa donanım listesi (madde işaretli satırlar) içinde tarar.
         3) Kısa ve net yanıt döner.
         """
-        models = list(self._extract_models(user_message))
-        if len(models) != 1:
-            return None  # çoklu modelde QA tekil cevabı bastırmasın
-
         requested = self._find_requested_specs(user_message)
         models = list(self._extract_models(user_message))
 
@@ -1641,40 +1747,50 @@ class ChatbotAPI:
         return fix_markdown_table(md) if md else None
 
     def _expected_teknik_md_for_question(self, user_message: str) -> tuple[str | None, dict]:
-        lower_msg = normalize_tr_text(user_message).lower()
-        models = list(self._extract_models(user_message))
-
-        has_teknik = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)
-        wants_compare = any(kw in lower_msg for kw in (
-            "karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs.","fark","hangisi","daha "
-        ))
-        if not (has_teknik or wants_compare):
+        """
+        Soru 'teknik' içeriyorsa doğru teknik tabloyu (tek model) veya karşılaştırma tablosunu (çoklu) üretir.
+        Geri dönüş: (md, meta)  meta: {'source':'teknik', 'models':[...]}
+        """
+        lower_msg = user_message.lower()
+        teknik_keywords = [
+            "teknik özellik", "teknik veriler", "teknik veri", "motor özellik",
+            "motor donanım", "motor teknik", "teknik tablo", "teknik", "performans"
+        ]
+        compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
+        has_teknik = any(kw in lower_msg for kw in teknik_keywords)
+        wants_compare = any(ck in lower_msg for ck in compare_keywords)
+        if not has_teknik:
             return None, {}
 
-        if len(models) >= 2:
-            pairs = extract_model_trim_pairs(lower_msg)
-            ordered = []
-            for m, _ in pairs:
-                if m not in ordered:
-                    ordered.append(m)
-            for m in models:
-                if m not in ordered:
-                    ordered.append(m)
-            valid = [m for m in ordered if m in self.TECH_SPEC_TABLES]
+        models_in_msg = list(self._extract_models(user_message))
+        pairs_for_order = extract_model_trim_pairs(lower_msg)
+        ordered_models = []
+        for m, _ in pairs_for_order:
+            if m not in ordered_models:
+                ordered_models.append(m)
+        if len(ordered_models) < len(models_in_msg):
+            for m in models_in_msg:
+                if m not in ordered_models:
+                    ordered_models.append(m)
+        valid = [m for m in ordered_models if m in self.TECH_SPEC_TABLES]
+
+        # Çoklu karşılaştırma
+        if wants_compare or len(valid) >= 2:
             if len(valid) >= 2:
-                only = self._detect_spec_filter_keywords(lower_msg)
-                md = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
-                return md, {"source": "teknik", "models": valid}
+                md = self._build_teknik_comparison_table(valid)
+                return (md or None), {"source":"teknik", "models": valid}
             return None, {}
 
-        # tek model
-        model = models[0] if models else None
-        if model:
-            md = self._get_teknik_md_for_model(model)
-            return md, {"source": "teknik", "models": [model]}
+        # Tek model
+        model = None
+        if len(models_in_msg) == 1:
+            model = models_in_msg[0]
+        elif ordered_models:
+            model = ordered_models[0]
+        if model and model in self.TECH_SPEC_TABLES:
+            return (self.TECH_SPEC_TABLES[model] or None), {"source":"teknik", "models":[model]}
+
         return None, {}
-
-
 
     def _lookup_opsiyonel_md(self, model: str, trim: str) -> str | None:
         """Model + trim'e göre opsiyonel donanım markdown'ını döndürür."""
@@ -1683,6 +1799,7 @@ class ChatbotAPI:
         m, t = (model or "").lower(), (trim or "").lower()
 
         # Fabia
+       # Fabia
         if m == "fabia":
             
             return FABIA_DATA_MD
@@ -1723,6 +1840,7 @@ class ChatbotAPI:
             return ELROQ_DATA_MD
 
         return None
+
 
     def _expected_opsiyonel_md_for_question(self, user_message: str) -> tuple[str | None, dict]:
         """
@@ -1821,8 +1939,11 @@ class ChatbotAPI:
 
         # Köprü metni ile devam (assertive ton uygulayalım)
         ai_answer_text = self._enforce_assertive_tone(ai_answer_text or "")
-        raw_text = ai_answer_text
-        return _gate_bytes_from_text(raw_text)
+        # YENİ: Tablo/görsel yakalayamazsa düz metni ilet
+        raw_text = ai_answer_text or ""
+        gated = self._gate_to_table_or_image(raw_text)
+        return gated if gated else raw_text.encode("utf-8")
+
 
 
 
@@ -2878,7 +2999,9 @@ class ChatbotAPI:
             template_folder=os.path.join(os.getcwd(), template_folder),
             
         )
-    
+            # Logger'ı en başta kur (ilk self.logger.info() çağrısından önce)
+        self.logger = logger if logger else self._setup_logger()
+        self.logger.info("ChatbotAPI initializing...")
         # __init__ içinde (ör. self.MODEL_VALID_TRIMS tanımlarının altına)
 
         # Teknik niyet tetikleyicileri (genel + yaygın alt konular)
@@ -2940,7 +3063,29 @@ class ChatbotAPI:
         self.LONG_TABLE_WORDS   = int(os.getenv("LONG_TABLE_WORDS", "800"))    # tablo/kaynak için kelime eşiği
         self.LONG_TABLE_ROWS    = int(os.getenv("LONG_TABLE_ROWS", "60"))      # tablo satır eşiği
         self.LONG_TOKENS        = int(os.getenv("LONG_TOKENS", "6500"))        # güvenlik tavanı (yaklaşık token)
-        self.COMPARE_USE_GLOBAL_KB = os.getenv("COMPARE_USE_GLOBAL_KB", "1") == "1"
+        self.RAG_ONLY = os.getenv("RAG_ONLY", "0") == "1"
+        self.RAG_FROM_SQL_ONLY = os.getenv("RAG_FROM_SQL_ONLY", "0") == "1"
+        self.DISABLE_BRIDGE = os.getenv("DISABLE_BRIDGE", "0") == "1"
+        # --- Hybrid RAG bayrakları ---
+        self.HYBRID_RAG = os.getenv("HYBRID_RAG", "1") == "1"   # default açık
+        self.logger.info(f"[ENV] HYBRID_RAG={self.HYBRID_RAG}, EMBED_MODEL={os.getenv('EMBED_MODEL','text-embedding-3-large')}")
+
+        # (opsiyonel) ilk açılışta otomatik indexleme
+        if self.HYBRID_RAG and os.getenv("KB_REINDEX_ON_BOOT", "0") == "1":
+            try:
+                stats = self._kb_index_all()
+                self.logger.info(f"[KB-IDX] boot reindex done: {sum(stats.values())} vectors")
+            except Exception as e:
+                self.logger.error(f"[KB-IDX] boot reindex fail: {e}")
+
+        self.logger.info(
+            "[ENV] USE_OPENAI_FILE_SEARCH=%s, RAG_ONLY=%s, RAG_FROM_SQL_ONLY=%s, DISABLE_BRIDGE=%s, OPENAI_API_KEY_SET=%s",
+            os.getenv("USE_OPENAI_FILE_SEARCH"),
+            os.getenv("RAG_ONLY"),
+            os.getenv("RAG_FROM_SQL_ONLY"),
+            os.getenv("DISABLE_BRIDGE"),
+            "yes" if os.getenv("OPENAI_API_KEY") else "no",
+        ) 
 
         self.FIRST_SERVICE_URL   = os.getenv("FIRST_SERVICE_URL", "http://127.0.0.1:5000/api/raw_answer")
         self.FIRST_SHARED_SECRET = os.getenv("FIRST_SHARED_SECRET", "")
@@ -2982,8 +3127,21 @@ class ChatbotAPI:
             "enyaq":   ENYAQ_DATA_MD,
             "elroq":   ELROQ_DATA_MD,
         }
+        # --- Görsel niyeti: eşanlamlılar (diakritik + ekleşme güvenli) ---
+        self.IMAGE_SYNONYM_RE = re.compile(
+            r"\b(?:"
+            r"g[öo]rsel(?:ler(?:i|in)?|eri|er|i|e|ini|de|den)?|"      # görsel / gorsel / görselleri...
+            r"resim(?:ler(?:i|in)?|i|e|ini|de|den)?|"                 # resim / resimleri...
+            r"foto(?:ğ|g)raf(?:lar(?:ı|ın)?|ı|i|e|ini|de|den)?|"      # fotoğraf / fotograf / fotoğrafları...
+            r"foto(?:lar(?:ı|ın)?)?|"                                 # foto / fotolar / fotoları
+            r"g[öo]r[üu]nt[üu](?:ler(?:i|in)?|y[üu]|s[üu])?|"        # görüntü / görüntüler...
+            r"image(?:s)?|img|photo(?:s)?|pic(?:ture)?(?:s)?"         # İng. varyasyonlar
+            r")\b",
+            re.IGNORECASE
+        )
 
-        self.logger = logger if logger else self._setup_logger()
+
+        #self.logger = logger if logger else self._setup_logger()
 
         create_tables()
 
@@ -3114,20 +3272,10 @@ class ChatbotAPI:
         self.RAG_SUMMARY_EVERY_ANSWER = os.getenv("RAG_SUMMARY_EVERY_ANSWER", "1") == "1"
         self.logger.info(f"[KB] USE_OPENAI_FILE_SEARCH = {self.USE_OPENAI_FILE_SEARCH}")
 
-        # __init__ içinde, .env okunduktan SONRA konumlandır
-        self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
-        self.USE_MODEL_SPLIT = os.getenv("USE_MODEL_SPLIT", "0") == "1"
-
         if self.USE_OPENAI_FILE_SEARCH:
-            # 1) Her zaman tek mağaza (SkodaKB) → VECTOR_STORE_ID garanti
+            self.logger.info("[KB] Initializing vector store upload...")
             self._ensure_vector_store_and_upload()
             self._enable_file_search_on_assistants()
-
-            # 2) Ek olarak model-bazlı mağazalar gerekiyorsa
-            if self.USE_MODEL_SPLIT:
-                self._ensure_vector_stores_by_model_and_upload()
-                self._enable_file_search_on_assistants_split()
- 
 
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         # Debug: Hangi vector_stores API yüzeyi mevcut?
@@ -3156,22 +3304,7 @@ class ChatbotAPI:
         )
         # __init__ sonunda
         self._load_non_skoda_lists()
-        # __init__ sonunda:
-        self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
-        self.USE_MODEL_SPLIT = os.getenv("USE_MODEL_SPLIT", "0") == "1"
 
-        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
-            self.logger.info("[KB-SPLIT] Model-bazlı Vector Store yükleme...")
-            self._ensure_vector_stores_by_model_and_upload()
-        else:
-            # Eski tek-dosya yolu (gerekirse koruyun)
-            # self._ensure_vector_store_and_upload()
-            pass
-        # __init__ sonunda, mevcut bayrakların yanına ekleyin:
-        self.ALWAYS_USE_ASSISTANT_VS = os.getenv("ALWAYS_USE_ASSISTANT_VS", "1") == "1"
-        self.RAG_PASSTHROUGH        = os.getenv("RAG_PASSTHROUGH", "1") == "1"
-        self.BRIDGE_DISABLED        = os.getenv("BRIDGE_DISABLED", "1") == "1"
-       
 
     def _setup_logger(self):
         logger = logging.getLogger("ChatbotAPI")
@@ -3295,9 +3428,28 @@ class ChatbotAPI:
                     "status": "ok",
                     "conversation_id": message_id
                 }), 200
+                
 
             except Exception as e:
                 return jsonify({"status": "error", "message": str(e)}), 500
+        @self.app.route("/kb/reindex", methods=["POST"])
+        def kb_reindex():
+            if not self.HYBRID_RAG:
+                return jsonify({"ok": False, "msg":"HYBRID_RAG kapalı"}), 400
+            try:
+                stats = self._kb_index_all()
+                return jsonify({"ok": True, "inserted": stats, "total": int(sum(stats.values()))}), 200
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+
+        @self.app.route("/kb/search", methods=["GET"])
+        def kb_search():
+            q = request.args.get("q","")
+            if not q:
+                return jsonify({"ok": False, "msg":"q param"}), 400
+            top = self._kb_vector_search(q, k=10)
+            return jsonify({"ok": True, "items":[{"score":round(s,3),"model":d["model"],"table":d["table"],"text":d["text"][:300]} for s,d in top]})
+
 
     def _remove_from_fuzzy_cache(self, conversation_id):
         conv_id_int = int(conversation_id)
@@ -3366,18 +3518,18 @@ class ChatbotAPI:
 
 
     def _correct_image_keywords(self, user_message: str) -> str:
-        possible_image_words = [
-            "görsel", "görseller", "resim", "resimler", "fotoğraf", "fotoğraflar", "görünüyor", "görünüyo", "image", "img"
-        ]
-        splitted = user_message.split()
-        corrected_tokens = []
-        for token in splitted:
-            best = self.utils.fuzzy_find(token, possible_image_words, threshold=0.9)
-            if best:
-                corrected_tokens.append(best)
-            else:
-                corrected_tokens.append(token)
-        return " ".join(corrected_tokens)
+        """
+        Diakritik ve yazım varyasyonlarını 'görsel' kanonik sözcüğüne çevirir.
+        Örn: 'kamiq gorsel', 'karoq foto', 'scala resimleri' -> '... görsel ...'
+        """
+        if not user_message:
+            return user_message
+
+        def repl(m: re.Match) -> str:
+            # Yazının biçemine benzer biçim (BÜYÜK/başlık/küçük) korunsun
+            return self._apply_case_like(m.group(0), "görsel")
+
+        return self.IMAGE_SYNONYM_RE.sub(repl, user_message)
 
     def _correct_trim_typos(self, user_message: str) -> str:
         known_words = [
@@ -3628,7 +3780,10 @@ class ChatbotAPI:
         local_threshold = 1.0 if word_count < 5 else 0.9
 
         lower_corrected = corrected_message.lower().strip()
-        is_image_req = self.utils.is_image_request(corrected_message)
+        is_image_req = (
+            self.utils.is_image_request(corrected_message)
+            or self._is_image_intent_local(corrected_message)
+        )
         skip_cache_for_price_all = ("fiyat" in lower_corrected and not user_models_in_msg)
         user_trims_in_msg = extract_trims(lower_corrected)
         skip_cache_for_price_all = (price_intent and not user_models_in_msg)
@@ -4092,47 +4247,34 @@ class ChatbotAPI:
         content: str,
         timeout: float = 60.0,
         instructions_override: str | None = None,
-        ephemeral: bool = False,
-        tool_resources_override: dict | None = None,   # NEW
+        ephemeral: bool = False
     ) -> str:
-        # --- Tool resources çözümü (multi‑model öncelikli) ---
-        tr = tool_resources_override
-        if self.USE_OPENAI_FILE_SEARCH and self.USE_MODEL_SPLIT:
-            models_in_msg = list(self._extract_models(content))
-            is_multi = len(models_in_msg) >= 2
-            if tr is None:
-                if is_multi:
-                    # 2+ model: assistant üstündeki tek VS’i bypass edip ilgili TÜM VS'leri bağla
-                    tr = self._file_search_tool_resources_for(content, models=models_in_msg)
-                elif not self.ALWAYS_USE_ASSISTANT_VS:
-                    # Tek modelde davranışınız aynı kalsın: ALWAYS_USE_ASSISTANT_VS=1 ise asistanın VS'i devreye girer
-                    tr = self._file_search_tool_resources_for(content, models=models_in_msg or None)
+        # File Search vector store’u varsa tool_resources hazırla
+        tr = None
+        if getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "VECTOR_STORE_ID", ""):
+            tr = {"file_search": {"vector_store_ids": [self.VECTOR_STORE_ID]}}
 
-        # --- Güvenlik: API thread başına sadece 1 VS kabul ediyor ---
-        if tr and "file_search" in tr:
-            try:
-                vs_ids = tr["file_search"].get("vector_store_ids") or []
-                if isinstance(vs_ids, list) and len(vs_ids) > 1:
-                    self.logger.warning(
-                        f"[ASK] Multiple VS detected ({vs_ids}); clamping to first due to API limit."
-                    )
-                    tr = {"file_search": {"vector_store_ids": [vs_ids[0]]}}
-                self.logger.info(f"[ASK] FileSearch VS={tr['file_search'].get('vector_store_ids')}")
-            except Exception:
-                pass
-        use_ephemeral = ephemeral or bool(tr) or self.USE_MODEL_SPLIT
-        if use_ephemeral:
-            t = self.client.beta.threads.create(tool_resources=tr) if tr else self.client.beta.threads.create()
+        # Thread seçimi
+        if ephemeral:
+            # Ephemeral → her çağrıda temiz thread
+            if tr:
+                t = self.client.beta.threads.create(tool_resources=tr)
+            else:
+                t = self.client.beta.threads.create()
             thread_id = t.id
         else:
             thread_id = self._ensure_thread(user_id, assistant_id, tool_resources=tr)
 
+        # Mesajı ekle
         self.client.beta.threads.messages.create(thread_id=thread_id, role="user", content=content)
+
+        # Run oluştur
         run_kwargs = {"thread_id": thread_id, "assistant_id": assistant_id}
         if instructions_override:
             run_kwargs["instructions"] = instructions_override
 
         run = self.client.beta.threads.runs.create(**run_kwargs)
+
         # Bekleme
         start = time.time()
         while time.time() - start < timeout:
@@ -4150,65 +4292,52 @@ class ChatbotAPI:
                 return m.content[0].text.value
         return "Yanıt bulunamadı."
     def _yield_rag_summary_block(self, user_id: str, user_message: str):
-        if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
-            return
-        if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
-            return
-        try:
-            if (self.user_states.get(user_id, {}) or {}).get("rag_head_delivered"):
+            """
+            Her yanıta eklenen kısa 'Vector Store özeti' bloğunu üretir ve yield eder.
+            Koşullar: RAG_SUMMARY_EVERY_ANSWER=1, USE_OPENAI_FILE_SEARCH=1, vector store & asistan mevcut.
+            """
+            if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
                 return
-
-            assistant_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
-            if not assistant_id:
-                return
-
-            models = list(self._extract_models(user_message))
-            tr = None  # 🔧 önce tanımla
-
-            if len(models) >= 2 and self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
-                rag_text = self._ask_across_models_rag(
-                    user_id=user_id,
-                    assistant_id=assistant_id,
-                    content=user_message,
-                    models=models,
-                    mode="bullets",
-                    timeout=45.0
-                )
-            else:
-                if self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
-                    tr = None
-                elif getattr(self, "VECTOR_STORE_ID", ""):
-                    tr = {"file_search": {"vector_store_ids": [self.VECTOR_STORE_ID]}}
-                else:
+            try:
+                if (self.user_states.get(user_id, {}) or {}).get("rag_head_delivered"):
                     return
 
+                if not getattr(self, "RAG_SUMMARY_EVERY_ANSWER", False):
+                    return
+                if not getattr(self, "USE_OPENAI_FILE_SEARCH", False):
+                    return
+                if not getattr(self, "VECTOR_STORE_ID", ""):
+                    return
+                assistant_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
+                if not assistant_id:
+                    return
+
+                # Ephemeral thread -> her çağrıda file_search tool_resources garanti
                 rag_text = self._ask_assistant(
                     user_id=user_id,
                     assistant_id=assistant_id,
                     content=user_message,
                     timeout=45.0,
                     instructions_override=(
-                        "Yalnızca dosya araması sonuçlarına dayanarak 3–6 madde yaz; '- ' ile başlasın. "
-                        "Kaynak/citation yazma; tablo/HTML üretme."
+                        "Yalnızca bağlı dosya araması (file_search) sonuçlarına dayanarak, "
+                        "kullanıcının sorusunu 3–6 maddelik kısa bir özet halinde açıkla. "
+                        "Madde biçimi: '- ' ile başlayan sade Markdown listesi. "
+                        "Varsayım yapma; emin değilsen kısaca belirt. "
+                        "Tablo, görsel veya kod bloğu üretme; sadece kısa özet yaz. "
+                        "Türkçe yaz. "
+                        "Kesinlikle kaynak/citation/dosya adı/URL veya belge kimliği yazma."
                     ),
-                    ephemeral=True,
-                    tool_resources_override=tr
+                    ephemeral=True
                 ) or ""
 
-            out_md = self.markdown_processor.transform_text_to_markdown(rag_text or "")
-            if '|' in out_md and '\n' in out_md:
-                out_md = fix_markdown_table(out_md)
-            block = "\n\n\n\n" + out_md.strip() + "\n"
-
-            # tr sadece set edildiyse logla
-            if tr and isinstance(tr, dict) and "file_search" in tr:
-                self.logger.info(f"[RAG-SUMMARY] tool_resources VS={tr['file_search'].get('vector_store_ids')}")
-            yield block.encode("utf-8")
-
-        except Exception as e:
-            self.logger.error(f"[RAG-SUMMARY] failed: {e}")
-            return
-
+                out_md = self.markdown_processor.transform_text_to_markdown(rag_text)
+                if '|' in out_md and '\n' in out_md:
+                    out_md = fix_markdown_table(out_md)
+                block = "\n\n\n\n" + out_md.strip() + "\n"
+                yield block.encode("utf-8")
+            except Exception as e:
+                self.logger.error(f"[RAG-SUMMARY] failed: {e}")
+                return
     ##############################################################################
 # ChatbotAPI._generate_response
 ##############################################################################
@@ -4319,110 +4448,17 @@ class ChatbotAPI:
             return
         # _generate_response içinde, price/test-drive kontrollerinden SONRA
         # ve teknik/karşılaştırma bloklarına GİRMEDEN hemen önce:
-        # YENİ: RAG öncelikliyse teknik-QA devre dışı
-        if not self.PREFER_RAG_TEXT:
-            qa_bytes = self._answer_teknik_as_qa(user_message, user_id)
-            if qa_bytes:
-                yield self._sanitize_bytes(qa_bytes)  # tabloya zorlamadan ilet
-                return
+        qa_bytes = self._answer_teknik_as_qa(user_message, user_id)
+        if qa_bytes:
+            qa_text = qa_bytes.decode("utf-8", errors="ignore").strip()
+            gated = self._gate_to_table_or_image(qa_text)
+            if gated:
+                yield gated
+            else:
+                # Tablo değilse düz metin olarak ilet
+                yield self._deliver_locally(qa_text, original_user_message=user_message, user_id=user_id)
+            return
 
-        lower_msg = normalize_tr_text(user_message).lower()
-
-        # 1) Teknik niyet → GENİŞ tetikleyici (sizde zaten var)
-        has_teknik_word = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)
-        # (self.TEKNIK_TRIGGERS içinde "ağırlık", "0-100", "menzil" vs. var)
-
-        # 2) Kıyas niyeti → “fark/hangisi/daha” da dahil
-        compare_triggers = ("karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs.","fark","hangisi","daha ")
-        wants_compare = any(t in lower_msg for t in compare_triggers)
-
-        # ChatbotAPI._generate_response(...) içinde, price/test-drive kontrollerinden sonra
-        # ve teknik tablo/karşılaştırma tablosuna girmeden önce şu bloğu ekleyin:
-
-        # === YENİ: 2+ model + 'fark/hangisi/daha/vs/karşılaştır' niyeti → tek cümle sentez ===
-        models_in_msg2 = list(self._extract_models(user_message))
-        compare_triggers = ("fark", "hangisi", "karşılaştır", "kıyas", "vs", "daha ")
-        if (len(models_in_msg2) >= 2 and any(t in lower_msg for t in compare_triggers)
-            and not (self.COMPARE_USE_GLOBAL_KB and (wants_compare or has_teknik_word))):
-            if not assistant_id:
-                assistant_id = self.user_states[user_id].get("assistant_id")
-
-            # 1) Her model için kısa RAG çıktısı (sözlük olarak)
-            per_model = self._ask_across_models_rag(
-                user_id=user_id,
-                assistant_id=assistant_id,
-                content=user_message,
-                models=models_in_msg2,
-                mode="bullets",               # kısa, sayısal odaklı maddelerle gelsin
-                timeout=45.0,
-                title_sections=False,
-                # “fark”ı bulmayı kolaylaştırmak için sayıları açık yazdırmaya itiyoruz:
-                instructions_override=(
-                    "Sorudaki konuyu netleştiren 2–4 kısa madde yaz; varsa sayıları/metrikleri açıkça ver. "
-                    "Genel tanıtım metni yazma; sadece soruya yarayan gerçekleri dök."
-                ),
-                return_dict=True              # ← tek cümle sentez için şart
-            )
-
-            if per_model:
-                one_liner = self._synthesize_multi_model_one_liner(
-                    user_id=user_id,
-                    assistant_id=assistant_id,
-                    question=user_message,
-                    snippets_by_model=per_model
-                )
-                if one_liner:
-                    yield self._sanitize_bytes(one_liner)
-                    return
-
-        # --- NİYET SİNYALLERİ (tek kaynak) ---
-        lower_msg = normalize_tr_text(user_message).lower()
-        models_in_msg = list(self._extract_models(user_message))
-
-        has_teknik = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)  # 'ağırlık' dahil
-        wants_compare = any(kw in lower_msg for kw in (
-            "karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs.","fark","hangisi","daha "
-        ))
-        # --- 2+ model + (teknik veya kıyas)  =>  ÖNCE TABLO ---
-        if len(models_in_msg) >= 2 and (has_teknik or wants_compare):
-            # Mesajdaki sırayı koru
-            pairs = extract_model_trim_pairs(lower_msg)
-            ordered = []
-            for m, _ in pairs:
-                if m not in ordered:
-                    ordered.append(m)
-            for m in models_in_msg:
-                if m not in ordered:
-                    ordered.append(m)
-
-            valid = [m for m in ordered if m in self.TECH_SPEC_TABLES]
-            if len(valid) >= 2:
-                only = self._detect_spec_filter_keywords(lower_msg)
-
-                # 2.A) SkodaKB (tek mağaza) varsa önce onu dene
-                if self.USE_OPENAI_FILE_SEARCH and self.COMPARE_USE_GLOBAL_KB and getattr(self, "VECTOR_STORE_ID", ""):
-                    md_rag = self._compare_with_skodakb(
-                        user_id=user_id,
-                        assistant_id=self.user_states[user_id].get("assistant_id"),
-                        user_message=user_message,
-                        models=valid,
-                        only_keywords=(only or None)
-                    )
-                    if md_rag:
-                        title = " vs ".join(m.title() for m in valid)
-                        yield f"<b>{title} — Teknik Özellikler Karşılaştırması (SkodaKB)</b><br>".encode("utf-8")
-                        yield (md_rag + "\n\n").encode("utf-8")
-                        # RAG özetini bastır
-                        self.user_states[user_id]["rag_head_delivered"] = True
-                        return
-
-                # 2.B) Global yoksa: yerel teknik tablolardan kıyas
-                md_local = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
-                title = " vs ".join(m.title() for m in valid)
-                yield f"<b>{title} — Teknik Özellikler Karşılaştırması</b><br>".encode("utf-8")
-                yield (md_local + "\n\n").encode("utf-8")
-                self.user_states[user_id]["rag_head_delivered"] = True
-                return
 
         # --- TEKNİK KARŞILAŞTIRMA / KIYAS ---
         compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
@@ -4449,46 +4485,23 @@ class ChatbotAPI:
                     ordered_models.append(m)
 
         if has_teknik_word and (wants_compare or len(ordered_models) >= 2):
+            # En az iki geçerli model?
             valid = [m for m in ordered_models if m in self.TECH_SPEC_TABLES]
             if len(valid) < 2:
+                # En az iki geçerli teknik tablo yoksa devam et (tek model akışına düşsün)
                 pass
             else:
-                # 1) Önce SkodaKB.md ile RAG tablosu (tek mağaza)
-                if self.COMPARE_USE_GLOBAL_KB and self.USE_OPENAI_FILE_SEARCH and getattr(self, "VECTOR_STORE_ID", ""):
-                    only = self._detect_spec_filter_keywords(lower_msg)
-                    md_rag = self._compare_with_skodakb(
-                        user_id=user_id,
-                        assistant_id=assistant_id,
-                        user_message=user_message,
-                        models=valid,
-                        only_keywords=(only or None)
-                    )
-                    if md_rag:
-                        title = " vs ".join([m.title() for m in valid])
-                        yield f"<b>{title} — Teknik Özellikler Karşılaştırması (SkodaKB)</b><br>".encode("utf-8")
-                        yield (md_rag + "\n\n").encode("utf-8")
-                        # İsteğe bağlı: “karşılaştırmaya ekle” linkleri aynı kalsın
-                        others = [m for m in self.MODEL_VALID_TRIMS.keys() if m not in valid and m in self.TECH_SPEC_TABLES]
-                        if others:
-                            links = "<b>Karşılaştırmaya ekle:</b><br>"
-                            for m in others:
-                                cmd = (" ".join(valid) + f" ve {m} teknik özellikler karşılaştırma").strip()
-                                safe_cmd = cmd.replace("'", "\\'")
-                                links += f"""&bull; <a href="#" onclick="sendMessage('{safe_cmd}');return false;">{m.title()}</a><br>"""
-                            yield links.encode("utf-8")
-                        return
-
-                # 2) RAG çıkmazsa eski yerel tabloya düş (mevcut davranış)
-                only = self._detect_spec_filter_keywords(lower_msg)
-                md_local = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
-                if not md_local:
+                only = self._detect_spec_filter_keywords(lower_msg)  # opsiyonel: 'sadece ...'
+                md = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
+                if not md:
                     yield "Karşılaştırma için uygun teknik tablo bulunamadı.<br>".encode("utf-8")
                     return
 
                 title = " vs ".join([m.title() for m in valid])
                 yield f"<b>{title} — Teknik Özellikler Karşılaştırması</b><br>".encode("utf-8")
-                yield (md_local + "\n\n").encode("utf-8")
+                yield (md + "\n\n").encode("utf-8")
 
+                # Hızlı ekleme linkleri (kullanıcı deneyimi)
                 others = [m for m in self.MODEL_VALID_TRIMS.keys() if m not in valid and m in self.TECH_SPEC_TABLES]
                 if others:
                     links = "<b>Karşılaştırmaya ekle:</b><br>"
@@ -4498,7 +4511,6 @@ class ChatbotAPI:
                         links += f"""&bull; <a href="#" onclick="sendMessage('{safe_cmd}');return false;">{m.title()}</a><br>"""
                     yield links.encode("utf-8")
                 return
-
 
         # 1) Kategori eşleşmesi
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
@@ -4918,54 +4930,35 @@ class ChatbotAPI:
             or any(kw in lower_msg for kw in ["teknik özellik","teknik veriler","teknik tablo","performans"])
             or wants_compare
         )
-        lower_msg = user_message.lower()
-        price_intent = self._is_price_intent(user_message)
-
-        # 🔧 Bunları en üstte tek yerde tanımlayın
-        compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
-        wants_compare = any(ck in lower_msg for ck in compare_keywords)
-
-        # __init__'te zaten tanımlı olan TEKNIK_TRIGGERS'ı kullanın
-        has_teknik_word = any(kw in lower_msg for kw in self.TEKNIK_TRIGGERS)
+        if getattr(self, "RAG_ONLY", False) and generic_info_intent:
+            assistant_id = self.user_states[user_id].get("assistant_id")
+            yield self._answer_via_rag_only(user_id=user_id, assistant_id=assistant_id, user_message=user_message)
+            return
 
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
         # Yeni:
         if self.USE_OPENAI_FILE_SEARCH and assistant_id and generic_info_intent and self.PREFER_RAG_TEXT:
-             
-            models = list(self._extract_models(user_message))
-            if len(models) >= 2 and self.USE_MODEL_SPLIT:
-                # Çok‑model: her model için ayrı VS, sonuçları bölüm başlıklarıyla birleştir
-                rag_out = self._ask_across_models_rag(
-                    user_id=user_id,
-                    assistant_id=assistant_id,
-                    content=user_message,
-                    models=models,
-                    mode="text",
-                    timeout=60.0,
-                    title_sections=True,
-                    instructions_override=(
-                        "Cevabı yalnızca dosya araması kaynaklarına dayanarak yaz. "
-                        "Kaynak/citation yazma; tablo/HTML zorunlu değil."
-                    )
-                )
-            else:
-                rag_out = self._ask_assistant(
-                    user_id=user_id,
-                    assistant_id=assistant_id,
-                    content=user_message,
-                    timeout=60.0,
-                    instructions_override=(
-                        "Cevabı yalnızca dosya araması kaynaklarına dayanarak yaz. "
-                        "Kaynak/citation yazma; tablo/HTML zorunlu değil."
-                    ),
-                    ephemeral=True,
-                    tool_resources_override=None
-                ) or ""
+            rag_out = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=assistant_id,
+                content=user_message,
+                timeout=60.0,
+                instructions_override=(
+                    "Cevabı yalnızca bağlı dosya araması (file_search) kaynaklarına dayanarak hazırla. "
+                    "ÖZET YAZMA. Detaylı ve tutarlı, kesin ifadeler kullan. Kararsız/örtülü dil kullanma. "
+                    "Sadece ilgili model(ler) için yaz; başka modelleri dahil etme."
+                ),
+                ephemeral=False
+            ) or ""
             if rag_out.strip():
-                # Kaynak/köprü izlerini temizle ama tabloya çevirmeyelim:
-                clean = self._strip_source_mentions(rag_out) if getattr(self, "HIDE_SOURCES", False) else rag_out
-                yield self._sanitize_bytes(clean)  # → bytes
+                out_md = self.markdown_processor.transform_text_to_markdown(rag_out)
+                resp_bytes = self._deliver_locally(
+                    body=out_md,
+                    original_user_message=user_message,
+                    user_id=user_id
+                )
+                yield resp_bytes
                 self.user_states[user_id]["rag_head_delivered"] = True
                 return
         # self.PREFER_RAG_TEXT false ise bu blok atlanır (RAG metni yüzeye çıkmaz)
@@ -4973,21 +4966,21 @@ class ChatbotAPI:
 
 
         # 7.9) KÖPRÜ: Tablo/Görsel akışları haricinde — birinci servisten yanıt al,
-        bridge_answer = ""
-        bridge_table_md = bridge_table_html = bridge_table_title = ""
-        bridge_table_flag = False
 
-        if not getattr(self, "BRIDGE_DISABLED", False):
 
-            try:
-                 bridge = self._proxy_first_service_answer(user_message=user_message, user_id=user_id)
-                 bridge_answer      = (bridge.get("answer") or "").strip()
-                 bridge_table_md    = (bridge.get("table_md") or "").strip() if isinstance(bridge, dict) else ""
-                 bridge_table_html  = (bridge.get("table_html") or "").strip() if isinstance(bridge, dict) else ""
-                 bridge_table_title = (bridge.get("table_title") or "").strip() if isinstance(bridge, dict) else ""
-                 bridge_table_flag  = bool(bridge.get("table_intent")) if isinstance(bridge, dict) else False
-            except Exception:
-                pass
+        try:
+            bridge = self._proxy_first_service_answer(user_message=user_message, user_id=user_id)
+            bridge_answer      = (bridge.get("answer") or "").strip()
+            bridge_table_md    = (bridge.get("table_md") or "").strip() if isinstance(bridge, dict) else ""
+            bridge_table_html  = (bridge.get("table_html") or "").strip() if isinstance(bridge, dict) else ""
+            bridge_table_title = (bridge.get("table_title") or "").strip() if isinstance(bridge, dict) else ""
+            bridge_table_flag  = bool(bridge.get("table_intent")) if isinstance(bridge, dict) else False
+        except Exception:
+            bridge_answer = ""
+            bridge_table_md = ""
+            bridge_table_html = ""
+            bridge_table_title = ""
+            bridge_table_flag = False
 
         # --- YENİ: TABLO SİNYALİ VARSA BİRİNCİ KODU BIRAK, SORUYU 'TEST' ASİSTANA BAŞTAN YÖNLENDİR ---
         if bridge_table_flag or bridge_table_md or bridge_table_html or self._looks_like_table_intent(bridge_answer):
@@ -5024,57 +5017,126 @@ class ChatbotAPI:
 
 
 
+        # === Hibrit RAG fallback (file_search yoksa ya da bağlam üretmediyse) ===
+        if self.HYBRID_RAG:
+            # Teknik/opsiyonel/fiyat/görsel olmayan "genel" sorularda kullan
+            generic_info_intent = not (
+                price_intent or "opsiyonel" in lower_msg or is_image_req
+                or any(kw in lower_msg for kw in ["teknik özellik","teknik veriler","teknik tablo","performans"])
+                or wants_compare
+            )
+            if generic_info_intent:
+                ans = self._answer_with_hybrid_rag(user_message)
+                if ans:
+                    # güvenli teslim (tabloysa hizala)
+                    out_md = self.markdown_processor.transform_text_to_markdown(ans)
+                    if '|' in out_md and '\n' in out_md:
+                        out_md = fix_markdown_table(out_md)
+                    yield self._deliver_locally(out_md, original_user_message=user_message, user_id=user_id)
+                    return
 
 
         # (Bridge boş dönerse normal '8) OpenAI API' yerel akışınıza düşsün.)
 
         # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
         # 8) Eğer buraya geldiysek => OpenAI API'ye gidilecek
+        if getattr(self, "RAG_ONLY", False):
+            # RAG_ONLY modunda generik OpenAI yanıtı devre dışı
+            yield self._with_site_link_appended("Bu konuda SQL tabanlı bilgi tabanımda kayıt yok.\n")
+            return
+
         if not assistant_id:
             yield self._with_site_link_appended("Uygun bir asistan bulunamadı.\n")
             return
 
         try:
-            models = list(self._extract_models(user_message))
-            if len(models) >= 2 and self.USE_MODEL_SPLIT and self.USE_OPENAI_FILE_SEARCH:
-                content = self._ask_across_models_rag(
-                    user_id=user_id,
-                    assistant_id=assistant_id,
-                    content=user_message,
-                    models=models,
-                    mode="text",
-                    timeout=60.0,
-                    title_sections=True
-                ) or ""
+            threads_dict = self.user_states[user_id].get("threads", {})
+            thread_id = threads_dict.get(assistant_id)
+
+            # Thread yoksa oluştur
+            if not thread_id:
+                new_thread = self.client.beta.threads.create(
+                    messages=[{"role": "user", "content": user_message}]
+                )
+                thread_id = new_thread.id
+                threads_dict[assistant_id] = thread_id
+                self.user_states[user_id]["threads"] = threads_dict
             else:
-                content = self._ask_assistant(
-                    user_id=user_id,
-                    assistant_id=assistant_id,
-                    content=user_message,
-                    timeout=60.0,
-                    instructions_override=None,
-                    ephemeral=True if self.USE_MODEL_SPLIT else False,
-                    tool_resources_override=None
-            ) or ""
+                # Mevcut threade yeni kullanıcı mesajını ekle
+                self.client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=user_message
+                )
 
-            content_md = self.markdown_processor.transform_text_to_markdown(content)
-            if '|' in content_md and '\n' in content_md:
-                content_md = fix_markdown_table(content_md)
-
-            final_bytes = self._apply_file_validation_and_route(
-                user_id=user_id,
-                user_message=user_message,
-                ai_answer_text=content_md
+            # Asistan ile koş
+            run = self.client.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=assistant_id
             )
-            yield final_bytes
-            return
+
+            start_time = time.time()
+            timeout = 60
+            assistant_response = ""
+
+            # run tamamlanana veya fail olana kadar bekle
+            while time.time() - start_time < timeout:
+                run = self.client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
+                if run.status == "completed":
+                    try:
+                        # SDK sürümünüz destekliyorsa run_id ile daraltın
+                        msg_response = self.client.beta.threads.messages.list(
+                            thread_id=thread_id,
+                            run_id=run.id,
+                            order="desc",
+                            limit=5
+                        )
+                    except TypeError:
+                        # Eski SDK: run_id parametresi yoksa sadece en yeni mesajlara bak
+                        msg_response = self.client.beta.threads.messages.list(
+                            thread_id=thread_id,
+                            order="desc",
+                            limit=5
+                        )
+
+                    latest_assistant = next((m for m in msg_response.data if m.role == "assistant"), None)
+                    if not latest_assistant:
+                        yield self._with_site_link_appended("Asistan yanıtı bulunamadı.\n")
+                        break
+
+                    parts = []
+                    for part in latest_assistant.content:
+                        if getattr(part, "type", None) == "text":
+                            parts.append(part.text.value)
+                    content = "\n".join(parts).strip()
+
+                    content_md = self.markdown_processor.transform_text_to_markdown(content)
+                    if '|' in content_md and '\n' in content_md:
+                        content_md = fix_markdown_table(content_md)
+
+                    assistant_response = content
+                    # [YENİ] Teslim etmeden önce dosya ile kıyas + karar
+                    final_bytes = self._apply_file_validation_and_route(
+                        user_id=user_id,
+                        user_message=user_message,
+                        ai_answer_text=content_md
+                    )
+                    yield final_bytes
+                    break
+
+                elif run.status == "failed":
+                    yield self._with_site_link_appended("Yanıt oluşturulamadı.\n")
+                    return
+                #time.sleep(0.5)
+
+            if not assistant_response:
+                yield self._with_site_link_appended("Yanıt alma zaman aşımına uğradı.\n")
+                return
 
         except Exception as e:
             error_msg = f"Hata: {str(e)}\n"
             self.logger.error(f"Yanıt oluşturma hatası: {str(e)}")
             yield self._with_site_link_appended(error_msg.encode("utf-8"))
-            return
-
 
     def _yield_invalid_trim_message(self, model, invalid_trim):
         msg = f"{model.title()} {invalid_trim.title()} modelimiz bulunmamaktadır.<br>"
@@ -5387,5 +5449,4 @@ class ChatbotAPI:
     def shutdown(self):
         self.stop_worker = True
         self.worker_thread.join(5.0)
-        self.logger.info("ChatbotAPI shutdown complete.") 
- 
+        self.logger.info("ChatbotAPI shutdown complete.")  
