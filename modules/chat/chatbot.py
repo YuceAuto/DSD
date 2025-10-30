@@ -119,6 +119,639 @@ ASSISTANT_NAMES = {
 }
 import re
 from modules.data.text_norm import normalize_tr_text
+# === Özellik eşanlam kümesi (örnek) ===
+FEATURE_SYNONYMS = {
+    # -- HAVA YASTIKLARI / PASİF GÜVENLİK --
+    "Perde/yan hava yastıkları": [
+        r"yan\s*perde\s*hava\s*yast[ıi]k(?:lar[ıi])?",
+        r"perde\s*hava\s*yast[ıi]k(?:lar[ıi])?",
+        r"yan\s*hava\s*yast[ıi]k(?:lar[ıi])?"
+    ],
+    "Ön hava yastıkları": [
+        r"[öo]n\s*hava\s*yast[ıi]k(?:lar[ıi])?",
+        r"front\s*air\s*bag"
+    ],
+    "Sürücü diz hava yastığı": [
+        r"s[üu]r[üu]c[üu]\s*diz\s*hava\s*yast[ıi]g[ıi]",
+        r"driver'?s?\s*knee\s*air\s*bag"
+    ],
+    "Orta/merkez hava yastığı": [
+        r"(?:orta|merkez)\s*hava\s*yast[ıi]g[ıi]",
+        r"central\s*air\s*bag|center\s*air\s*bag"
+    ],
+    "ISOFIX çocuk koltuğu bağlantıları": [
+        r"\bisofix\b",
+        r"i-?sofix",
+        r"child\s*seat\s*anchor"
+    ],
+    "Aktif gergili emniyet kemerleri": [
+        r"aktif\s*gerg[ıi]li\s*emniyet\s*kemer",
+        r"pre-?tensioner|pretensioner"
+    ],
+
+    # -- SÜRÜŞ DESTEK / ADAS --
+    "Şerit takip asistanı (Lane Assist)": [
+        r"şerit\s*takip(?:\s*asistan[ıi])?",
+        r"lane\s*assist"
+    ],
+    "Şerit ortalama (Lane Centering)": [
+        r"şerit\s*ortalama",
+        r"lane\s*centr(?:e|ing)"
+    ],
+    "Şerit değiştirme asistanı (Side Assist)": [
+        r"şerit\s*de[ğg][ıi]ştirme\s*asistan[ıi]",
+        r"side\s*assist"
+    ],
+    "Kör nokta uyarı sistemi (Blind Spot)": [
+        r"k[öo]r\s*nokta\s*(?:uyar[ıi])?",
+        r"blind\s*spot\s*(?:monitor|detect|warning)"
+    ],
+    "Arka çapraz trafik uyarısı (RCTA)": [
+        r"arka\s*[çc]apraz\s*trafik",
+        r"rear\s*cross\s*traffic",
+        r"\brcta\b"
+    ],
+    "Trafik işareti algılama (TSR)": [
+        r"trafik\s*i[şs]areti\s*(?:tan[ıi]ma|alg[ıi]lama)",
+        r"traffic\s*sign\s*(?:recognition|assist)",
+        r"\btsr\b"
+    ],
+    "Sürücü yorgunluk algılama": [
+        r"yorgunluk\s*(?:alg[ıi]lama|tespit)",
+        r"driver\s*(?:drowsiness|attention)\s*(?:alert|assist)"
+    ],
+    "Ön bölge asistanı / AEB (Front Assist)": [
+        r"front\s*assist",
+        r"[öo]n\s*b[öo]lge\s*asistan[ıi]",
+        r"(?:ac[ıi]l|otomatik)\s*fren",
+        r"\baeb\b|automatic\s*emergency\s*brak"
+    ],
+    "Yaya/bisikletli algılama": [
+        r"yaya\s*alg[ıi]lama|bisikletli\s*alg[ıi]lama",
+        r"pedestrian|cyclist\s*detection"
+    ],
+    "Hız sabitleyici (Cruise Control)": [
+        r"h[ıi]z\s*sabitleyici",
+        r"cruise\s*control"
+    ],
+    "Adaptif hız sabitleyici (ACC)": [
+        r"adaptif\s*h[ıi]z\s*sabitleyici",
+        r"\bacc\b",
+        r"adaptive\s*cruise"
+    ],
+    "Stop & Go": [
+        r"stop\s*&?\s*go",
+        r"trafik\s*asistan[ıi]\s*stop\s*go"
+    ],
+    "Hız sınırlayıcı (Speed Limiter)": [
+        r"h[ıi]z\s*s[ıi]n[ıi]rlay[ıi]c[ıi]",
+        r"speed\s*limiter"
+    ],
+    "Akıllı hız asistanı (ISA)": [
+        r"ak[ıi]ll[ıi]\s*h[ıi]z\s*asistan[ıi]",
+        r"\bisa\b",
+        r"intelligent\s*speed"
+    ],
+    "Yokuş kalkış desteği (HHC/HSA)": [
+        r"yoku[şs]\s*kalk[ıi][şs]\s*destek",
+        r"\bhhc\b|\bhsa\b",
+        r"hill\s*hold"
+    ],
+    "Yokuş iniş desteği (HDC)": [
+        r"yoku[şs]\s*[ıi]ni[şs]\s*destek",
+        r"\bhdc\b",
+        r"hill\s*descent"
+    ],
+    "Park asistanı (otomatik park)": [
+        r"park\s*asistan[ıi]",
+        r"park\s*assist",
+        r"otomatik\s*park"
+    ],
+    "Ön park sensörleri": [
+        r"[öo]n\s*park\s*sens[öo]r(?:ler[ıi])?",
+        r"front\s*parking\s*sensor"
+    ],
+    "Arka park sensörleri": [
+        r"arka\s*park\s*sens[öo]r(?:ler[ıi])?",
+        r"rear\s*parking\s*sensor"
+    ],
+    "Park sensörleri (ön+arka)": [
+        r"(?:[öo]n\s*ve\s*arka|[öo]n-?\/?arka)\s*park\s*sens[öo]r",
+        r"park\s*sens[öo]r(?:ler[ıi])?\s*(?:[öo]n\s*ve\s*arka|[öo]n-?\/?arka)"
+    ],
+    "Geri görüş kamerası": [
+        r"geri\s*g[öo]r[üu][şs]\s*kamera",
+        r"rear\s*view\s*camera|revers(?:e|ing)\s*camera"
+    ],
+    "360° çevre görüş kamerası": [
+        r"(?:360|360°)\s*kamera",
+        r"(?:ç|c)evre\s*g[öo]r[üu][şs]",
+        r"(?:top|area)\s*view\s*camera"
+    ],
+
+    # -- AYDINLATMA / FARLAR --
+    "FULL LED ön farlar": [
+        r"full\s*led\s*([öo]n|far)",
+        r"top\s*led\s*[öo]n\s*far"
+    ],
+    "Matrix LED farlar (DLA)": [
+        r"matrix\s*led",
+        r"\bdla\b",
+        r"dynam[ıi]k\s*light\s*assist"
+    ],
+    "Viraj aydınlatma (Cornering)": [
+        r"viraj\s*ayd[ıi]nlatma",
+        r"cornering\s*light"
+    ],
+    "Uzun far asistanı (HBA)": [
+        r"uzun\s*far\s*asistan[ıi]",
+        r"\bhba\b",
+        r"high\s*beam\s*assist"
+    ],
+    "Adaptif far sistemi (AFS)": [
+        r"adaptif\s*far",
+        r"\bafs\b"
+    ],
+    "LED gündüz sürüş farları (DRL)": [
+        r"g[üu]nd[üu]z\s*s[üu]r[üu][şs]\s*far",
+        r"\bdrl\b",
+        r"daytime\s*running"
+    ],
+    "Sis farları": [
+        r"sis\s*far",
+        r"fog\s*(?:lamp|light)"
+    ],
+    "Far yıkama": [
+        r"far\s*y[ıi]kama",
+        r"headlam?p\s*washer"
+    ],
+    "Far yükseklik ayarı": [
+        r"far\s*y[üu]kseklik\s*ayar",
+        r"headlight\s*level(?:ing)?"
+    ],
+    "Top LED arka aydınlatma": [
+        r"top\s*led\s*arka\s*ayd[ıi]nlatma",
+        r"arka\s*led\s*([gğ]rup|far|stop)"
+    ],
+
+    # -- DIŞ DONANIM / CAMLAR / AYNA --
+    "Elektrikli katlanır yan aynalar": [
+        r"elektrik(?:li)?\s*katlan[ıi]r\s*(?:yan\s*)?ayna",
+        r"power\s*fold(?:ing)?\s*mirror"
+    ],
+    "Isıtmalı yan aynalar": [
+        r"[ıi]s[ıi]tmal[ıi]\s*(?:yan\s*)?ayna",
+        r"heated\s*mirror"
+    ],
+    "Otomatik kararan iç dikiz aynası": [
+        r"otomatik\s*kararan\s*(?:[ıi]ç\s*)?dikiz\s*ayna",
+        r"electrochrom(?:ic|e)\s*(?:rear\s*view|mirror)"
+    ],
+    "Yağmur sensörü": [
+        r"ya[gğ]mur\s*sens[öo]r[üu]",
+        r"rain\s*sensor"
+    ],
+    "Işık/far sensörü": [
+        r"(?:far|[ıi][şs][ıi]k)\s*sens[öo]r[üu]",
+        r"light\s*sensor"
+    ],
+    "Karartılmış arka camlar (Privacy Glass)": [
+        r"karart[ıi]lm[ıi][şs]\s*arka\s*cam",
+        r"privacy\s*glass|tinted\s*rear\s*window"
+    ],
+    "Isıtmalı ön cam": [
+        r"[ıi]s[ıi]tmal[ıi]\s*[öo]n\s*cam",
+        r"heated\s*windshield|heated\s*windscreen"
+    ],
+    "Isıtmalı arka cam": [
+        r"[ıi]s[ıi]tmal[ıi]\s*arka\s*cam",
+        r"heated\s*rear\s*window"
+    ],
+    "Panoramik cam tavan": [
+        r"panoramik\s*cam\s*tavan",
+        r"panoramic\s*(?:glass\s*)?roof"
+    ],
+    "Açılır cam tavan (Sunroof)": [
+        r"a[cç][ıi]l[ıi]r\s*cam\s*tavan",
+        r"sun\s*roof|sunroof"
+    ],
+    "Tavan rayları (Roof Rails)": [
+        r"tavan\s*ray",
+        r"roof\s*rail"
+    ],
+
+    # -- İÇ MEKÂN / KONFOR --
+    "Ön koltuk ısıtma": [
+        r"[öo]n\s*koltuk\s*[ıi]s[ıi]tma",
+        r"heated\s*front\s*seat"
+    ],
+    "Arka koltuk ısıtma": [
+        r"arka\s*koltuk\s*[ıi]s[ıi]tma",
+        r"heated\s*rear\s*seat"
+    ],
+    "Direksiyon ısıtma": [
+        r"direksiyon\s*[ıi]s[ıi]tma",
+        r"heated\s*steering"
+    ],
+    "Elektrikli sürücü/ön koltuk": [
+        r"elektrik(?:li)?\s*(?:s[üu]r[üu]c[üu]|[öo]n)\s*koltuk",
+        r"power\s*(?:driver|front)\s*seat"
+    ],
+    "Hafızalı sürücü koltuğu": [
+        r"haf[ıi]zal[ıi]\s*s[üu]r[üu]c[üu]\s*koltuk",
+        r"memory\s*driver\s*seat"
+    ],
+    "Masaj fonksiyonlu koltuk": [
+        r"masaj\s*fonksiyonu?\s*koltuk",
+        r"seat\s*massage"
+    ],
+    "Ön kol dayama": [
+        r"[öo]n\s*kol\s*dayama",
+        r"front\s*armrest|center\s*armrest"
+    ],
+    "Arka kol dayama": [
+        r"arka\s*kol\s*dayama",
+        r"rear\s*armrest"
+    ],
+    "Arka havalandırma ızgaraları": [
+        r"arka\s*hava(?:land[ıi]rma)?\s*[ıi]zgara",
+        r"rear\s*air\s*vent"
+    ],
+    "Çift bölgeli otomatik klima": [
+        r"[çc][ıi]ft\s*b[öo]lgeli\s*klima",
+        r"dual\s*zone\s*(?:auto(?:matic)?\s*)?climate"
+    ],
+    "Üç bölgeli klima": [
+        r"[üu][çc]\s*b[öo]lgeli\s*klima|3\s*zone",
+        r"tri-?zone\s*climate"
+    ],
+    "Hava kalitesi sensörü": [
+        r"hava\s*kalites[ıi]\s*sens[öo]r",
+        r"air\s*quality\s*sensor"
+    ],
+    "Toz/Polen filtresi": [
+        r"(?:toz|polen)\s*f[ıi]ltres[ıi]",
+        r"pollen\s*filter|pm\s*2\.?5"
+    ],
+    "Ambiyans aydınlatma": [
+        r"ambi?yans\s*ayd[ıi]nlatma",
+        r"ambient\s*light"
+    ],
+    "LED iç aydınlatma": [
+        r"led\s*[ıi][çc]\s*ayd[ıi]nlatma",
+        r"interior\s*led\s*light"
+    ],
+    "Ön elektrikli camlar": [
+        r"[öo]n\s*elektrik(?:li)?\s*cam",
+        r"front\s*power\s*window"
+    ],
+    "Arka elektrikli camlar": [
+        r"arka\s*elektrik(?:li)?\s*cam",
+        r"rear\s*power\s*window"
+    ],
+    "Tek dokunuş cam (One-touch)": [
+        r"tek\s*dokunu[şs]\s*cam",
+        r"one-?touch\s*window"
+    ],
+    "Cam sıkışma önleyici (Anti-pinch)": [
+        r"cam\s*s[ıi]k[ıi][şs]ma\s*[öo]nleyici",
+        r"anti\s*pinch"
+    ],
+
+    # -- MULTİMEDYA / BAĞLANTILAR / GÖSTERGE --
+    "Dijital gösterge paneli (Virtual Cockpit)": [
+        r"dijital\s*g[öo]sterge",
+        r"virtual\s*cockpit|sanal\s*kokpit"
+    ],
+    "Head-up display (HUD)": [
+        r"head\s*[-\s]?up\s*display",
+        r"\bhud\b"
+    ],
+    "Büyük dokunmatik ekran": [
+        r"dokunmatik\s*ekran",
+        r"touch\s*screen|touchscreen"
+    ],
+    "Navigasyon sistemi": [
+        r"navigasyon\s*sistem[ıi]",
+        r"navigation\s*system|satnav"
+    ],
+    "Apple CarPlay": [
+        r"apple\s*car\s*play|carplay",
+        r"\bcarplay\b"
+    ],
+    "Android Auto": [
+        r"android\s*auto"
+    ],
+    "Kablosuz Apple CarPlay/Android Auto": [
+        r"kablosuz\s*(?:apple\s*carplay|android\s*auto)",
+        r"wireless\s*(?:carplay|android\s*auto)"
+    ],
+    "Bluetooth": [
+        r"\bbluetooth\b"
+    ],
+    "USB-C": [
+        r"\busb-?c\b"
+    ],
+    "USB-A": [
+        r"\busb-?a\b"
+    ],
+    "AUX giriş": [
+        r"\baux\b",
+        r"aux(?:iliary)?\s*input"
+    ],
+    "Kablosuz şarj (Qi)": [
+        r"kablosuz\s*[şs]arj",
+        r"\bqi\b",
+        r"wireless\s*charg"
+    ],
+    "DAB dijital radyo": [
+        r"\bdab\b",
+        r"digital\s*radio"
+    ],
+    "Ses sistemi": [
+        r"ses\s*sistemi",
+        r"sound\s*system|audio\s*system"
+    ],
+    "CANTON ses sistemi": [
+        r"\bcanton\b",
+        r"canton\s*(?:ses|sound)"
+    ],
+    "Bolero multimedya": [
+        r"\bbolero\b"
+    ],
+    "Amundsen navigasyon": [
+        r"\bamundsen\b"
+    ],
+    "Columbus navigasyon": [
+        r"\bcolumbus\b"
+    ],
+    "Sesli komut": [
+        r"sesli\s*komut",
+        r"voice\s*control"
+    ],
+    "eSIM / Online hizmetler (Škoda Connect)": [
+        r"\besim\b|skoda\s*connect",
+        r"onl[ıi]ne\s*h[ıi]zmet|online\s*service"
+    ],
+    "Sürüş bilgisayarı / Yol bilgisayarı (MFA)": [
+        r"(?:s[üu]r[üu][şs]|yol)\s*bilgisayar[ıi]",
+        r"trip\s*computer|multi-?function\s*display|mfa"
+    ],
+
+    # -- GÜVENLİK SİSTEMLERİ / SÜRÜŞ DİNAMİĞİ --
+    "ABS (kilitlenme önleyici fren)": [
+        r"\babs\b",
+        r"kilitlenme\s*[öo]nleyici\s*fren"
+    ],
+    "EBD (Elektronik fren gücü dağıtımı)": [
+        r"\bebd\b",
+        r"electronic\s*brake\s*force"
+    ],
+    "EBA/BAS (Acil fren destek)": [
+        r"\beba\b|\bbas\b",
+        r"ac[ıi]l\s*fren\s*destek|brake\s*assist"
+    ],
+    "ASR/TCS (Çekiş kontrol sistemi)": [
+        r"\basr\b|\btcs\b",
+        r"[çc]eki[şs]\s*kontrol"
+    ],
+    "ESP/ESC (Elektronik denge/stabilite)": [
+        r"\besp\b|\besc\b",
+        r"elektronik\s*(?:denge|stabilite)"
+    ],
+    "XDS/XDS+": [
+        r"\bxds\+?\b",
+        r"electronic\s*diff(?:erential)?\s*lock"
+    ],
+    "Lastik basınç izleme (TPMS)": [
+        r"lastik\s*bas[ıi]n[cç]\s*(?:izleme|kontrol)",
+        r"\btpms\b|tire\s*pressure"
+    ],
+    "Dört çeker (AWD/4x4)": [
+        r"(?:4x4|awd|all\s*wheel\s*drive|d[öo]rt\s*[çc]eker)"
+    ],
+    "Sürüş modları (Drive Mode Select)": [
+        r"s[üu]r[üu][şs]\s*mod(?:lar[ıi])?",
+        r"drive\s*mode\s*select|mode\s*seçimi|drive\s*select"
+    ],
+    "Adaptif süspansiyon (DCC)": [
+        r"adaptif\s*s[üu]spansiyon",
+        r"\bdcc\b|dynamic\s*chassis\s*control"
+    ],
+    "Spor süspansiyon": [
+        r"spor\s*s[üu]spansiyon",
+        r"sport\s*suspension"
+    ],
+    "Diferansiyel kilidi": [
+        r"diferansiyel\s*kilit",
+        r"diff(?:erential)?\s*lock"
+    ],
+
+    # -- AKTARMA / FREN / KUMANDA --
+    "Elektronik park freni (EPB)": [
+        r"elektronik\s*park\s*fren[ıi]",
+        r"\bepb\b|electric\s*parking\s*brake"
+    ],
+    "Auto Hold": [
+        r"auto\s*hold",
+        r"otomatik\s*tutu[şs]"
+    ],
+    "Start/Stop sistemi": [
+        r"start\s*\/?\s*stop\s*sistem[ıi]?",
+        r"motor\s*dur-?kalk|stop-?start"
+    ],
+    "Paddle shifter (Direksiyon kulakçıkları)": [
+        r"(?:vites|direksiyon)\s*kulak[cç][ıi]k",
+        r"paddle\s*shift(?:er)?"
+    ],
+
+    # -- TEKER/JANT/LASTİK --
+    "Alaşım jantlar": [
+        r"ala[sş][ıi]m\s*jant",
+        r"alloy\s*wheel"
+    ],
+    "Çelik jantlar": [
+        r"[çc]elik\s*jant",
+        r"steel\s*wheel"
+    ],
+    "Yedek lastik": [
+        r"yedek\s*lastik",
+        r"spare\s*(?:wheel|tire|tyre)"
+    ],
+    "Lastik tamir kiti": [
+        r"lastik\s*tamir\s*kit",
+        r"tyre|tire\s*repair\s*kit"
+    ],
+    "Runflat lastikler": [
+        r"run-?flat",
+        r"\brft\b"
+    ],
+
+    # -- BAGAJ / PRATİKLİK --
+    "Elektrikli bagaj kapağı": [
+        r"elektrik(?:li)?\s*bagaj\s*kapa[ğg][ıi]",
+        r"power\s*(?:tailgate|liftgate)"
+    ],
+    "Eller serbest bagaj (Virtual Pedal)": [
+        r"ayak(?:la)?\s*a[cç]ma|virtual\s*pedal",
+        r"hands-?free\s*(?:tailgate|access)"
+    ],
+    "Bagaj bölmesi aydınlatma": [
+        r"bagaj\s*ayd[ıi]nlatma",
+        r"trunk\s*light|cargo\s*light"
+    ],
+    "Bagaj filesi / Cargo net": [
+        r"bagaj\s*files[ıi]",
+        r"cargo\s*net|trunk\s*net"
+    ],
+    "Bagaj kancaları": [
+        r"bagaj\s*kanca",
+        r"cargo\s*hook"
+    ],
+    "Çift taraflı/katlı bagaj zemini": [
+        r"bagaj\s*zemin[ıi]\s*(?:[çc][ıi]ft\s*y[öo]nl[üu]|[çc][ıi]ft\s*katl[ıi])",
+        r"(?:double|dual)\s*(?:sided|floor)\s*(?:trunk|cargo)"
+    ],
+    "12V priz (bagaj/ön)": [
+        r"12\s*v\s*pr[ıi]z|12v\s*socket|power\s*outlet"
+    ],
+    "230V priz": [
+        r"230\s*v\s*pr[ıi]z|230v\s*socket|household\s*socket"
+    ],
+
+    # -- İÇ TRİM / DÖŞEME / DİREKSİYON --
+    "Deri direksiyon": [
+        r"deri\s*direksiyon",
+        r"leather\s*steering"
+    ],
+    "Spor (çok fonksiyonlu) direksiyon": [
+        r"(?:spor|[çc]ok\s*fonksiyonlu)\s*direksiyon",
+        r"(?:sport|multi-?function)\s*steering"
+    ],
+    "Deri koltuklar": [
+        r"deri\s*koltuk",
+        r"leather\s*seat"
+    ],
+    "Alcantara/mikrofiber döşeme": [
+        r"alcantara|mikro\s*fiber|mikrofiber",
+        r"microfibre|microfiber"
+    ],
+    "Aydınlatmalı kapı eşikleri": [
+        r"ayd[ıi]nlatmal[ıi]\s*kap[ıi]\s*e[sş][ıi][ğg][iı]",
+        r"illuminated\s*door\s*sill"
+    ],
+    "Deri vites topuzu": [
+        r"deri\s*vites",
+        r"leather\s*gear\s*(?:lever|knob)"
+    ],
+
+    # -- ÇOCUK / KONFOR EKLERİ --
+    "Çocuk kilidi": [
+        r"[çc]ocuk\s*kilidi",
+        r"child\s*lock"
+    ],
+    "Arka kapı güneş perdeleri": [
+        r"arka\s*kap[ıi]\s*perde",
+        r"rear\s*sun\s*blind|rear\s*sunblind"
+    ],
+    "Arka cam güneş perdesi": [
+        r"arka\s*cam\s*perde",
+        r"rear\s*window\s*blind"
+    ],
+    "Soğutmalı torpido": [
+        r"so[gğ]utmal[ıi]\s*torpido",
+        r"cooled\s*glove\s*box|glovebox"
+    ],
+    "Aydınlatmalı torpido": [
+        r"ayd[ıi]nlatmal[ıi]\s*torpido",
+        r"illuminated\s*glove\s*box|glovebox"
+    ],
+
+    # -- ANAHTARSIZ ERİŞİM / ALARM --
+    "Anahtarsız giriş (Keyless Entry)": [
+        r"anahtar(?:s[ıi]z)\s*giri[şs]",
+        r"keyless\s*entry",
+        r"\bkessy\b"
+    ],
+    "Anahtarsız çalıştırma (Push Start)": [
+        r"anahtar(?:s[ıi]z)?\s*[çc]al[ıi][şs]t[ıi]rma",
+        r"(?:start\s*stop|push\s*button)\s*(?:d[üu][ğg]me|start)"
+    ],
+    "Merkezi kilit (uzaktan kumandalı)": [
+        r"merkezi\s*kilit",
+        r"central\s*locking"
+    ],
+    "Hırsızlık alarmı": [
+        r"h[ıi]rs[ıi]zl[ıi]k\s*alarm[ıi]",
+        r"theft\s*alarm|anti-?theft"
+    ],
+    "Immobilizer": [
+        r"immobilizer|immobiliser"
+    ],
+
+    # -- EV ÖZEL / ŞARJ --
+    "AC şarj (On-board charger)": [
+        r"\bac\s*[şs]arj\b",
+        r"on-?board\s*charger|onboard\s*charger"
+    ],
+    "DC hızlı şarj": [
+        r"\bdc\s*h[ıi]zl[ıi]\s*[şs]arj",
+        r"dc\s*fast\s*charg"
+    ],
+    "Isı pompası": [
+        r"[ıi]s[ıi]\s*pompa",
+        r"heat\s*pump"
+    ],
+    "Tip 2 şarj kablosu": [
+        r"tip\s*2\s*kablo",
+        r"type\s*2\s*cable"
+    ],
+
+    # -- SIMPLY CLEVER (Škoda) --
+    "Kapı içi şemsiye": [
+        r"kap[ıi]\s*[iı]ci\s*şemsiye|kap[ıi]\s*[iı]çi\s*şemsiye",
+        r"umbrella\s*in\s*door"
+    ],
+    "Yakıt kapağında buz kazıyıcı": [
+        r"yak[ıi]t\s*kapa[gğ][ıi]nda\s*buz\s*kaz[ıi]y[ıi]c[ıi]",
+        r"ice\s*scraper\s*fuel"
+    ],
+    "Kapı içi çöp kutusu": [
+        r"(?:kap[ıi]\s*[iı]ci|kap[ıi]\s*[iı]çi)\s*[çc][öo]p\s*kutus[uu]",
+        r"door\s*waste\s*bin|trash"
+    ],
+    "Tablet/telefon tutucu": [
+        r"tablet|telefon\s*tutucu",
+        r"(?:tablet|phone)\s*holder"
+    ],
+}
+# Hız için derlenmiş regex
+FEATURE_INDEX = [(canon, [re.compile(p, re.I) for p in pats]) for canon, pats in FEATURE_SYNONYMS.items()]
+
+def canonicalize_feature(name: str) -> tuple[str, str]:
+    """
+    Donanım satır adını kanonik anahtara çevirir.
+    Dönüş: (feature_key, display_name)
+    feature_key: tablo birleştirmede kullanılan anahtar
+    display_name: tabloda gösterilecek okunur metin
+    """
+    raw = (name or "").strip()
+    norm = normalize_tr_text(raw).lower()
+    # 1) Regex eşleşmesi
+    for canon, pats in FEATURE_INDEX:
+        if any(p.search(norm) for p in pats):
+            return canon, canon   # anahtar = gösterim
+    # 2) Fuzzy yedek (varsa çok yakın başlıkla eşle)
+    import difflib
+    best = difflib.get_close_matches(norm, [normalize_tr_text(c).lower() for c in FEATURE_SYNONYMS.keys()], n=1, cutoff=0.88)
+    if best:
+        # best değeri normalize halde; orijinal kanonik stringi bulalım
+        for canon in FEATURE_SYNONYMS.keys():
+            if normalize_tr_text(canon).lower() == best[0]:
+                return canon, canon
+    # 3) Son çare: normalize adı anahtar yap, orijinali göster
+    return norm, raw
+
 def clean_city_name(raw: str) -> str:
     """
     'Fabia İzmir' → 'İzmir'
@@ -322,9 +955,993 @@ try:
     import pyodbc
 except Exception:
     pyodbc = None
+_STD_KEYS = ["standart", "seri", "temel"]
+_OPT_KEYS = ["opsiyonel", "opsiyon", "ops.", "ek paket", "ekstra", "aksesuar"]
+PRICE_TOKENS_ROW = (
+    "fiyat", "liste fiyat", "listefiyat", "anahtar teslim", "anahtar teslimi",
+    "kampanya fiyat", "satış fiyat", "bedel", "ücret", "tl", "₺", "price", "listprice"
+)
+PRICE_TOKENS_COL = (
+    "fiyat", "anahtar", "price", "listprice", "anahtar teslim"
+)
+KB_MISSING_PAT = re.compile(
+    r"\bkb\s*['’]?\s*de\s*yok\b|\bkbde\s*yok\b",
+    re.IGNORECASE
+)
+from modules.sql_rag import SQLRAG
 
 class ChatbotAPI:
+    
     import difflib
+    import re
+    
+    def _strip_code_fences(self, s: str) -> str:
+    
+        if not s:
+            return s
+        # ```...``` (dil etiketli/etiketsiz) kod bloklarını kaldır
+        s = re.sub(r"```.*?```", "", s, flags=re.DOTALL)
+        # 4 boşluk/sekme ile başlayan kod satırlarını kaldır
+        s = re.sub(r"(?m)^(?: {4,}|\t).*$", "", s)
+        # inline `kod` parçalarını kaldır
+        s = re.sub(r"`[^`]+`", "", s)
+        # gereksiz boşluklar
+        s = re.sub(r"\n{3,}", "\n\n", s).strip()
+        return s
+
+    def _glob_sql_md_files(self):
+        import glob, os
+        files = []
+        for base in self.SQL_RAG_DIRS:
+            root = os.path.join(os.getcwd(), base)
+            files.extend(glob.glob(os.path.join(root, "**", "*.sql.md"), recursive=True))
+        # Tekilleştir ve var olanları al
+        files = [f for f in dict.fromkeys(files) if os.path.isfile(f)]
+        self.logger.info(f"[SQL-RAG] Found {len(files)} *.sql.md file(s).")
+        return files
+
+    def _ensure_sql_vector_store_and_upload(self):
+        vs_api = self._vs_api()
+        if not vs_api:
+            self.logger.warning("[SQL-RAG] vector_stores API yok; atlandı.")
+            return
+        try:
+            # 1) Vector store yoksa oluştur
+            if not self.VECTOR_STORE_SQL_ID:
+                vs = vs_api.create(name=self.VECTOR_STORE_SQL_NAME)
+                self.VECTOR_STORE_SQL_ID = vs.id
+
+            # 2) Dosyaları topla
+            files = self._glob_sql_md_files()
+            if not files:
+                self.logger.warning("[SQL-RAG] *.sql.md bulunamadı.")
+                return
+
+            # 3) Yükle
+            batches_api = getattr(vs_api, "file_batches", None)
+            files_api   = getattr(vs_api, "files", None)
+            if batches_api and hasattr(batches_api, "upload_and_poll"):
+                with ExitStack() as stack:
+                    from contextlib import ExitStack
+                    fhs = [stack.enter_context(open(p, "rb")) for p in files]
+                    batches_api.upload_and_poll(
+                        vector_store_id=self.VECTOR_STORE_SQL_ID,
+                        files=fhs
+                    )
+            elif files_api and hasattr(files_api, "create_and_poll"):
+                for p in files:
+                    with open(p, "rb") as fh:
+                        files_api.create_and_poll(
+                            vector_store_id=self.VECTOR_STORE_SQL_ID,
+                            file=fh
+                        )
+            else:
+                # En basit geri dönüş
+                for p in files:
+                    with open(p, "rb") as fh:
+                        self.client.files.create(file=fh, purpose="assistants")
+            self.logger.info(f"[SQL-RAG] Upload done. VS_ID={self.VECTOR_STORE_SQL_ID}")
+        except Exception as e:
+            self.logger.error(f"[SQL-RAG] init failed: {e}")
+    # Trim adları: standart donanım tablosu başlığında sık geçer
+    def _answer_with_sql_rag(self, user_message: str, user_id: str) -> bytes | None:
+        """
+        Her soruda *.sql.md tabanlı RAG bağlamı ile yanıt üretir.
+        Çıktı: Markdown (tablo/kod bloğu korunur).
+        """
+        try:
+            ctx = self.sqlrag.as_context(user_message, limit=int(os.getenv("SQL_RAG_TOPK", "6")))
+        except Exception as e:
+            self.logger.error(f"[SQL-RAG] bağlam üretilemedi: {e}")
+            ctx = ""
+
+        if not ctx:
+            return None
+
+        # Yalnızca BAĞLAM'a dayanarak yanıt verdiriyoruz.
+        instruction = (
+            "Yalnızca AŞAĞIDAKİ BAĞLAM'a dayanarak cevap ver. "
+            "Bağlam dışı bilgi ekleme. "
+            "Soru SQL ile ilgiliyse örnekleri ```sql kod bloğu``` içinde ver. "
+            "Liste/anahtar-değer içerik varsa düzgün bir Markdown TABLO üret. "
+            "Türkçe yaz. Kaynak metni aynen kopyalama, özlü ve net ol.\n\n"
+            f"=== BAĞLAM BAŞLANGIÇ ===\n{ctx}\n=== BAĞLAM BİTİŞ ==="
+        )
+
+        out = self._ask_assistant(
+            user_id=user_id,
+            assistant_id=self.user_states.get(user_id, {}).get("assistant_id") or self._pick_least_busy_assistant(),
+            content=user_message,
+            timeout=60.0,
+            instructions_override=instruction,
+            ephemeral=True
+        ) or ""
+
+        # Var olan biçimleyicilerinizi kullanarak tabloyu düzgünleştirelim
+        out_md = self.markdown_processor.transform_text_to_markdown(out)
+        if '|' in out_md and '\n' in out_md:
+            out_md = fix_markdown_table(out_md)
+        else:
+            out_md = self._coerce_text_to_table_if_possible(out_md)
+        return out_md.encode("utf-8")
+
+    TRIM_HINTS = ("premium","monte carlo","elite","prestige","sportline","rs","l&k crystal","sportline phev")
+
+    # Teknik tablo ipuçları: seçme sırasında cezalandır
+    TECH_HINTS = (
+        "silindir","çap","strok","maks.","maks ", "0-100","co2","wltp","kw","ps","nm",
+        "km/h","mm","kg","dm3","lastik","hacmi","ivme","emisyon","dingil","uzunluk","genişlik","yükseklik"
+    )
+    def _drop_kb_missing_rows_from_markdown(self, md: str) -> str:
+        if not md or '|' not in md:
+            return md
+
+        def split_row(ln: str):
+            return [c.strip() for c in ln.strip().strip('|').split('|')]
+
+        lines = md.splitlines()
+        out, i, n = [], 0, len(lines)
+        while i < n:
+            if '|' in lines[i]:
+                start = i
+                if i+1 < n and re.search(r'^\s*\|\s*[-:]', lines[i+1]):
+                    # header + sep + body
+                    i += 2
+                    while i < n and '|' in lines[i]:
+                        i += 1
+                    block = lines[start:i]
+
+                    # satırları süz
+                    new_block = []
+                    for k, ln in enumerate(block):
+                        if k == 1:  # ayraç satırı
+                            new_block.append(ln); continue
+                        cells = split_row(ln)
+                        row_text = normalize_tr_text(" ".join(cells)).lower()
+                        if KB_MISSING_PAT.search(row_text):
+                            continue  # KB’de yok barındıran tüm satırı düş
+                        new_block.append(ln)
+
+                    # eğer header + sep haricinde hiç gövde kalmadıysa tabloyu komple atla
+                    if len(new_block) >= 2 and any('|' in r for r in new_block[2:]):
+                        out.extend(new_block)
+                else:
+                    out.append(lines[i]); i += 1
+            else:
+                out.append(lines[i]); i += 1
+        return "\n".join(out)
+
+    def _drop_kb_missing_rows_from_html(self, html: str) -> str:
+        if not html or "<table" not in html.lower():
+            return html
+
+        # <tr> bazında tarayıp, metninde "KB’de yok" varyantları geçen satırları sil
+        def kill_row(m):
+            row = m.group(0)
+            plain = normalize_tr_text(re.sub(r"<[^>]+>", " ", row)).lower()
+            return "" if KB_MISSING_PAT.search(plain) else row
+
+        return re.sub(r"<tr[^>]*>.*?</tr>", kill_row, html, flags=re.I | re.S)
+
+    def _drop_kb_missing_rows_from_any(self, text: str) -> str:
+        if not text:
+            return text
+        t = text
+        if "<table" in t.lower():
+            t = self._drop_kb_missing_rows_from_html(t)
+        if '|' in t and re.search(r'\|\s*[-:]', t):
+            t = self._drop_kb_missing_rows_from_markdown(t)
+        # ardışık boş satırları toparla
+        t = re.sub(r"\n{3,}", "\n\n", t).strip()
+        return t
+    def _strip_price_from_markdown_table(self, md: str) -> str:
+        lines = [ln for ln in (md or "").splitlines()]
+        if not lines or not any('|' in ln for ln in lines):
+            return md
+
+        def split_row(ln: str):
+            cells = [c.strip() for c in ln.strip().strip('|').split('|')]
+            return cells
+
+        # Tablo bloklarını işle
+        out, i, n = [], 0, len(lines)
+        while i < n:
+            if '|' in lines[i]:
+                # header + sep yakala
+                start = i
+                if i+1 < n and re.search(r'^\s*\|\s*[-:]', lines[i+1]):
+                    i += 2
+                    # gövde satırlarını topla
+                    while i < n and '|' in lines[i]:
+                        i += 1
+                    block = lines[start:i]
+
+                    # --- kolon temizleme: header'a bak ---
+                    header = split_row(block[0])
+                    sep    = block[1]
+                    col_keep = [True]*len(header)
+                    for idx, h in enumerate(header):
+                        h_low = normalize_tr_text(h).lower()
+                        if any(tok in h_low for tok in PRICE_TOKENS_COL):
+                            col_keep[idx] = False
+                    # Eğer tüm kolonlar elenirse, tabloyu tamamen kaldır
+                    if not any(col_keep):
+                        continue
+
+                    # --- satır temizleme + kolon drop ---
+                    new_block = []
+                    for k, ln in enumerate(block):
+                        if k == 1:  # ayraç satırı
+                            # ayraç kolonlarını da kısalt
+                            kept = [seg for j, seg in enumerate(ln.strip().strip('|').split('|')) if j < len(col_keep) and col_keep[j]]
+                            new_block.append("|" + "|".join(kept) + "|")
+                            continue
+
+                        cells = split_row(ln)
+                        row_text_low = normalize_tr_text(" ".join(cells)).lower()
+                        # satır komple "fiyat" içeriyorsa atla
+                        if any(tok in row_text_low for tok in PRICE_TOKENS_ROW):
+                            continue
+                        kept = [c for j, c in enumerate(cells) if j < len(col_keep) and col_keep[j]]
+                        if kept:
+                            new_block.append("| " + " | ".join(kept) + " |")
+                    if len(new_block) >= 2:
+                        out.extend(new_block)
+                else:
+                    out.append(lines[i]); i += 1
+            else:
+                out.append(lines[i]); i += 1
+        return "\n".join(out)
+
+    def _strip_price_from_html_table(self, html: str) -> str:
+        s = html or ""
+        if "<table" not in s.lower():
+            return html
+        # 1) Fiyat barındıran <tr> satırlarını komple sil
+        pat_row = re.compile(r"<tr[^>]*>.*?</tr>", re.I | re.S)
+        def kill_row(m):
+            row = m.group(0)
+            low = normalize_tr_text(re.sub(r"<[^>]+>", " ", row)).lower()
+            return "" if any(tok in low for tok in PRICE_TOKENS_ROW) else row
+        s = pat_row.sub(kill_row, s)
+
+        # 2) Header’da fiyat geçen kolonları silmek için th/td bazlı hızlı yaklaşım:
+        # (Basit ve güvenli: header hücresinde fiyat geçiyorsa tüm satırlarda o index'i çıkar.)
+        # Header'ı yakala
+        header_cells = re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", s, re.I | re.S)
+        if header_cells:
+            # ilk header satırını normalize et
+            head_texts = [normalize_tr_text(re.sub(r"<[^>]+>", " ", c)).lower() for c in header_cells]
+            drop_idx = {i for i, t in enumerate(head_texts) if any(tok in t for tok in PRICE_TOKENS_COL)}
+            if drop_idx:
+                # her <tr> için aynı indexlerdeki <td>/<th>’ları çıkar
+                def drop_cols_in_tr(tr_html: str) -> str:
+                    cells = re.findall(r"(<t[hd][^>]*>.*?</t[hd]>)", tr_html, re.I | re.S)
+                    if not cells:
+                        return tr_html
+                    kept = [c for j, c in enumerate(cells) if j not in drop_idx]
+                    return re.sub(r"(<t[hd][^>]*>.*?</t[hd]>)", "", tr_html, count=0, flags=re.I | re.S).replace("", "") if not kept else \
+                        re.sub(r"(<t[hd][^>]*>.*?</t[hd]>)", "§CELL§", tr_html, flags=re.I | re.S).replace("§CELL§"*len(cells), "".join(kept))
+                s = re.sub(r"(<tr[^>]*>.*?</tr>)", lambda m: drop_cols_in_tr(m.group(1)), s, flags=re.I | re.S)
+        return s
+
+    def _strip_price_from_any(self, text: str) -> str:
+        if not text:
+            return text
+        t = text
+        low = t.lower()
+        if "<table" in low:
+            t = self._strip_price_from_html_table(t)
+        if ('|' in t and re.search(r'\|\s*[-:]', t)):
+            t = self._strip_price_from_markdown_table(t)
+        # KV türü düz metin satırlarını da temizle (örn. "Fiyat Aralığı: ...")
+        t = re.sub(r"(?im)^\s*[-*•]?\s*(fiyat|liste\s*fiyatı?|anahtar\s*teslimi?|price|bedel|ücret)\s*[:：].*$", "", t)
+        # TL / ₺ ile biten çıplak hücreleri de güvenli tarafta “—” yap
+        t = re.sub(r"(\b\d{1,3}(?:\.\d{3})*(?:,\d+)?\s*(tl|₺)\b)", "—", t, flags=re.I)
+        # Fazla boş satırları toparla
+        t = re.sub(r"\n{3,}", "\n\n", t).strip()
+        return t
+    @staticmethod
+    def _strip_tags(s: str) -> str:
+        import re
+        return re.sub(r"<[^>]*>", " ", s or "")
+
+    def _score_standard_table(self, table_blob: str) -> int:
+        """
+        'Standart donanım' tablosu seçiminde kullanılacak sezgisel skor.
+        + Trim adı/başlığı, + 'Standart' hücreleri → pozitif
+        + Teknik terimler/aşırı sayısal yoğunluk → negatif
+        """
+        txt = table_blob
+        if "<table" in (table_blob or "").lower():
+            txt = self._strip_tags(table_blob)
+        low = self._norm(txt)
+
+        score = 0
+        # 1) Trim ipuçları başlıkta + gövdede
+        for w in self.TRIM_HINTS:
+            if w in low:
+                score += 2
+
+        # 2) 'Standart' sözcüğü (çeşitli yazımlar)
+        score += 3 * low.count("standart")
+
+        # 3) Teknik ipuçlarını cezalandır
+        for k in self.TECH_HINTS:
+            if k in low:
+                score -= 1
+
+        # 4) Aşırı sayısal yoğunluk cezalandır (teknik tablolar çok sayı içerir)
+        import re
+        digits = len(re.findall(r"\d", low))
+        pipes  = low.count("|")
+        if digits > 50 or digits > max(20, pipes*3):
+            score -= 3
+
+        return score
+
+    @staticmethod
+    def _norm(s: str) -> str:
+        import unicodedata
+        s = unicodedata.normalize("NFKD", s or "").lower()
+        return "".join(c for c in s if not unicodedata.combining(c))
+
+    @staticmethod
+    def _find_html_tables(html: str) -> list[str]:
+        out, i = [], 0
+        while True:
+            start = html.lower().find("<table", i)
+            if start == -1: break
+            end = html.lower().find("</table>", start)
+            if end == -1: break
+            out.append(html[start:end+8])
+            i = end + 8
+        return out
+
+    @staticmethod
+    def _html_header_text(table_html: str) -> str:
+        import re
+        thead = re.search(r"<thead.*?>(.*?)</thead>", table_html, re.I|re.S)
+        block = thead.group(1) if thead else re.search(r"<tr.*?>(.*?)</tr>", table_html, re.I|re.S).group(1)
+        cells = re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", block, re.I|re.S)
+        text = " | ".join(re.sub(r"<.*?>", "", c) for c in cells)
+        return ChatbotAPI._norm(text)
+
+    @staticmethod
+    def _classify_header(txt_norm: str) -> str|None:
+        if ("kod" in txt_norm) and any(k in txt_norm for k in ("aciklama","açıklama","net satis","net satış","anahtar teslim")):
+            return "optional"
+        if "ozellik" in txt_norm or "özellik" in txt_norm:
+            return "standard"
+        return None
+
+    def extract_tables_any(self, content: str) -> list[dict]:
+        if not content: return []
+        c = content.strip()
+        tables = []
+
+        if "<table" in c.lower():
+            for tbl in self._find_html_tables(c):
+                header_txt = self._html_header_text(tbl)
+                kind = self._classify_header(header_txt) or "unknown"
+                tables.append({"kind": kind, "text": tbl})
+            return tables
+
+        # Markdown (borulu)
+        lines = c.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith("|") and i + 1 < len(lines):
+                align = lines[i+1].replace("|","").strip()
+                if set(align) <= set("-: "):
+                    j = i + 2
+                    while j < len(lines) and lines[j].strip().startswith("|"):
+                        j += 1
+                    tbl = "\n".join(lines[i:j]).strip()
+                    header_norm = self._norm(lines[i])
+                    kind = self._classify_header(header_norm) or ("standard" if ("ozellik" in header_norm or "özellik" in header_norm) else "unknown")
+                    tables.append({"kind": kind, "text": tbl})
+                    i = j
+                    continue
+            i += 1
+        return tables
+
+    def select_table(self, content: str, kind: str) -> str | None:
+        tables = self.extract_tables_any(content)
+        candidates = [t["text"] for t in tables if t["kind"] == kind]
+
+        # Yedek: sınıflandıramadıysa kaba eşleşme
+        if not candidates:
+            n = lambda s: self._norm(s)
+            if kind == "optional":
+                candidates = [t["text"] for t in tables if ("kod" in n(t["text"])) and (("net satis" in n(t["text"]) or "aciklama" in n(t["text"]) or "açıklama" in n(t["text"])))]
+            else:
+                candidates = [t["text"] for t in tables if ("ozellik" in n(t["text"]) or "özellik" in n(t["text"]))]
+
+        if not candidates:
+            return None
+
+        if kind == "optional":
+            # Üstteki (1.) opsiyonel tablo
+            return candidates[0]
+
+        # kind == 'standard' → en alttakini değil, "standart donanım"ı en iyi temsil edeni seç
+        if len(candidates) == 1:
+            return candidates[0]
+
+        # Puanlayıp en yüksek skoru seç (teknik tabloyu eler)
+        scored = sorted(((self._score_standard_table(c), idx, c) for idx, c in enumerate(candidates)), reverse=True)
+        # Eğer puanlar çok yakınsa (eşit), sıralamada ortadakini tercih edin (2. tablo)
+        best_score, best_idx, best_blob = scored[0]
+        if len(candidates) >= 2:
+            # “eşitlik / belirsizlik” halinde 2. sıradakine bias ver
+            top2_score = scored[1][0]
+            if abs(best_score - top2_score) <= 1:
+                return candidates[min(1, len(candidates)-1)]
+        return best_blob
+
+    def handle_equipment_request(self, user_id, user_message, model_name: str, trim_name: str | None):
+        intent = detect_equipment_intent(user_message)  # 'optional' | 'standard'
+
+        # İçerik kaynakları (sende nasıl adlandırıldıysa onlara bağla)
+        html_or_md_optional = getattr(self, "_lookup_opsiyonel_md", lambda *a, **k: None)(model_name, trim_name)
+        html_or_md_standard = getattr(self, "_lookup_standart_md",  lambda *a, **k: None)(model_name, trim_name)
+        html_or_md_mixed    = getattr(self, "_lookup_donanim_md",   lambda *a, **k: None)(model_name, trim_name)
+
+        # 1) Doğrudan tek tablo kaynağı varsa onu kullan
+        chosen = (html_or_md_optional if intent=="optional" else html_or_md_standard)
+
+        # 2) Yoksa karışık içerikten ayıkla
+        if not chosen and html_or_md_mixed:
+            chosen = self.select_table(html_or_md_mixed, intent)
+
+
+        title = f"{model_name.title()} {trim_name.title() if trim_name else ''} - " + ("Opsiyonel Donanımlar" if intent=="optional" else "Standart Donanımlar")
+
+        if not chosen:
+            yield f"<b>{title}</b><br>İstenen tablo içerikte bulunamadı.".encode("utf-8")
+            return  # *** çok önemli: başka hiçbir şey basma ***
+
+        # Markdown ise HTML'e çevir; HTML ise doğrudan gönder
+        if chosen.lstrip().startswith("|"):
+            try:
+                html = fix_markdown_table(chosen)  # sende varsa
+            except Exception:
+                html = f"<pre>{chosen}</pre>"
+        else:
+            html = chosen
+
+        yield f"<b>{title}</b>".encode("utf-8")
+        yield html.encode("utf-8")
+        # md opsiyonel kaynak
+        md = self._lookup_opsiyonel_md(model_name, trim_name) or ""
+        if not md:
+            # karma içerik kaynağın varsa:
+            mixed = getattr(self, "_lookup_donanim_md", lambda *a, **k: None)(model_name, trim_name) or ""
+            md = self.select_table(mixed, "optional") or ""
+
+        if md:
+            title = f"{model_name.title()} {trim_name.title()} - Opsiyonel Donanımlar"
+            if md.lstrip().startswith("|"):
+                md = fix_markdown_table(md)
+            yield f"<b>{title}</b><br>".encode("utf-8")
+            yield md.encode("utf-8")
+            return
+
+        return  # *** ikincil içeriklerin gönderilmesini kesin engelle ***
+
+
+    def render_optional_only(md_optional: str | None, md_mixed: str | None) -> str | None:
+        """
+        Opsiyonel donanım istenirse: sadece Kod/Açıklama/Net Satış tablosunu döndür.
+        Önce saf opsiyonel MD'yi, yoksa birleşik MD içinden 'optional' tabloyu seçer.
+        """
+        if md_optional and md_optional.strip():
+            return md_optional.strip()
+        if md_mixed:
+            pick = select_table_by_kind(md_mixed, "optional")
+            if pick: return pick
+        return None
+
+    def render_standard_only(md_standard: str | None, md_mixed: str | None) -> str | None:
+        """
+        Standart donanım istenirse: sadece Özellik başlıklı tabloyu döndür.
+        Önce saf standart MD'yi, yoksa birleşik MD içinden 'standard' tabloyu seçer.
+        """
+        if md_standard and md_standard.strip():
+            return md_standard.strip()
+        if md_mixed:
+            pick = select_table_by_kind(md_mixed, "standard")
+            if pick: return pick
+        return None
+
+
+    def _extract_md_tables(md: str):
+        """
+        MD içindeki tabloları yakalar ve her biri için {'kind': 'optional'|'standard'|'unknown', 'text': '...'} döndürür.
+        'optional' kriteri: header satırında 'kod' + ('açıklama' veya 'net satış' veya 'anahtar teslim')
+        'standard' kriteri: header satırında 'özellik'
+        """
+        if not md:
+            return []
+        lines = md.splitlines()
+        tables = []
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith("|"):
+                # Tablo hizalama satırı var mı?
+                if i + 1 < len(lines) and "|" in lines[i+1] and set(lines[i+1].replace("|","").strip()) <= set("-: "):
+                    # Tabloyu topla
+                    j = i + 2
+                    while j < len(lines) and lines[j].strip().startswith("|"):
+                        j += 1
+                    tbl_lines = lines[i:j]
+                    header = tbl_lines[0].lower()
+                    if ("kod" in header) and ("açıklama" in header or "net satış" in header or "anahtar teslim" in header):
+                        kind = "optional"
+                    elif "özellik" in header:
+                        kind = "standard"
+                    else:
+                        kind = "unknown"
+                    tables.append({"kind": kind, "text": "\n".join(tbl_lines).strip()})
+                    i = j
+                    continue
+            i += 1
+        return tables
+
+    def select_table_by_kind(md: str, kind: str) -> str | None:
+        """
+        'optional' için üstteki ilk tablo, 'standard' için alttaki son tablo döndürülür.
+        (Görseldeki konuma göre seçim kuralı.)
+        """
+        tables = _extract_md_tables(md)
+        candidates = [t["text"] for t in tables if t["kind"] == kind]
+        if not candidates:
+            return None
+        return candidates[0] if kind == "optional" else candidates[-1]
+
+
+
+    def detect_equipment_intent(text: str) -> str | None:
+        """
+        Kullanıcı metninden niyet çıkar: 'standard' | 'optional' | None
+        Çakışmada 'opsiyonel' önceliklidir (fiyat/kod tablosu istendiği varsayımı).
+        """
+        t = (text or "").lower()
+        has_std = any(k in t for k in _STD_KEYS) and "donan" in t
+        has_opt = any(k in t for k in _OPT_KEYS) or ("opsiyon" in t and "donan" in t)
+        if has_opt and not has_std: return "optional"
+        if has_std and not has_opt: return "standard"
+        if has_opt and has_std:
+            return "optional" if t.rfind("opsiyon") > t.rfind("standart") else "standard"
+        return "standard"  # belirsizse varsayılan
+
+    def _answer_via_rag_compare(
+        self,
+        user_id: str,
+        assistant_id: str,
+        user_message: str,
+        pairs: list[tuple[str, str]]
+    ) -> bytes:
+        """
+        Model+trim karşılaştırmalarında öncelikli RAG cevabı.
+        1) Varsa OpenAI File Search (vector_store) ile -> kesinlikle dosya kanıtına dayalı
+        2) Yoksa HYBRID RAG (SQL vektörleri) fallback
+        """
+        # 1) OpenAI File Search ile (tercihli)
+        if getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "VECTOR_STORE_ID", "") and assistant_id:
+            # Sütun başlıkları için insan-okur biçim
+            items = []
+            for m, t in (pairs or []):
+                m2 = (m or "").strip().title()
+                t2 = (t or "").strip().title()
+                items.append((f"{m2} {t2}".strip()))
+            # Çıktı talimatı (dosya-dışı bilgi yasak, tablo şart)
+            instructions = (
+                "Cevabı YALNIZCA bağlı dosya araması (file_search) sonuçlarına dayanarak hazırla. "
+                "Görev: Kullanıcının belirttiği model+trim çiftlerini karşılaştır. "
+                "Önce 2–5 maddelik kısa ve net bir özet yaz. "
+                "Ardından iyi biçimlendirilmiş bir Markdown tablo ver: "
+                "Sütunlar -> her bir model+trim (sırayı koru). Satırlar -> önemli özellikler/sayısal veriler. "
+                "Kanıt bulunmayan alanlar için hücreye 'KB’de yok' yaz. "
+                "Varsayım yapma, dosya dışı bilgi ekleme."
+            )
+            rag_out = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=assistant_id,
+                content=user_message,
+                timeout=60.0,
+                instructions_override=instructions,
+                ephemeral=True
+            ) or ""
+
+            out_md = self.markdown_processor.transform_text_to_markdown(rag_out)
+            if '|' in out_md and '\n' in out_md:
+                out_md = fix_markdown_table(out_md)
+            return self._deliver_locally(
+                body=out_md,
+                original_user_message=user_message,
+                user_id=user_id
+            )
+
+        # 2) Fallback: Hybrid RAG (SQL vektörleri)
+        if getattr(self, "HYBRID_RAG", False):
+            text = self._answer_with_hybrid_rag(user_message) or "Bilgi tabanında karşılık bulunamadı."
+            return self._deliver_locally(
+                body=text,
+                original_user_message=user_message,
+                user_id=user_id
+            )
+
+        return "Bilgi tabanına (RAG) erişilemiyor.".encode("utf-8")
+
+    def _equipment_from_unified(self, models: list[str], trim: str|None=None, only_keywords: list[str]|None=None):
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            trim_clause = ""
+            params = {"m0": models[0], "m1": models[1]}
+
+            if trim:
+                trim_clause = " AND LOWER(eq.trim_name) = LOWER(:trim) "
+                params["trim"] = trim
+
+            sql = f"""
+            SELECT
+            eq.feature_name                                   AS feature,
+            MAX(CASE WHEN eq.model_slug = :m0 THEN eq.has END) AS {models[0]},
+            MAX(CASE WHEN eq.model_slug = :m1 THEN eq.has END) AS {models[1]}
+            FROM equipment_flat eq
+            WHERE eq.model_slug IN (:m0, :m1)
+            {trim_clause}
+            GROUP BY eq.feature_name
+            ORDER BY eq.feature_name COLLATE NOCASE;
+            """
+
+
+            if only_keywords:
+                # çoklu anahtar kelime OR
+                like_sql = " OR ".join(["feature_name LIKE ?"]*len(only_keywords))
+                sql += " AND (" + like_sql + ")"
+                for k in only_keywords:
+                    params.append(f"%{k}%")
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        finally:
+            cur.close(); conn.close()
+
+        # pivotu Python’da tamamla (istersen SQL’de PIVOT da yapabilirsin)
+        feats = {}
+        for feat, model, status in rows:
+            feats.setdefault(feat, {}).setdefault(model.title(), status)
+
+        header = ["Özellik"] + [m.title() for m in models]
+        lines = ["| " + " | ".join(header) + " |",
+                "|" + "|".join(["---"]*len(header)) + "|"]
+        for feat in sorted(feats.keys()):
+            row = [feat] + [feats[feat].get(m.title(), "—") for m in models]
+            lines.append("| " + " | ".join(row) + " |")
+        return fix_markdown_table("\n".join(lines))
+    def harvest_raw_feature_names(sql_conn):
+        cur = sql_conn.cursor()
+        cur.execute("""
+        SELECT name FROM sys.tables WHERE name LIKE 'EquipmentList\_%' ESCAPE '\\'
+        """)
+        tables = [r[0] for r in cur.fetchall()]
+
+        cand_cols = ["Equipment","Donanim","Donanım","Ozellik","Özellik","Name","Title","Attribute","Feature"]
+        seen = set()
+        out  = []
+
+        for t in tables:
+            # feature kolonu hangisi?
+            cur.execute("""
+            SELECT TOP 1 c.name
+            FROM sys.columns c
+            WHERE c.object_id = OBJECT_ID(?)
+                AND c.name IN ({})
+            """.format(",".join(["?"]*len(cand_cols))), [t] + cand_cols)
+            row = cur.fetchone()
+            if not row: 
+                continue
+            feat_col = row[0]
+
+            cur.execute(f"SELECT DISTINCT CAST([{feat_col}] AS NVARCHAR(200)) FROM {t}")
+            for (val,) in cur.fetchall():
+                if not val: 
+                    continue
+                key = (val.strip(),)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(val.strip())
+
+        return out  # bunu CSV’ye yaz, insan onayından sonra FeatureCatalog/FeatureAlias’a yükle
+
+    def _answer_two_model_spec_diff(self, models: list[str], canon_key: str) -> str | None:
+        models = [m.lower() for m in models if m]
+        if len(models) < 2:
+            return None
+        values = []
+        for m in models[:2]:  # ilk iki model
+            v = self._get_spec_value(m, canon_key)
+            values.append((m, v or "—"))
+
+        (m1, v1), (m2, v2) = values[0], values[1]
+        n1,u1 = self._numeric_from_value(v1)
+        n2,u2 = self._numeric_from_value(v2)
+
+        # birimler uyuşmuyorsa sadece değerleri yaz
+        if (n1 is None) or (n2 is None) or (u1 != u2):
+            return f"{m1.title()} {canon_key}: {v1}; {m2.title()} {canon_key}: {v2}."
+
+        diff = n1 - n2  # not: + ise m1 > m2
+        # 0-100 gibi 'düşük daha iyi' metriklerinde yorumu ters yazalım
+        lower_is_better = ("0-100" in canon_key) or ("sn" in u1.lower())
+        if lower_is_better:
+            better = m1 if n1 < n2 else (m2 if n2 < n1 else None)
+        else:
+            better = m1 if n1 > n2 else (m2 if n2 > n1 else None)
+
+        sign = "±" if diff == 0 else ""
+        diff_txt = f"{abs(diff):.2f} {u1}".rstrip(" .0")
+        if better:
+            return (f"{m1.title()} {canon_key}: {v1}; {m2.title()} {canon_key}: {v2}. "
+                    f"Fark: {diff_txt}. Daha {'hızlı' if lower_is_better else 'yüksek'} olan: {better.title()}.")
+        else:
+            return (f"{m1.title()} {canon_key}: {v1}; {m2.title()} {canon_key}: {v2}. "
+                    f"Fark: {sign}{diff_txt}. Değerler eşit görünüyor.")
+
+    def _numeric_from_value(self, val: str) -> tuple[float | None, str]:
+        """
+        '210 km/h' -> (210.0, 'km/h')
+        '8,5 sn'   -> (8.5, 'sn')
+        '150 PS (110 kW)' -> (150.0, 'PS')
+        """
+        if not val:
+            return None, ""
+        s = val.strip().replace(",", ".")
+        m = re.search(r"([-+]?\d+(?:\.\d+)?)\s*([A-Za-z%/\.°\- ]*)", s)
+        if not m:
+            return None, ""
+        num = float(m.group(1))
+        unit = (m.group(2) or "").strip()
+        return num, unit
+
+    def _get_spec_value(self, model: str, canon_key: str) -> str | None:
+        md = self._get_teknik_md_for_model(model)
+        if not md:
+            return None
+        _, d = self._parse_teknik_md_to_dict(md)
+        return self._get_spec_value_from_dict(d, canon_key)
+
+    def _detect_equipment_filter_keywords(self, text: str) -> list[str]:
+        """
+        'sadece ...' / 'yalnızca ...' ile belirtilen donanım adı anahtarlarını çıkarır.
+        Örn: 'sadece jant, far, multimedya' -> ['jant','far','multimedya']
+        """
+        t = (text or "").lower()
+        m = re.search(r"(?:sadece|yaln[ıi]zca)\s*[:\-]?\s*([a-z0-9çğıöşü\s,\/\+\-]+)", t)
+        if not m:
+            return []
+        raw = m.group(1)
+        parts = re.split(r"[,\n\/]+|\s+ve\s+|\s+ile\s+", raw)
+        return [p.strip() for p in parts if p.strip()]
+
+    def _latest_equipment_table_for(self, model: str) -> str | None:
+        """
+        Örn. 'fabia' -> 'EquipmentList_KODA_FABIA_MY_20251'
+        sys.tables içinden ilgili modele ait en yeni tabloyu seçer (adına göre DESC).
+        """
+        m = (model or "").strip().upper()
+        # KODA_ / KODA yazımları için tolerans (sende KODA geçiyor)
+        pat = f"EquipmentList\\_KODA\\_{m}\\_MY\\_%"
+        conn = self._sql_conn()
+        cur  = conn.cursor()
+        try:
+            cur.execute("""
+                SELECT TOP 1 name
+                FROM sys.tables WITH (NOLOCK)
+                WHERE name LIKE ? ESCAPE '\\'
+                ORDER BY name DESC
+            """, (pat,))
+            row = cur.fetchone()
+            return row[0] if row else None
+        finally:
+            cur.close(); conn.close()
+
+    def _normalize_equipment_status(self, *values) -> str:
+        """
+        S: Standart, O: Opsiyonel, —: Yok/Bilinmiyor
+        Farklı kolonlardan gelen ham değerleri normalize eder.
+        """
+        txt = " ".join([str(v) for v in values if v is not None]).strip()
+        if not txt:
+            return "—"
+        t = normalize_tr_text(txt).lower()
+
+        # Pozitif/standart sinyalleri
+        pos_markers = ["standart", "standard", "std", "s ", " s", " (s)", "evet", "yes", "1", "var"]
+        if any(mark in f" {t} " for mark in pos_markers):
+            return "S"
+
+        # Opsiyonel sinyalleri
+        opt_markers = ["ops", "opsiyonel", "optional", "o ", " o", " (o)"]
+        if any(mark in f" {t} " for mark in opt_markers):
+            return "O"
+
+        # Tek harfli kodlar (temiz)
+        if t in {"s"}:
+            return "S"
+        if t in {"o"}:
+            return "O"
+
+        # Boş / tire / yok
+        if t in {"-", "—", "yok", "none", "0", "hayir", "hayır", "no"}:
+            return "—"
+
+        # Sayısal/serbest değerler (bazı tablolarda 'Value' kolonuna 'S'/'O' yerine açıklama düşebiliyor)
+        # Heuristic: 'ops' geçiyorsa O, 'std/standart' geçiyorsa S, aksi halde — bırak.
+        if "ops" in t or "opsiyonel" in t:
+            return "O"
+        if "std" in t or "standart" in t or "standard" in t:
+            return "S"
+
+        return "—"
+
+
+    def _equipment_dict_from_table(self, table_name: str, *, preferred_trim: str | None = "premium") -> tuple[list[str], dict[str, str], dict[str, str]]:
+        """
+        DÖNÜŞ:
+        feature_order_keys: satır anahtarları sırası (kanonik)
+        status_map:        { feature_key: 'S'/'O'/'—' }
+        display_map:       { feature_key: 'Gösterim Adı' }
+        """
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            cur.execute(f"SELECT * FROM [dbo].[{table_name}] WITH (NOLOCK)")
+            cols = [c[0] for c in cur.description] if cur.description else []
+            rows = cur.fetchall()
+        finally:
+            cur.close(); conn.close()
+
+        if not rows:
+            return [], {}, {}
+
+        def norm(s): return normalize_tr_text(s or "").lower().replace("_", " ").strip()
+        low2orig = {norm(c): c for c in cols}
+
+        # Özellik adı adayı
+        name_candidates = ["Equipment","Donanim","Donanım","Ozellik","Özellik","Name","Title","Attribute","Feature"]
+        feat_col = next((low2orig[norm(c)] for c in name_candidates if norm(c) in low2orig), None)
+
+        # (YENİ) Kod kolonlarını da kontrol et
+        code_candidates = ["Code","Kod","FeatureCode","OptionCode","EquipmentCode"]
+        code_col = next((low2orig[norm(c)] for c in code_candidates if norm(c) in low2orig), None)
+
+        # Trim kolon seçimi (sizdeki mantık korunuyor)
+        TRIM_COL_KEYS = ["premium","elite","prestige","sportline","monte carlo","monte_carlo","rs","l&k crystal","l n k crystal","lk crystal","sportline phev","e prestige 60","coupe e sportline 60","coupe e sportline 85x","e sportline 60","e sportline 85x"]
+        present_trims = [low2orig[k] for k in TRIM_COL_KEYS if k in low2orig]
+        pick_key = norm(os.getenv("EQUIP_BASE_TRIM", "") or (preferred_trim or ""))
+        chosen_trim_col = low2orig.get(pick_key, present_trims[0] if present_trims else None)
+
+        feature_order_keys, status_map, display_map = [], {}, {}
+        seen = set()
+        for r in rows:
+            d = {cols[i]: r[i] for i in range(len(cols))}
+            raw_name = str(d.get(feat_col) or "").strip()
+            if not raw_name:
+                continue
+
+            # 🔑 Önce kodu dene
+            if code_col and d.get(code_col):
+                key = f"code:{str(d[code_col]).strip().lower()}"
+                disp = raw_name
+            else:
+                key, disp = canonicalize_feature(raw_name)
+
+            if key not in seen:
+                feature_order_keys.append(key); seen.add(key)
+                display_map[key] = disp   # gösterim adını sakla
+
+            raw_status = d.get(chosen_trim_col) if chosen_trim_col else None
+            status_map[key] = self._normalize_equipment_status(raw_status)
+
+        return feature_order_keys, status_map, display_map
+
+
+
+    def _build_equipment_comparison_table_from_sql(
+        self,
+        models: list[str],
+        only_keywords: list[str] | None = None,
+        trim: str | None = None
+    ) -> str:
+        models = [m.lower() for m in models if m]
+        if len(models) < 2: return ""
+
+        preferred_trim = trim or os.getenv("EQUIP_BASE_TRIM", "premium")
+
+        order_for, status_for, display_for = {}, {}, {}
+        valid_models = []
+        for m in models:
+            tname = self._latest_equipment_table_for(m)
+            if not tname: continue
+            order_keys, smap, dmap = self._equipment_dict_from_table(tname, preferred_trim=preferred_trim)
+            if not smap: continue
+            order_for[m], status_for[m], display_for[m] = order_keys, smap, dmap
+            valid_models.append(m)
+
+        if len(valid_models) < 2:
+            return ""
+
+        # Birleşik anahtar kümesi (ilk görülen sırayı koru)
+        all_keys, seen = [], set()
+        for m in valid_models:
+            for k in order_for[m]:
+                if k not in seen:
+                    seen.add(k); all_keys.append(k)
+
+        # Opsiyonel filtre: kanonik anahtar ve gösterim adına göre
+        if only_keywords:
+            kw = [normalize_tr_text(x).lower() for x in only_keywords]
+            def hit(k):
+                name = display_for[valid_models[0]].get(k, k)
+                n = normalize_tr_text(name).lower()
+                return any(w in n or w in k for w in kw)
+            filtered = [k for k in all_keys if hit(k)]
+            if filtered: all_keys = filtered
+
+        # (İsteğe bağlı) Gruplama/sıralama: Feature tablosundaki priority/group_name ile sıralayabilirsiniz.
+        # Şimdilik mevcut sıra korunuyor.
+
+        # Durum sembolleri okunaklı olsun
+        def pretty(s): return "✓" if s == "S" else ("○" if s == "O" else "—")
+
+        header = ["Özellik"] + [x.title() for x in valid_models]
+        lines  = ["| " + " | ".join(header) + " |", "|" + "|".join(["---"]*len(header)) + "|"]
+
+        # Gösterim adı modeli: ilk modeldeki display_map’tan al, yoksa diğerlerinden
+        def show_name(key):
+            for m in valid_models:
+                name = display_for[m].get(key)
+                if name: return name
+            return key  # son çare
+
+        for key in all_keys:
+            row = [show_name(key)]
+            for m in valid_models:
+                st = status_for[m].get(key, "—")
+                row.append(pretty(st))
+            lines.append("| " + " | ".join(row) + " |")
+
+        md = fix_markdown_table("\n".join(lines))
+        return self._strip_price_from_any(md) 
+
+
+
     # =====================[ HYBRID RAG – Yardımcılar ]=====================
 
     # Embedding ayarları (ENV ile override edilebilir)
@@ -863,6 +2480,10 @@ class ChatbotAPI:
         s = re.sub(r"[ \t]+\n", "\n", s)
         s = re.sub(r"\n{3,}", "\n\n", s)
         s = re.sub(r"[ \t]{2,}", " ", s)
+        # .sql.md veya dosya adı geçen köşeli parantez bloklarını kaldır
+        s = re.sub(r"\[[^\]]*\.sql\.md[^\]]*\]", "", s)
+        # Dosya yolu/uzantı izlerini sadele (ör. PriceList_*.md, .csv, .xlsx vs.)
+        s = re.sub(r"\[[^\]]*\.(?:md|csv|xlsx|json|sql)[^\]]*\]", "", s)
 
         return s.strip()
 
@@ -1165,36 +2786,7 @@ class ChatbotAPI:
         return None
 
     def find_equipment_answer(user_message: str, model: str, donanim_md: str) -> str | None:
-        """
-        Kullanıcı mesajındaki ekipmanı modelin donanım listesinde arar.
-        En yakın eşleşmeyi bulur ve cümle olarak döner.
-        """
-        if not donanim_md:
-            return None
-        
-        query = normalize_tr_text(user_message).lower()
-        best_line, best_score = None, 0.0
-        
-        for line in donanim_md.splitlines():
-            clean_line = normalize_tr_text(line).lower()
-            ratio = difflib.SequenceMatcher(None, query, clean_line).ratio()
-            if ratio > best_score:
-                best_score, best_line = ratio, line
-        
-        if not best_line or best_score < 0.5:
-            return None  # anlamlı eşleşme yok
-        
-        # Durum çözümlemesi
-        if "→ s" in best_line.lower():
-            status = "standart olarak sunuluyor"
-        elif "→ o" in best_line.lower():
-            status = "opsiyonel olarak sunuluyor"
-        else:
-            status = "bu modelde bulunmuyor"
-        
-        # Donanım adını temizle
-        equip_name = best_line.split("→")[0].strip("-• ")
-        return f"{model.title()} modelinde {equip_name} {status}."
+        return None  # kelime benzerliğine dayalı donanım bulma kaldırıldı
 
     def _lookup_standart_md(self, model: str) -> str | None:
         import importlib
@@ -1581,24 +3173,33 @@ class ChatbotAPI:
         return best_v
 
     def _answer_teknik_as_qa(self, user_message: str, user_id: str) -> bytes | None:
-        """
-        1) Önce teknik tabloda (| Özellik | Değer |) arar.
-        2) Bulamazsa donanım listesi (madde işaretli satırlar) içinde tarar.
-        3) Kısa ve net yanıt döner.
-        """
         requested = self._find_requested_specs(user_message)
         models = list(self._extract_models(user_message))
 
-        # Model belirtilmediyse → asistan bağlamından al
-        if not models and user_id:
-            asst_id = self.user_states.get(user_id, {}).get("assistant_id")
-            ctx_model = self.ASSISTANT_NAME_MAP.get(asst_id, "")
-            if ctx_model:
-                models = [ctx_model.lower()]
-
-        if not models:
+        # YENİ: cmp_models varsa ve 2 model tutuyorsa, tek-model QA'ya düşme
+        cm = (self.user_states.get(user_id, {}) or {}).get("cmp_models", [])
+        if not models and len(cm) >= 2:
             return None
 
+        # YENİ: metinde model yoksa ve oturumda >=2 model varsa -> QA'yı atla (üst katmandaki fark/karşılaştırma çalışsın)
+        if not models and user_id:
+            lm = list((self.user_states.get(user_id, {}) or {}).get("last_models", []))
+            if len(lm) >= 2:
+                return None
+            # sadece 1 model ise onu kullan
+            if len(lm) == 1:
+                models = lm
+
+        if not models:
+            # Asistan bağlamından dene
+            asst_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
+            ctx_model = self.ASSISTANT_NAME_MAP.get(asst_id, "") if asst_id else ""
+            if ctx_model:
+                models = [ctx_model.lower()]
+            else:
+                return None
+
+        # 🔒 Her durumda 'model'ı garanti et
         model = models[0]
 
         # === 1) TEKNİK TABLODAN ARA ===
@@ -1691,12 +3292,10 @@ class ChatbotAPI:
         return s.strip()
 
     def _text_similarity_ratio(self, a: str, b: str) -> float:
-        """0..1 arası benzerlik oranı (difflib)."""
-        import difflib
+        # Sadece birebir eşitse 1.0, aksi halde 0.0
         na, nb = self._norm_for_compare(a), self._norm_for_compare(b)
-        if not na or not nb:
-            return 0.0
-        return difflib.SequenceMatcher(None, na, nb).ratio()
+        return 1.0 if na and nb and na == nb else 0.0
+
 
     def _expected_fiyat_md_for_question(self, user_message: str) -> str | None:
         """Sorudan fiyat tablosu (filtreli) üretir. (Dosya: fiyat_data.py)"""
@@ -1895,6 +3494,8 @@ class ChatbotAPI:
 
     def _apply_file_validation_and_route(self, *, user_id: str, user_message: str,
                                      ai_answer_text: str) -> bytes:
+        ai_answer_text = self._strip_price_from_any(ai_answer_text)
+        ai_answer_text = self._drop_kb_missing_rows_from_any(ai_answer_text)   # ⬅️ EKLE
         expected_text, meta = self._expected_answer_from_files(user_message)
 
         def _gate_bytes_from_text(txt: str) -> bytes:
@@ -1929,6 +3530,8 @@ class ChatbotAPI:
 
         # Mevcut akış: benzerlik eşiğine göre karar
         ratio = self._text_similarity_ratio(ai_answer_text, expected_text or "")
+        lower_q = normalize_tr_text(user_message).lower()
+        avoid_table = any(k in lower_q for k in ["görsel","resim","foto","renk"])
         if expected_text and ratio < self.OPENAI_MATCH_THRESHOLD:
             md = self.markdown_processor.transform_text_to_markdown(expected_text or "")
             if '|' in md and '\n' in md:
@@ -2147,8 +3750,9 @@ class ChatbotAPI:
                 row = [k] + [parsed_for[m].get(k, "—") for m in chunk]
                 lines.append("| " + " | ".join(row) + " |")
             tables.append(fix_markdown_table("\n".join(lines)))
-
-        return "\n\n".join(tables)
+        md = "\n\n".join(tables)
+        return self._strip_price_from_any(md)
+        
 
 
     def _detect_spec_filter_keywords(self, text: str) -> list[str]:
@@ -2235,6 +3839,8 @@ class ChatbotAPI:
         user_id: str | None = None,
         model_hint: str | None = None
     ) -> bytes:
+        body = self._strip_price_from_any(body)
+        body = self._drop_kb_missing_rows_from_any(body)
         out_md = self.markdown_processor.transform_text_to_markdown(body or "")
         if '|' in out_md and '\n' in out_md:
             out_md = fix_markdown_table(out_md)
@@ -2336,8 +3942,16 @@ class ChatbotAPI:
 
             # Markdown post‑process: hizalama + son çare tabloya çevirme
             out_md = self.markdown_processor.transform_text_to_markdown(out)
-            if '|' in out_md and '\n' in out_md:
+            
+            if '|' in out_md and '\n' in out_md: 
                 out_md = fix_markdown_table(out_md)
+            
+                out_md = self._strip_price_from_any(out_md)  # ⬅️ EKLE
+                out_md = self._drop_kb_missing_rows_from_any(out_md)
+                resp_bytes = out_md.encode("utf-8")
+            #if '|' in out_md and '\n' in out_md:
+             #   out_md = fix_markdown_table(out_md)
+                
             else:
                 out_md = self._coerce_text_to_table_if_possible(out_md)
 
@@ -2384,6 +3998,7 @@ class ChatbotAPI:
                 out_md = self.markdown_processor.transform_text_to_markdown(out)
                 if '|' in out_md and '\n' in out_md:
                     out_md = fix_markdown_table(out_md)
+                    out_md = self._strip_price_from_any(out_md)  # ⬅️ EKLE
                 else:
                     out_md = self._coerce_text_to_table_if_possible(out_md)
                 resp_bytes = out_md.encode("utf-8")
@@ -2601,14 +4216,29 @@ class ChatbotAPI:
         return bool(has_pipe_lines and has_header_sep)
 
     def _looks_like_kv_block(self, text: str) -> bool:
-        """
-        'Özellik: Değer' biçiminde en az 3 satır varsa tabloya çevrilebilir kabul et.
-        - Madde işaretli satırları da destekler (•, -, *)
-        """
         if not text:
             return False
-        kv_lines = re.findall(r'^\s*[-*•]?\s*[^:|]{2,}\s*[:：]\s*.+$', text, flags=re.MULTILINE)
-        return len(kv_lines) >= 3
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return False
+
+        # URL ve saat gibi yanlı tetikleyicileri dışla
+        safe = []
+        for ln in lines:
+            if re.search(r'https?://', ln):   # linkler
+                continue
+            if re.search(r'\b\d{1,2}:\d{2}\b', ln):  # saat 12:30 vb.
+                continue
+            safe.append(ln)
+
+        kv_lines = [
+            ln for ln in safe
+            if re.match(r'^\s*[-*•]?\s*[^\|:\n]{2,}\s*[:：]\s+.+$', ln)
+        ]
+
+        # En az 3 satır ve satırların çoğu KV biçiminde olmalı
+        return (len(kv_lines) >= 3) and (len(kv_lines) >= int(len(safe) * 0.6))
+
 
     def _looks_like_html_table(self, text: str) -> bool:
         """HTML tablo tespiti."""
@@ -2826,40 +4456,10 @@ class ChatbotAPI:
             yield link_html.encode("utf-8")
     
     def _fuzzy_contains(self, text: str, phrase: str, threshold: float | None = None) -> bool:
-        """
-        'text' içinde 'phrase' yaklaşık olarak var mı?
-        - Boşlukları normalize eder
-        - Alt dizi pencerelerinde difflib oranı hesaplar
-        """
         t = normalize_tr_text(text or "").lower()
         p = normalize_tr_text(phrase or "").lower()
+        return p in t  # fuzzy KAPALI
 
-        # hızlı kazanımlar
-        if p in t:
-            return True
-
-        # boşlukları kaldırıp karakter bazında karşılaştır
-        t_comp = re.sub(r"\s+", "", t)
-        p_comp = re.sub(r"\s+", "", p)
-        if p_comp in t_comp:
-            return True
-
-        import difflib
-        thr = threshold if threshold is not None else getattr(self, "PRICE_INTENT_FUZZY_THRESHOLD", 0.80)
-        L = len(p_comp)
-        if L == 0:
-            return False
-
-        # pencere uzunluğunu ±2 karakter toleransla tara
-        minL = max(1, L - 2)
-        maxL = L + 2
-        n = len(t_comp)
-        for win_len in range(minL, maxL + 1):
-            for i in range(0, max(0, n - win_len) + 1):
-                chunk = t_comp[i:i + win_len]
-                if difflib.SequenceMatcher(None, chunk, p_comp).ratio() >= thr:
-                    return True
-        return False
 
 
     def _is_price_intent(self, text: str, threshold: float | None = None) -> bool:
@@ -3056,7 +4656,8 @@ class ChatbotAPI:
 
 
         self.MAX_COMPARE_MODELS_PER_TABLE = int(os.getenv("MAX_COMPARE_MODELS_PER_TABLE", "6"))
-        self.OPENAI_MATCH_THRESHOLD = float(os.getenv("OPENAI_MATCH_THRESHOLD", "0.90"))
+        self.OPENAI_MATCH_THRESHOLD = float(os.getenv("OPENAI_MATCH_THRESHOLD", "0.80"))
+
 
         # __init__ içinde (diğer os.getenv okumalarının yanına)
         self.LONG_DELIVER_WORDS = int(os.getenv("LONG_DELIVER_WORDS", "30"))   # metin için varsayılan: 30 kelime
@@ -3064,11 +4665,30 @@ class ChatbotAPI:
         self.LONG_TABLE_ROWS    = int(os.getenv("LONG_TABLE_ROWS", "60"))      # tablo satır eşiği
         self.LONG_TOKENS        = int(os.getenv("LONG_TOKENS", "6500"))        # güvenlik tavanı (yaklaşık token)
         self.RAG_ONLY = os.getenv("RAG_ONLY", "0") == "1"
+        self.USE_ANSWER_CACHE = os.getenv("USE_ANSWER_CACHE", "0") == "1"
+        self.TEXT_COMPARE_WHEN_NOT_EQUIPMENT = True   # donanım dışı kıyaslarda tablo yerine metin
         self.RAG_FROM_SQL_ONLY = os.getenv("RAG_FROM_SQL_ONLY", "0") == "1"
         self.DISABLE_BRIDGE = os.getenv("DISABLE_BRIDGE", "0") == "1"
         # --- Hybrid RAG bayrakları ---
         self.HYBRID_RAG = os.getenv("HYBRID_RAG", "1") == "1"   # default açık
         self.logger.info(f"[ENV] HYBRID_RAG={self.HYBRID_RAG}, EMBED_MODEL={os.getenv('EMBED_MODEL','text-embedding-3-large')}")
+        # Vector Store kısa özetlerini ve RAG metnini yüzeye çıkarma
+        self.RAG_SUMMARY_EVERY_ANSWER = os.getenv("RAG_SUMMARY_EVERY_ANSWER", "0") == "1"
+        self.PREFER_RAG_TEXT = os.getenv("PREFER_RAG_TEXT", "0") == "1"
+        # --- SQL-RAG ayarları ---
+        self.SQL_RAG_ALWAYS_ON = os.getenv("SQL_RAG_ALWAYS_ON", "1") == "1"
+        self.SQL_RAG_SHORT_CIRCUIT = os.getenv("SQL_RAG_SHORT_CIRCUIT", "1") == "1"
+        self.SQL_MD_GLOB = os.getenv("SQL_MD_GLOB", os.path.join("sql_docs", "**", "*.sql.md"))
+
+        self.sqlrag = SQLRAG(kb_glob=self.SQL_MD_GLOB, db_path=os.getenv("SQL_RAG_DB", "/mnt/data/sql_rag.db"))
+        try:
+            self.sqlrag.build_or_update_index()
+            self.logger.info(f"[SQL-RAG] Index hazır: {self.SQL_MD_GLOB}")
+        except Exception as e:
+            self.logger.error(f"[SQL-RAG] indeksleme hatası: {e}")
+
+        # 🔴 Model+trim kıyaslarında RAG'i zorunlu kıl
+        self.RAG_FOR_MODEL_TRIM_COMPARE = os.getenv("RAG_FOR_MODEL_TRIM_COMPARE", "1") == "1"
 
         # (opsiyonel) ilk açılışta otomatik indexleme
         if self.HYBRID_RAG and os.getenv("KB_REINDEX_ON_BOOT", "0") == "1":
@@ -3168,8 +4788,9 @@ class ChatbotAPI:
         self.fuzzy_cache_queue = queue.Queue()
 
         self.stop_worker = False
-        self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
-        self.worker_thread.start()
+        if self.USE_ANSWER_CACHE:
+            self.worker_thread = threading.Thread(target=self._background_db_writer, daemon=True)
+            self.worker_thread.start()
 
         self.CACHE_EXPIRY_SECONDS = 43200
         
@@ -3268,6 +4889,16 @@ class ChatbotAPI:
 
 
         self.USE_OPENAI_FILE_SEARCH = os.getenv("USE_OPENAI_FILE_SEARCH", "0") == "1"
+                # --- SQL RAG anahtarları ---
+        self.USE_SQL_RAG          = os.getenv("USE_SQL_RAG", "1") == "1"
+        self.SQL_RAG_ALWAYS_ON    = os.getenv("SQL_RAG_ALWAYS_ON", "1") == "1"
+        self.SQL_RAG_HIDE_QUERY   = os.getenv("SQL_RAG_HIDE_QUERY", "1") == "1"
+        self.HIDE_SOURCES         = os.getenv("HIDE_SOURCES", "1") == "1"
+        self.VECTOR_STORE_SQL_NAME= os.getenv("VECTOR_STORE_SQL_NAME", "SkodaSQLKB")
+        self.VECTOR_STORE_SQL_ID  = os.getenv("VECTOR_STORE_SQL_ID", "")
+        self.SQL_RAG_DIRS         = [p.strip() for p in os.getenv(
+            "SQL_RAG_DIRS", "modules/sql, sql, docs/sql"
+        ).split(",") if p.strip()]
         # Her yanıta Vector Store özet bloğu eklensin mi? (varsayılan: açık)
         self.RAG_SUMMARY_EVERY_ANSWER = os.getenv("RAG_SUMMARY_EVERY_ANSWER", "1") == "1"
         self.logger.info(f"[KB] USE_OPENAI_FILE_SEARCH = {self.USE_OPENAI_FILE_SEARCH}")
@@ -3276,7 +4907,10 @@ class ChatbotAPI:
             self.logger.info("[KB] Initializing vector store upload...")
             self._ensure_vector_store_and_upload()
             self._enable_file_search_on_assistants()
-
+        # --- SQL RAG vector store'u hazırla ---
+        if self.USE_SQL_RAG:
+            self.logger.info("[SQL-RAG] Initializing SQL vector store upload...")
+            self._ensure_sql_vector_store_and_upload()
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         # Debug: Hangi vector_stores API yüzeyi mevcut?
         try:
@@ -3532,35 +5166,7 @@ class ChatbotAPI:
         return self.IMAGE_SYNONYM_RE.sub(repl, user_message)
 
     def _correct_trim_typos(self, user_message: str) -> str:
-        known_words = [
-            "premium", "elite", "monte", "carlo", "prestige", "sportline",
-            "e", "prestige", "60", "coupe", "85x"
-        ]
-        splitted = user_message.split()
-        new_tokens = []
-        for token in splitted:
-            best = self.utils.fuzzy_find(token, known_words, threshold=0.9)
-            if best:
-                new_tokens.append(best)
-            else:
-                new_tokens.append(token)
-
-        combined_tokens = []
-        skip_next = False
-        for i in range(len(new_tokens)):
-            if skip_next:
-                skip_next = False
-                continue
-            if i < len(new_tokens) - 1:
-                if (new_tokens[i].lower() == "monte" and new_tokens[i+1].lower() == "carlo"):
-                    combined_tokens.append("monte carlo")
-                    skip_next = True
-                else:
-                    combined_tokens.append(new_tokens[i])
-            else:
-                combined_tokens.append(new_tokens[i])
-
-        return " ".join(combined_tokens)
+        return user_message  # fuzzy düzeltme kaldırıldı
 
     
 
@@ -3573,65 +5179,18 @@ class ChatbotAPI:
         return dst
 
     def _correct_model_typos(self, user_message: str) -> str:
-        """
-        'fabi' → 'fabia', 'karok' → 'karoq' vb.
-        Kelime bazında fuzzy eşleştirip yalnızca model adlarını düzeltir.
-        """
-        canon = ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
-
-        def repl(m):
-            token = m.group(0)
-            norm = normalize_tr_text(token).lower()
-            best = self.utils.fuzzy_find(norm, canon, threshold=self.MODEL_FUZZY_THRESHOLD)
-            if best:
-                return self._apply_case_like(token, best)
-            return token
-
-        # Türkçe karakterler dahil kelime yakala
-        return re.sub(r"\b[0-9A-Za-zçğıöşüÇĞİÖŞÜ]+\b", repl, user_message)
-
+        return user_message  # fuzzy düzeltme kaldırıldı
 
     def _search_in_assistant_cache(self, user_id, assistant_id, new_question, threshold):
-        if self._has_kac_word(new_question):
-            return None, None
-        if not assistant_id:
-            return None, None
-        if user_id not in self.fuzzy_cache:
-            return None, None
-        if assistant_id not in self.fuzzy_cache[user_id]:
-            return None, None
-
-        new_q_lower = new_question.strip().lower()
-        now = time.time()
-        best_ratio = 0.0
-        best_answer = None
-
-        for item in self.fuzzy_cache[user_id][assistant_id]:
-            if (now - item["timestamp"]) > self.CACHE_EXPIRY_SECONDS:
-                continue
-            old_q = item["question"]
-            ratio = difflib.SequenceMatcher(None, new_q_lower, old_q).ratio()
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_answer = item["answer_bytes"]
-
-        if best_ratio >= threshold:
-            return best_answer, best_ratio
-
-        return None, None
+        return None, None  # fuzzy cache KAPAL
 
     def _find_fuzzy_cached_answer(self, user_id: str, new_question: str, assistant_id: str, threshold=0.9):
-        if self._has_kac_word(new_question):
-            self.logger.info("[CACHE] Bypass: 'kaç' tespit edildi -> _find_fuzzy_cached_answer kapatıldı.")
-            return None
-
-        ans, ratio = self._search_in_assistant_cache(user_id, assistant_id, new_question, threshold)
-        if ans:
-            return ans
-        return None
+        return None  # fuzzy cache KAPALI
 
     def _store_in_fuzzy_cache(self, user_id: str, username: str, question: str,
                               answer_bytes: bytes, assistant_id: str, conversation_id: int):
+        if not getattr(self, "USE_ANSWER_CACHE", False):
+            return
         q_lower = question.strip().lower()
         if user_id not in self.fuzzy_cache:
             self.fuzzy_cache[user_id] = {}
@@ -3649,51 +5208,14 @@ class ChatbotAPI:
         self.fuzzy_cache_queue.put(record)
 
     def _extract_models(self, text: str) -> set:
-        """
-        Metinden Skoda model adlarını çıkarır (yazım hatalarıyla birlikte).
-
-        Çalışma biçimi:
-        1) normalize_tr_text ile küçük harfe indirip doğrudan içerme kontrolü
-        2) Türkçe dostu tokenizasyon ve token başına fuzzy eşleşme
-            (örn. 'fabi' -> 'fabia', 'karok' -> 'karoq', 'kodıak' -> 'kodiaq')
-
-        Dönüş: {'fabia', 'karoq'} gibi normalize (küçük harf) model adları kümesi.
-        """
         if not text:
             return set()
-
         s = normalize_tr_text(text).lower()
+        CANON = ("fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq","test")
+        # Sadece doğrudan içerme + token bazlı exact eşleşme
+        tokens = [re.sub(r"[’'`´‘’]?[ıiuü]?$", "", t) for t in re.findall(r"[0-9a-zçğıöşü]+", s)]
+        return {m for m in CANON if m in tokens or m in s}
 
-        CANON = (
-            "fabia", "scala", "kamiq", "karoq", "kodiaq",
-            "octavia", "superb", "enyaq", "elroq", "test"
-        )
-
-        # 1) Hızlı yol: doğrudan metin içinde geçenler
-        found = {m for m in CANON if m in s}
-
-        # 2) Fuzzy: yazım hataları için kelime bazlı tarama
-        #    (Türkçe karakterleri koruyan bir regex ile tokenizasyon)
-        tokens = re.findall(r"[0-9a-zçğıöşü]+", s, flags=re.IGNORECASE)
-
-        # Yanlış pozitifleri azaltmak için birkaç basit filtre
-        SKIP_TOKENS = {"fiat"}                        # başka marka
-        SKIP_PREFIXES = ("fiyat",)                    # 'fiyat' ~ 'fabia' karışmasın
-        th = getattr(self, "MODEL_FUZZY_THRESHOLD", 0.80)
-
-        for tok in tokens:
-            if len(tok) < 3:
-                continue
-            if tok in SKIP_TOKENS:
-                continue
-            if any(tok.startswith(pfx) for pfx in SKIP_PREFIXES):
-                continue
-
-            best = self.utils.fuzzy_find(tok, CANON, threshold=th)
-            if best:
-                found.add(best)
-
-        return found
     
         
 
@@ -3735,6 +5257,11 @@ class ChatbotAPI:
         user_message = data.get("question", "")
         user_id = data.get("user_id", username)
         name_surname = data.get("nam_surnam", username)
+        # BUNU _ask içinde, user_message/user_id alındıktan hemen sonra ekle:
+        state = self.user_states.setdefault(user_id, {})
+        state.setdefault("threads", {})
+        state.setdefault("cmp_models", [])   # yeni: iki-model bağlamı
+
         
         if not user_message:
             return jsonify({"response": "Please enter a question."})
@@ -3748,6 +5275,32 @@ class ChatbotAPI:
         corrected_message = self._correct_all_typos(user_message)
         lower_corrected = corrected_message.lower().strip()
         user_models_in_msg = self._extract_models(corrected_message)
+        # EK: sırayı korumak için
+        pairs_for_order = extract_model_trim_pairs(corrected_message.lower())
+        ordered_models = []
+        for m, _ in pairs_for_order:
+            if m not in ordered_models:
+                ordered_models.append(m)
+        # fallback: sadece set ile yakalandıysa
+        if not ordered_models and user_models_in_msg:
+            ordered_models = list(user_models_in_msg)
+
+        # === YENİ: iki-model bağlamı (cmp_models) güncelle
+        pair = list(state.get("cmp_models", []))   # <-- güvenli
+
+        if len(ordered_models) >= 2:
+            pair = ordered_models[:2]  # “son yazılan” iki model bağlam olur
+        elif len(ordered_models) == 1:
+            m = ordered_models[0]
+            if not pair:
+                pair = [m]
+            elif m not in pair:
+                # “yeni model” geldiyse çifti kaydır: eski son + yeni
+                # (ör. [fabia, scala] varken kullanıcı “karoq” yazdı → [scala, karoq])
+                pair = [pair[-1], m]
+        # len==0 ise hiçbir şey yapma (pair aynen kalsın)
+
+        self.user_states[user_id]["cmp_models"] = pair[:2]
         price_intent = self._is_price_intent(corrected_message)
         # _ask veya _generate_response başında, düzeltmelerden sonra:
         if self._mentions_non_skoda(corrected_message):
@@ -3796,7 +5349,7 @@ class ChatbotAPI:
         else:
             # Fuzzy Cache kontrol (Sadece görsel isteği değilse)
             cached_answer = None
-            if not is_image_req and not skip_cache_for_price_all and not skip_cache_for_kac:
+            if self.USE_ANSWER_CACHE and not is_image_req and not skip_cache_for_price_all and not skip_cache_for_kac:
                 cached_answer = self._find_fuzzy_cached_answer(
                     user_id,
                     corrected_message,
@@ -3941,7 +5494,16 @@ class ChatbotAPI:
 
                 except Exception as _e:
                     self.logger.error(f"[RAG-SUMMARY] streaming failed: {_e}")
-
+                # ➊.b SQL RAG bloğu (ayrı vector store)
+                try:
+                    for sql_chunk in self._yield_sql_rag_block(
+                        user_id=user_id, user_message=corrected_message
+                    ):
+                        sql_chunk = self._sanitize_bytes(sql_chunk)
+                        final_answer_parts.append(sql_chunk)
+                        yield sql_chunk
+                except Exception as _e:
+                    self.logger.error(f"[SQL-RAG] streaming failed: {_e}")
                 # ➋ Artık final_answer_parts yalnızca bytes: bu join düşmez
                 full_answer = b"".join(final_answer_parts).decode("utf-8", errors="ignore")
                 conversation_id = save_to_db(user_id, user_message, full_answer, username=name_surname)
@@ -3949,8 +5511,7 @@ class ChatbotAPI:
                 self.user_states[user_id]["last_conversation_id"] = conversation_id
                 self.user_states[user_id]["last_user_message"] = user_message
                 self.user_states[user_id]["last_assistant_answer"] = full_answer
-
-                if (not is_image_req and not is_non_sentence_short_reply(corrected_message) and not skip_cache_for_kac):
+                if self.USE_ANSWER_CACHE and (not is_image_req and not is_non_sentence_short_reply(corrected_message) and not skip_cache_for_kac):
                     answer_bytes = b"".join(final_answer_parts)          # zaten bytes
                     self._store_in_fuzzy_cache(user_id, name_surname, corrected_message, answer_bytes, new_assistant_id, conversation_id)
                 yield f"\n[CONVERSATION_ID={conversation_id}]".encode("utf-8")
@@ -4239,7 +5800,56 @@ class ChatbotAPI:
                 t = self.client.beta.threads.create()
             thread_id = t.id
             threads[assistant_id] = thread_id
-        return thread_id  
+        return thread_id
+    def _yield_sql_rag_block(self, *, user_id: str, user_message: str):
+        """Her cevabın SONUNA 'SQL RAG' kısa bloğu ekler."""
+        if not (self.USE_SQL_RAG and self.SQL_RAG_ALWAYS_ON):
+            return
+        if not getattr(self, "VECTOR_STORE_SQL_ID", ""):
+            yield "\n<small>SQL RAG: kaynak havuzu bağlı değil.</small>".encode("utf-8")
+            return
+        assistant_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
+        if not assistant_id:
+            return
+        try:
+            tr = {"file_search": {"vector_store_ids": [self.VECTOR_STORE_SQL_ID]}}
+            hide_query = getattr(self, "SQL_RAG_HIDE_QUERY", True)
+            instructions = (
+                "Yalnızca file_search sonuçlarını kullan. "
+                "ÇIKTI: 'SQL RAG' için 1–3 maddelik çok kısa özet ver. "
+                "SQL sorgusunu YAZMA, kod bloğu KULLANMA. "
+                "Kaynak adı/ID yazma."
+            )
+            if not hide_query:
+                instructions = (
+                    "Yalnızca file_search sonuçlarını kullan. "
+                    "ÇIKTI: 1–3 maddelik kısa özet ve tek bir ```sql``` kod bloğu. "
+                    "Kaynak adı/ID yazma."
+                )
+            rag_text = self._ask_assistant(
+                user_id=user_id,
+                assistant_id=assistant_id,
+                content=user_message,
+                timeout=35.0,
+                instructions_override=instructions,
+                ephemeral=True,
+                tool_resources_override=tr
+            ) or ""
+            rag_text = rag_text.strip()
+            if not rag_text:
+                yield "\n<small>SQL RAG: bu soruyla eşleşen kayıt bulunamadı.</small>".encode("utf-8")
+                return
+            # Basit başlık ekleyip iletelim
+            
+                    # Sorguyu ve kaynak izlerini gizle
+            if hide_query:
+                rag_text = self._strip_code_fences(rag_text)
+                rag_text = self._strip_source_mentions(rag_text)
+            # Başlık + temiz metin
+            yield ("\n\n<b>SQL RAG</b>\n" + rag_text + "\n").encode("utf-8")
+        except Exception as e:
+            self.logger.error(f"[SQL-RAG] summary failed: {e}")
+            yield "\n<small>SQL RAG: hata oluştu.</small>".encode("utf-8")  
     def _ask_assistant(
         self,
         user_id: str,
@@ -4247,20 +5857,17 @@ class ChatbotAPI:
         content: str,
         timeout: float = 60.0,
         instructions_override: str | None = None,
-        ephemeral: bool = False
-    ) -> str:
-        # File Search vector store’u varsa tool_resources hazırla
-        tr = None
-        if getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "VECTOR_STORE_ID", ""):
+        ephemeral: bool = False,
+        tool_resources_override: dict | None = None
+        ) -> str:
+        # File Search tool kaynaklarını belirle
+        tr = tool_resources_override
+        if tr is None and getattr(self, "USE_OPENAI_FILE_SEARCH", False) and getattr(self, "VECTOR_STORE_ID", ""):
             tr = {"file_search": {"vector_store_ids": [self.VECTOR_STORE_ID]}}
 
         # Thread seçimi
         if ephemeral:
-            # Ephemeral → her çağrıda temiz thread
-            if tr:
-                t = self.client.beta.threads.create(tool_resources=tr)
-            else:
-                t = self.client.beta.threads.create()
+            t = self.client.beta.threads.create(tool_resources=tr) if tr else self.client.beta.threads.create()
             thread_id = t.id
         else:
             thread_id = self._ensure_thread(user_id, assistant_id, tool_resources=tr)
@@ -4350,6 +5957,19 @@ class ChatbotAPI:
         # _ask veya _generate_response başında, düzeltmelerden sonra:
         #if self._mentions_non_skoda(corrected_message):
          #   return self.app.response_class("Üzgünüm sadece Skoda hakkında bilgi verebilirim.", mimetype="text/plain")
+        # --- SQL-RAG: her soruda devrede ---
+        if getattr(self, "SQL_RAG_ALWAYS_ON", False):
+            rag_bytes = self._answer_with_sql_rag(user_message, user_id)
+            if rag_bytes:
+                # İsterseniz RAG'i ÖNCE gösterip sonra eski görsel/teknik akışa devam etmek için
+                # aşağıdaki 'return'ı kaldırın. Her durumda "her yanıtta RAG" şartı sağlanmış olur.
+                if self.SQL_RAG_SHORT_CIRCUIT:
+                    yield rag_bytes
+                    return
+                else:
+                    # RAG'i başa ekle, sonra mevcut akışa devam et
+                    yield rag_bytes
+
         corrected_message = user_message
         if self._mentions_non_skoda(user_message):
             # Tam olarak istenen cümle (ek link/ekstra metin yok)
@@ -4373,7 +5993,52 @@ class ChatbotAPI:
             self.user_states[user_id]["current_trim"] = ""
 
         lower_msg = user_message.lower()
+        # -- Erken: kıyas niyetini hemen hesapla (ilk kullanım bundan sonra!)
+        compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
+        wants_compare = any(ck in lower_msg for ck in compare_keywords)
+
+        is_image_req_early = (
+        self.utils.is_image_request(lower_msg) or
+        self._is_image_intent_local(lower_msg) or
+        ("renk" in lower_msg)  # renk(ler) isteklerini de görsel sayalım
+        )
+        # Yeni mesaj "opsiyonel" demiyorsa opsiyonel bekleme modunu temizle
+        if "opsiyonel" not in lower_msg:
+            self.user_states.setdefault(user_id, {})["pending_opsiyonel_model"] = None
+
         price_intent = self._is_price_intent(user_message)
+        # -- Erken niyet tespiti --
+        user_trims_in_msg = extract_trims(lower_msg)            # trim yakalayıcı (premium, prestige, rs, e sportline 60 vb.)
+        pairs_all = extract_model_trim_pairs(lower_msg)         # (model, trim) çiftleri
+        pairs_with_trim = [(m, (t or "").strip()) for (m, t) in pairs_all if (t or "").strip()]
+
+        # 🔴 Model+trim kıyası -> RAG öncelikli
+        if getattr(self, "RAG_FOR_MODEL_TRIM_COMPARE", True) and wants_compare:
+            # A) Metinde en az iki adet (model,trim) çifti varsa
+            if len(pairs_with_trim) >= 2:
+                yield self._answer_via_rag_compare(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    user_message=user_message,
+                    pairs=pairs_with_trim
+                )
+                # opsiyon: RAG başlık bayrağı
+                self.user_states[user_id]["rag_head_delivered"] = True
+                return
+
+            # B) Tek model adı + en az iki trim yazılmışsa (örn. "Octavia Premium ve Prestige")
+            models_in_msg = list(self._extract_models(user_message))
+            if len(models_in_msg) == 1 and len(user_trims_in_msg) >= 2:
+                pairs_alt = [(models_in_msg[0], t) for t in user_trims_in_msg]
+                yield self._answer_via_rag_compare(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    user_message=user_message,
+                    pairs=pairs_alt
+                )
+                self.user_states[user_id]["rag_head_delivered"] = True
+                return
+
         teknik_keywords = [
             "teknik özellik", "teknik veriler", "teknik veri", "motor özellik", "motor donanım", "motor teknik", "teknik tablo", "teknik", "performans"
         ]
@@ -4381,6 +6046,25 @@ class ChatbotAPI:
         compare_keywords = ["karşılaştır", "karşılaştırma", "kıyas", "kıyasla", "kıyaslama", "vs", "vs."]
         wants_compare = any(ck in lower_msg for ck in compare_keywords)
         models_in_msg2 = list(self._extract_models(user_message))
+                # --- [YENİ] Trim + Model birlikteyse tablo göstermeden RAG cevabı getir ---
+        models_in_msg = list(self._extract_models(user_message))
+        trims_in_msg = extract_trims(user_message)
+
+        has_model_and_trim = bool(models_in_msg and trims_in_msg)
+        has_teknik_compare = any(k in lower_msg for k in [
+            "karşılaştır", "kıyas", "vs", "vs.", "teknik karşılaştırma"
+        ])
+
+        # Eğer model + trim birlikteyse ve teknik kıyaslama değilse tablo gösterme → RAG cevabı getir
+        if has_model_and_trim and not has_teknik_compare:
+            assistant_id = self.user_states[user_id].get("assistant_id")
+            if assistant_id:
+                yield self._answer_via_rag_only(
+                    user_id=user_id,
+                    assistant_id=assistant_id,
+                    user_message=user_message
+                )
+                return
 
         if price_intent:  # ← ESKİ: if "fiyat" in lower_msg:
             yield from self._yield_fiyat_listesi(user_message, user_id=user_id)
@@ -4446,8 +6130,63 @@ class ChatbotAPI:
             # Belirtilen modele g\u00f6re filtreleyerek ya da tam liste halinde fiyat tablosunu d\u00f6n
             yield from self._yield_fiyat_listesi(user_message, user_id=user_id)
             return
+        # --- STANDART DONANIM erken dönüş (opsiyonelden ÖNCE çalışmalı) ---
+        std_kw = ["standart", "standard", "temel donanım", "donanım listesi", "standart donanımlar", "donanımlar neler"]
+        if any(k in lower_msg for k in std_kw):
+            models_std = list(self._extract_models(user_message))
+            if not models_std:
+                # Asistan bağlamından veya last_models'tan düş
+                asst_id = (self.user_states.get(user_id, {}) or {}).get("assistant_id")
+                ctx_model = (self.ASSISTANT_NAME_MAP.get(asst_id, "") if asst_id else "")
+                if ctx_model:
+                    models_std = [ctx_model.lower()]
+                elif (self.user_states.get(user_id, {}) or {}).get("last_models"):
+                    lm = list(self.user_states[user_id]["last_models"])
+                    if len(lm) == 1:
+                        models_std = [lm[0]]
+
+            if models_std:
+                m = models_std[0].lower()
+                md = (self.STANDART_DONANIM_TABLES.get(m) or "").strip()
+                if md:
+                    picked = self.select_table(md, "standard") or md  # alt tablo
+                    yield f"<b>{m.title()} Standart Donanımlar</b><br>".encode("utf-8")
+                    yield fix_markdown_table(picked).encode("utf-8") if picked.lstrip().startswith("|") else picked.encode("utf-8")
+                    return
+                else:
+                    yield f"{m.title()} için standart donanım tablosu tanımlı değil.<br>".encode("utf-8")
+                    return
+        # --- STANDART DONANIM sonu ---
+
         # _generate_response içinde, price/test-drive kontrollerinden SONRA
         # ve teknik/karşılaştırma bloklarına GİRMEDEN hemen önce:
+        models_for_cmp = list(self._extract_models(user_message))
+        requested_specs = self._find_requested_specs(user_message)
+        # YENİ: Mesaj model içermiyorsa cmp_models'ı kullan
+        if (not models_for_cmp):
+            cm = (self.user_states.get(user_id, {}) or {}).get("cmp_models", [])
+            if len(cm) >= 2:
+                models_for_cmp = list(cm[:2])
+
+        if requested_specs and len(models_for_cmp) >= 2:
+            if len(requested_specs) == 1:
+                ans = self._answer_two_model_spec_diff(models_for_cmp, requested_specs[0])
+                if ans:
+                    yield ans.encode("utf-8"); return
+        # Eğer metinde model yok ama oturumda son konuşulan birden fazla model varsa, onu kullan
+        if (not models_for_cmp) and self.user_states.get(user_id, {}).get("last_models"):
+            lm = list(self.user_states[user_id]["last_models"])
+            if len(lm) >= 2:
+                models_for_cmp = lm
+
+        if requested_specs and len(models_for_cmp) >= 2:
+            if len(requested_specs) == 1:
+                ans = self._answer_two_model_spec_diff(models_for_cmp, requested_specs[0])
+                if ans:
+                    yield ans.encode("utf-8"); return
+            # birden fazla metrik istendiyse tablolu kıyas yolu çalışsın
+
+        # >>> bundan SONRA tek-model QA’yı dene
         qa_bytes = self._answer_teknik_as_qa(user_message, user_id)
         if qa_bytes:
             qa_text = qa_bytes.decode("utf-8", errors="ignore").strip()
@@ -4458,6 +6197,94 @@ class ChatbotAPI:
                 # Tablo değilse düz metin olarak ilet
                 yield self._deliver_locally(qa_text, original_user_message=user_message, user_id=user_id)
             return
+        # *** TEKNİK FARK SORUSU (iki model + tek metrik) ***
+        models_for_cmp = list(self._extract_models(user_message))
+        requested_specs = self._find_requested_specs(user_message)
+
+        if requested_specs and len(models_for_cmp) >= 2:
+            # tek metrik ise (örn. 'hız', '0-100', 'beygir', 'tork' ...)
+            if len(requested_specs) == 1:
+                ans = self._answer_two_model_spec_diff(models_for_cmp, requested_specs[0])
+                if ans:
+                    yield ans.encode("utf-8")
+                    return
+            # birden çok metrik istendiyse eski teknik karşılaştırma tablosuna düş
+
+        # --- DONANIM (STANDART/OPSİYONEL) KARŞILAŞTIRMA — DB KAYNAKLI ---
+        equip_words = ["donanım","donanim","standart","opsiyonel","özellik","ozellik","paket"]
+        equip_intent   = any(w in lower_msg for w in equip_words)
+        compare_words  = ["karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs."]
+        wants_compare  = any(ck in lower_msg for ck in compare_words)
+
+        # Teknik anahtar kelimesi var mı?
+        requested_specs = self._find_requested_specs(user_message)  # ← 'hız', '0-100', 'beygir', 'tork' vb. yakalanır
+        has_teknik_word = bool(requested_specs) or any(kw in lower_msg for kw in [
+            "teknik özellik", "teknik veriler", "teknik veri", "motor özellik",
+            "motor donanım", "motor teknik", "teknik tablo", "teknik", "performans",
+            "0-100", "0 – 100", "0 100", "ivme", "hız", "maksimum hız", "maks hız",
+            "beygir", "hp", "ps", "tork", "kw"
+        ])
+
+        models_for_cmp = list(self._extract_models(user_message))
+        equip_words = ["donanım","donanim","standart","opsiyonel","özellik","ozellik","paket"]
+        equip_intent = any(w in lower_msg for w in equip_words)
+        # 🔑 Kural:
+        #  - Eğer kullanıcı "karşılaştır/kıyas" dedi VEYA 2+ model yazdıysa
+        #  - VE cümlede teknik anahtar kelimesi YOKSA
+        #  -> Önce DONANIM kıyasını DB’den dene (donanım kelimesi geçmesi gerekmiyor)
+        if ((wants_compare or len(models_for_cmp) >= 2)
+                              # <- donanım niyeti şart
+            and not has_teknik_word 
+            and not requested_specs 
+            and not is_image_req_early):
+            # Sıralı model listesi (cümlede geçtiği sıraya göre)
+            pairs_for_order = extract_model_trim_pairs(lower_msg)
+            ordered_models = [m for m, _ in pairs_for_order]
+
+            # Eğer extract_model_trim_pairs() hiçbir şey bulamadıysa, fallback olarak doğrudan extract_models() çıktısını kullan
+            if not ordered_models:
+                ordered_models = list(self._extract_models(user_message))
+
+            # Son kontrol: 2'den fazla model varsa ilk ikiyi al (Fabia & Kamiq gibi)
+            if len(ordered_models) > 2:
+                ordered_models = ordered_models[:2]
+
+            import inspect, logging
+            f = self._build_equipment_comparison_table_from_sql
+            logging.warning("EQUIP builder signature: %s | from: %s",
+                            inspect.signature(f),
+                            f.__code__.co_filename)
+
+            # 2+ model varsa kıyasla
+            if len(ordered_models) >= 2:
+                only = self._detect_equipment_filter_keywords(lower_msg)  # "sadece jant, far" gibi
+                trim_in_msg = next(iter(extract_trims(lower_msg)), None)
+                import inspect  # dosyanın en üstünde varsa tekrar eklemene gerek yok
+
+                params = dict(models=ordered_models, only_keywords=(only or None))
+                if "trim" in inspect.signature(self._build_equipment_comparison_table_from_sql).parameters:
+                    params["trim"] = trim_in_msg
+
+                md = self._build_equipment_comparison_table_from_sql(**params)
+
+                if md:
+                    title = " vs ".join([m.title() for m in ordered_models])
+                    yield f"<b>{title} — Donanım Karşılaştırması (DB)</b><br>".encode("utf-8")
+                    yield (md + "\n\n").encode("utf-8")
+
+                    # Kullanıcı deneyimi: hızlı ekleme linkleri
+                    others = [m for m in self.MODEL_VALID_TRIMS.keys() if m not in ordered_models]
+                    if others:
+                        links = "<b>Karşılaştırmaya ekle:</b><br>"
+                        for m in others:
+                            cmd = (" ".join(ordered_models) + f" ve {m} donanım karşılaştırması").strip()
+                            safe_cmd = cmd.replace("'", "\\'")
+                            links += f"""&bull; <a href="#" onclick="sendMessage('{safe_cmd}');return false;">{m.title()}</a><br>"""
+                        yield links.encode("utf-8")
+                    return
+                else:
+                    yield "Karşılaştırma için uygun donanım tablosu veritabanında bulunamadı.<br>".encode("utf-8")
+                    return
 
 
         # --- TEKNİK KARŞILAŞTIRMA / KIYAS ---
@@ -4492,25 +6319,57 @@ class ChatbotAPI:
                 pass
             else:
                 only = self._detect_spec_filter_keywords(lower_msg)  # opsiyonel: 'sadece ...'
-                md = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
-                if not md:
-                    yield "Karşılaştırma için uygun teknik tablo bulunamadı.<br>".encode("utf-8")
-                    return
+                if has_teknik_word and (wants_compare or len(ordered_models) >= 2):
+                    valid = [m for m in ordered_models if m in self.TECH_SPEC_TABLES]
+                    if len(valid) >= 2:
+                        # Tablo istenmemişse ve “donanım” kıyası değilse → METİN üret
+                        if getattr(self, "TEXT_COMPARE_WHEN_NOT_EQUIPMENT", True) and not re.search(r"\bdonan[ıi]m\b", lower_msg):
+                            
+                            req = self._find_requested_specs(user_message)
 
-                title = " vs ".join([m.title() for m in valid])
-                yield f"<b>{title} — Teknik Özellikler Karşılaştırması</b><br>".encode("utf-8")
-                yield (md + "\n\n").encode("utf-8")
+                            # ➊ Kullanıcı tek metrik istediyse (örn. 0-100, güç, tork, uzunluk…)
+                            if req and len(req) == 1:
+                                ans = self._answer_two_model_spec_diff(valid, req[0])
+                                if ans:
+                                    yield (ans).encode("utf-8"); return
 
-                # Hızlı ekleme linkleri (kullanıcı deneyimi)
-                others = [m for m in self.MODEL_VALID_TRIMS.keys() if m not in valid and m in self.TECH_SPEC_TABLES]
-                if others:
-                    links = "<b>Karşılaştırmaya ekle:</b><br>"
-                    for m in others:
-                        cmd = (" ".join(valid) + f" ve {m} teknik özellikler karşılaştırma").strip()
-                        safe_cmd = cmd.replace("'", "\\'")
-                        links += f"""&bull; <a href="#" onclick="sendMessage('{safe_cmd}');return false;">{m.title()}</a><br>"""
-                    yield links.encode("utf-8")
-                return
+                            # ➋ Birden fazla veya hiç metrik yakalanmadıysa: çekirdek metriklerden 3’lü kısa kıyas
+                            core_metrics = [
+                                "Maks. güç (kW/PS @ dev/dak)",
+                                "Maks. tork (Nm @ dev/dak)",
+                                "0-100 km/h (sn)",
+                            ]
+                            # İsterseniz uzunluk sorularını da destekleyin:
+                            if req and any("Uzunluk/Genişlik/Yükseklik" in r for r in req):
+                                core_metrics = ["Uzunluk/Genişlik/Yükseklik (mm)"]
+
+                            lines = []
+                            for canon in (req or core_metrics):
+                                ans = self._answer_two_model_spec_diff(valid, canon)
+                                if ans:
+                                    lines.append(ans)
+                                if len(lines) >= 3:  # metni kısa tut
+                                    break
+
+                            if lines:
+                                yield (" ".join(lines)).encode("utf-8"); return
+
+                        # ➌ Fallback: hâlâ çıkaramadıysa eski tablo davranışına dön
+                        only = self._detect_spec_filter_keywords(lower_msg)
+                        md = self._build_teknik_comparison_table(valid, only_keywords=(only or None))
+                        if not md:
+                            yield "Karşılaştırma için uygun teknik veri bulunamadı.<br>".encode("utf-8"); return
+                        title = " vs ".join([m.title() for m in valid])
+                        yield f"<b>{title} — Teknik Özellikler Karşılaştırması</b><br>".encode("utf-8")
+                        yield (md + "\n\n").encode("utf-8")
+                        # 🔽 TEKNİK TABLO SONRASI EK BLOK 🔽
+                        spec_tbl = self._build_spec_comparison_table_from_sql(ordered_models)
+                        if spec_tbl:  # boş değilse hep ekle
+                            yield ("\n\n" + spec_tbl).encode("utf-8")
+                        # 🔼 TEKNİK TABLO SONRASI EK BLOK 🔼
+
+                        return
+
 
         # 1) Kategori eşleşmesi
         categories_pattern = r"(dijital gösterge paneli|direksiyon simidi|döşeme|jant|multimedya|renkler)"
@@ -4721,175 +6580,60 @@ class ChatbotAPI:
             return
 
         # 6) Opsiyonel tablo istekleri
+        # 6) Opsiyonel tablo istekleri
         user_trims_in_msg = extract_trims(lower_msg)
-        pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model", None)
+        pending_ops_model = self.user_states[user_id].get("pending_opsiyonel_model")
 
         if "opsiyonel" in lower_msg:
-            self.logger.info("DEBUG -> 'opsiyonel' kelimesi bulundu. Model aranıyor.")
+            # 1) Modeli çöz (mesaj -> asistan bağlamı -> last_models)
             found_model = None
-            user_models_in_msg2 = self._extract_models(user_message)
-            if len(user_models_in_msg2) == 1:
-                found_model = list(user_models_in_msg2)[0]
-            elif len(user_models_in_msg2) > 1:
-                found_model = list(user_models_in_msg2)[0]
-
-            if not found_model and assistant_id:
-                found_model = self.ASSISTANT_NAME_MAP.get(assistant_id, "").lower()
-
-            # Elroq tek donanım => doğrudan
-            if found_model and found_model.lower() == "elroq":
-                the_trim = "e prestige 60"
-                yield from self._yield_opsiyonel_table(user_id, user_message, "elroq", the_trim)
-                return
-
-            # Enyaq => hepsini beraber gösterelim
-            if found_model and found_model.lower() == "enyaq":
-                yield from self._yield_multi_enyaq_tables()
-                return
+            models_in_msg2 = list(self._extract_models(user_message))
+            if len(models_in_msg2) == 1:
+                found_model = models_in_msg2[0]
+            elif len(models_in_msg2) > 1:
+                found_model = models_in_msg2[0]
+            if not found_model:
+                asst_id = self.user_states.get(user_id, {}).get("assistant_id")
+                found_model = (self.ASSISTANT_NAME_MAP.get(asst_id, "").lower() if asst_id else "") or None
+            if (not found_model) and self.user_states.get(user_id, {}).get("last_models"):
+                lm = list(self.user_states[user_id]["last_models"])
+                if len(lm) == 1:
+                    found_model = lm[0]
 
             if not found_model:
-                yield "Hangi modelin opsiyonel donanımlarını görmek istersiniz?"
+                # model yoksa sadece model iste
+                yield "Hangi modelin opsiyonel donanımlarını görmek istersiniz?<br>(Fabia, Scala, Kamiq, Karoq, Kodiaq, Octavia, Superb, Enyaq, Elroq)".encode("utf-8")
                 return
-            else:
-                self.logger.info(f"DEBUG -> Opsiyonel istenen model: {found_model}")
-                old_model_name = self.ASSISTANT_NAME_MAP.get(assistant_id, "").lower()
-                if found_model != old_model_name:
-                    new_asst = self._assistant_id_from_model_name(found_model)
-                    if new_asst and new_asst != assistant_id:
-                        self.logger.info(f"[ASISTAN SWITCH][OPSİYONEL] {old_model_name} -> {found_model}")
-                        self.user_states[user_id]["assistant_id"] = new_asst
 
-                self.user_states[user_id]["pending_opsiyonel_model"] = found_model
-                if len(user_trims_in_msg) == 1:
-                    found_trim = list(user_trims_in_msg)[0]
-                    if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
-                        yield from self._yield_invalid_trim_message(found_model, found_trim)
-                        return
-                    #time.sleep(1)
-                    yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
-                    return
-                else:
-                    # Trim seçmemişse tablo linkleri
-                    if found_model.lower() == "fabia":
-                        yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
-                        return
-                    elif found_model.lower() == "scala":
-                        yield from self._yield_trim_options("scala", ["elite", "premium", "monte carlo"])
-                        return
-                    elif found_model.lower() == "kamiq":
-                        yield from self._yield_trim_options("kamiq", ["elite", "premium", "monte carlo"])
-                        return
-                    elif found_model.lower() == "karoq":
-                        yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
-                        return
-                    elif found_model.lower() == "kodiaq":
-                        yield from self._yield_trim_options("kodiaq", ["premium", "prestige", "sportline", "rs"])
-                        return
-                    elif found_model.lower() == "octavia":
-                        yield from self._yield_trim_options("octavia", ["elite", "premium", "prestige", "sportline", "rs"])
-                        return
-                    elif found_model.lower() == "superb":
-                        yield from self._yield_trim_options("superb", ["premium", "prestige", "l&k crystal", "sportline phev"])
-                        return
-                    elif found_model.lower() == "enyaq":
-                        yield from self._yield_trim_options("enyaq", [
-                            "e prestige 60",
-                            "coupe e sportline 60",
-                            "coupe e sportline 85x",
-                            "e sportline 60",
-                            "e sportline 85x"
-                        ])
-                        return
-                    elif found_model.lower() == "elroq":
-                        yield from self._yield_trim_options("elroq", ["e prestige 60"])
-                        return
-                    else:
-                        yield f"'{found_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
-                        return
+            # bağlama yaz
+            self.user_states[user_id]["pending_opsiyonel_model"] = found_model
 
-        # Eğer zaten opsiyonel mod bekliyorsak
-        if pending_ops_model:
-            self.logger.info(f"DEBUG -> pending_ops_model={pending_ops_model}, user_trims_in_msg={user_trims_in_msg}")
-            if user_trims_in_msg:
-                if len(user_trims_in_msg) == 1:
-                    found_trim = list(user_trims_in_msg)[0]
-                    if found_trim not in self.MODEL_VALID_TRIMS.get(pending_ops_model, []):
-                        yield from self._yield_invalid_trim_message(pending_ops_model, found_trim)
-                        return
-                    #time.sleep(1)
-                    yield from self._yield_opsiyonel_table(user_id, user_message, pending_ops_model, found_trim)
+            # 2) Trim var mı?
+            if len(user_trims_in_msg) == 1:
+                found_trim = list(user_trims_in_msg)[0]
+                if found_trim not in self.MODEL_VALID_TRIMS.get(found_model, []):
+                    yield from self._yield_invalid_trim_message(found_model, found_trim)
                     return
-                else:
-                    if pending_ops_model.lower() == "fabia":
-                        yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
-                        return
-                    elif pending_ops_model.lower() == "scala":
-                        yield from self._yield_trim_options("scala", ["elite", "premium", "monte carlo"])
-                        return
-                    elif pending_ops_model.lower() == "kamiq":
-                        yield from self._yield_trim_options("kamiq", ["elite", "premium", "monte carlo"])
-                        return
-                    elif pending_ops_model.lower() == "karoq":
-                        yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
-                        return
-                    elif pending_ops_model.lower() == "kodiaq":
-                        yield from self._yield_trim_options("kodiaq", ["premium", "prestige", "sportline", "rs"])
-                        return
-                    elif pending_ops_model.lower() == "octavia":
-                        yield from self._yield_trim_options("octavia", ["elite", "premium", "prestige", "sportline", "rs"])
-                        return
-                    elif pending_ops_model.lower() == "superb":
-                        yield from self._yield_trim_options("superb", ["premium", "prestige", "l&k crystal", "sportline phev"])
-                        return 
-                    elif pending_ops_model.lower() == "enyaq":
-                        yield from self._yield_trim_options("enyaq", [
-                            "e prestige 60",
-                            "coupe e sportline 60",
-                            "coupe e sportline 85x",
-                            "e sportline 60",
-                            "e sportline 85x"
-                        ])
-                        return
-                    elif pending_ops_model.lower() == "elroq":
-                        yield from self._yield_trim_options("elroq", ["e prestige 60"])
-                        return
-                    else:
-                        yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
-                        return
-            else:
-                # Hiç trim yazmadıysa
-                if pending_ops_model.lower() == "fabia":
-                    yield from self._yield_trim_options("fabia", ["premium", "monte carlo"])
-                    return
-                elif pending_ops_model.lower() == "scala":
-                    yield from self._yield_trim_options("scala", ["elite", "premium", "monte carlo"])
-                    return
-                elif pending_ops_model.lower() == "kamiq":
-                    yield from self._yield_trim_options("kamiq", ["elite", "premium", "monte carlo"])
-                    return
-                elif pending_ops_model.lower() == "karoq":
-                    yield from self._yield_trim_options("karoq", ["premium", "prestige", "sportline"])
-                    return
-                elif pending_ops_model.lower() == "kodiaq":
-                   yield from self._yield_trim_options("kodiaq", ["premium", "prestige", "sportline", "rs"])                     
-                elif pending_ops_model.lower() == "octavia":
-                    yield from self._yield_trim_options("octavia", ["elite", "premium", "prestige", "sportline", "rs"])
-                    return
-                elif pending_ops_model.lower() == "enyaq":
-                    yield from self._yield_trim_options("enyaq", [
-                        "e prestige 60",
-                        "coupe e sportline 60",
-                        "coupe e sportline 85x",
-                        "e sportline 60",
-                        "e sportline 85x"
-                    ])
-                    return
-                elif pending_ops_model.lower() == "elroq":
-                    yield from self._yield_trim_options("elroq", ["e prestige 60"])
-                    return
-                else:
-                    yield f"'{pending_ops_model}' modeli için opsiyonel donanım listesi tanımlanmamış.\n".encode("utf-8")
-                    return
+                # doğrudan tabloyu dök
+                yield from self._yield_opsiyonel_table(user_id, user_message, found_model, found_trim)
+                return
+
+            # 3) Trim yoksa seçenekleri ver
+            model = found_model.lower()
+            options = {
+                "fabia":   ["premium","monte carlo"],
+                "scala":   ["elite","premium","monte carlo"],
+                "kamiq":   ["elite","premium","monte carlo"],
+                "karoq":   ["premium","prestige","sportline"],
+                "kodiaq":  ["premium","prestige","sportline","rs"],
+                "octavia": ["elite","premium","prestige","sportline","rs"],
+                "superb":  ["premium","prestige","l&k crystal","sportline phev"],
+                "enyaq":   ["e prestige 60","coupe e sportline 60","coupe e sportline 85x","e sportline 60","e sportline 85x"],
+                "elroq":   ["e prestige 60"],
+            }
+            yield from self._yield_trim_options(model, options.get(model, []))
+            return
+
 
         # 7) Görsel (image) isteği
         image_mode = is_image_req or self._is_pending_image(user_id)
@@ -5448,5 +7192,6 @@ class ChatbotAPI:
 
     def shutdown(self):
         self.stop_worker = True
-        self.worker_thread.join(5.0)
+        if hasattr(self, "worker_thread"):
+            self.worker_thread.join(5.0)
         self.logger.info("ChatbotAPI shutdown complete.")  
