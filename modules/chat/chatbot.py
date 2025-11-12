@@ -1,4 +1,4 @@
-import os 
+import os
 import time
 import logging
 import re
@@ -858,6 +858,14 @@ TRIM_VARIANTS = {
 VARIANT_TO_TRIM = {v: canon for canon, lst in TRIM_VARIANTS.items() for v in lst}
 # Yardımcı: Düz liste
 TRIM_VARIANTS_FLAT = [v for lst in TRIM_VARIANTS.values() for v in lst]
+def normalize_tr_text(txt):
+    import re, unicodedata
+    # ... mevcut dönüşümler ...
+    txt = re.sub(r"\s+", " ", txt.strip().lower())
+
+    # Yeni: ek temizleme
+    tokens = [strip_tr_suffixes(w) for w in txt.split()]
+    return " ".join(tokens)
 def normalize_trim_str(t: str) -> list:
     """
     Bir trim adını, dosya adlarında karşılaşılabilecek tüm varyantlara genişletir.
@@ -969,12 +977,1366 @@ KB_MISSING_PAT = re.compile(
     re.IGNORECASE
 )
 from modules.sql_rag import SQLRAG
+# --- Basit varyant üretici (TR güvenli) ---
+def _gen_variants(s: str) -> list[str]:
+    s = (s or "").strip()
+    if not s:
+        return []
+    import re, unicodedata
+    def norm_tr(x: str) -> str:
+        from modules.data.text_norm import normalize_tr_text
+        return re.sub(r"\s+", " ", normalize_tr_text(x or "").lower()).strip()
+    base = norm_tr(s)
+    out = {s, base, base.replace(" ", ""), base.replace(" ", "_")}
+    # 1 kelimelik kısaltımsı varyantlar için
+    toks = [t for t in re.findall(r"[0-9a-zçğıöşü]+", base) if len(t) >= 2]
+    if len(toks) >= 2:
+        out.add(" ".join(toks[:2]))
+    return list(dict.fromkeys([x for x in out if x]))
+# ⬇️ Bunu importların hemen altına ekleyin (normalize_tr_text'ten önce)
+def strip_tr_suffixes(word: str) -> str:
+    if not word: 
+        return word
+    w = word.lower()
+        # 🚫 Model adlarını olduğu gibi koru
+    if w in ("fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"):
+        return w
+
+    suffixes = [
+        "nın","nin","nun","nün",
+        "dan","den","tan","ten",
+        "nda","nde",
+        "ına","ine","una","üne",
+        "ya","ye",
+        "yla","yle","la","le",
+        "da","de","ta","te",
+        "a","e","u","ü","ı","i",
+    ]
+    for suf in sorted(suffixes, key=len, reverse=True):
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            w = w[:-len(suf)]
+            break
+
+    # 🔧 Türkçe yumuşama düzeltmesi: sondaki 'ğ' köke geri dönerken 'k' olur
+    if w.endswith("ğ"):
+        w = w[:-1] + "k"
+
+    # Çok görülen istisnayı garantiye al
+    if w in ("ağırlığ","agırlığ"):
+        w = w + "k"   # → ağırlık / agırlık
+
+    return w
+
 
 class ChatbotAPI:
-    
     import difflib
     import re
+    import re, unicodedata
+    def _extract_models_spaced(self, text: str) -> set:
+        """
+        'k o d i a q' gibi harfleri ayrı yazımları yakalar.
+        """
+        import re
+        t = normalize_tr_text(text or "").lower()
+        models = ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
+        found = set()
+        for m in models:
+            # k\s*o\s*d\s*i\s*a\s*q deseni
+            pat = r"\b" + r"\s*".join(list(m)) + r"\b"
+            if re.search(pat, t):
+                found.add(m)
+        return found
+
+    def _extract_models_loose(self, text: str) -> set:
+        """
+        'ko diaq', 'k o d i a q', 'koi aq' gibi dağınık/ufak hatalı yazımları yakalamaya çalışır.
+        - Harf dışını atar, token'ları 1-2 birleşik pencerelerle dener.
+        - difflib eşleşmesi ≥ 0.72 ise model sayar.
+        """
+        import difflib, re
+        t = normalize_tr_text(text or "").lower()
+        tokens = re.findall(r"[a-zçğıöşü]+", t)
+        if not tokens:
+            return set()
+
+        # 1) Tek token ve 2'li bitişik pencereleri dene (örn. "koi"+"aq" -> "koiaq")
+        combos = set(tokens)
+        combos.update("".join(tokens[i:i+2]) for i in range(len(tokens)-1))
+
+        MODELS = ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
+        found = set()
+        for s in combos:
+            for m in MODELS:
+                if difflib.SequenceMatcher(None, s, m).ratio() >= 0.72:
+                    found.add(m)
+        return found
+
+    def _has_loose_model_attempt(self, text: str) -> bool:
+        """Mesaj yeni bir model yazmaya çalışıyor gibi mi? (gevşek tespit)"""
+        return bool(self._extract_models_loose(text))
+
+    def _best_value_from_row(self, cols, row, name_cols):
+        """
+        Aynı satırdaki 'değer' hücresini bulur.
+        - Önce value/desc/unit/data gibi kolonlara bakar
+        - Rakama/üniteye göre skorlar, en yüksek skorlu hücreyi döner
+        """
+        import re
+        units_re = re.compile(r"(nm|kw|ps|hp|km/?h|sn|g/km|l/100\s*km|kwh|dm3|cc)", re.I)
+        value_like = re.compile(r"(deger|değer|value|val|content|desc|açıklama|aciklama|icerik|içerik|spec|specval|spec_value|unit|birim|data|veri|number|num)", re.I)
+
+        # 1) Önce 'değer-benzeri' kolonları değerlendir
+        candidates = []
+        for i, c in enumerate(cols):
+            if c in name_cols:
+                continue
+            cell = str(row[i] or "").strip()
+            if not cell:
+                continue
+            score = 0
+            if value_like.search(c):      score += 2
+            if re.search(r"\d", cell):    score += 3
+            if units_re.search(cell.replace(" ", "")): score += 3
+            score += min(2, len(re.findall(r"\d", cell)))
+            candidates.append((score, cell))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            return candidates[0][1]
+
+        # 2) Olmadıysa tüm kolonlar içinde rakam/ünite arayarak dene
+        fallback = []
+        for i, c in enumerate(cols):
+            if c in name_cols:
+                continue
+            cell = str(row[i] or "").strip()
+            if not cell:
+                continue
+            score = (3 if re.search(r"\d", cell) else 0) + (3 if units_re.search(cell.replace(" ", "")) else 0)
+            if score:
+                fallback.append((score, cell))
+        if fallback:
+            fallback.sort(key=lambda x: x[0], reverse=True)
+            return fallback[0][1]
+
+        
+        num_unit = re.compile(r"\d")
+        unit_pat = re.compile(r"(nm|kw|ps|hp|km/?h|sn|g/km|l/100\s*km|kwh|dm3|cc)", re.I)
+        for i, c in enumerate(cols):
+            if c in name_cols:
+                continue
+            cell = str(row[i] or "").strip()
+            if num_unit.search(cell) and unit_pat.search(cell.replace(" ", "")):
+                return cell
+        return ""
+
+    def _semantic_match_column(self, user_query: str, columns: list[str]) -> str | None:
+        """
+        Kullanıcının yazdığı doğal ifadeyi (ör. 'torku', 'gücü', 'menzili')
+        SQL tablosundaki en uygun kolonla eşleştirir.
+        OpenAI Embedding (text-embedding-3-small) kullanır.
+        """
+        from openai import OpenAI
+        import numpy as np
+        import os, re
+
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        model = "text-embedding-3-small"
+
+        # --- 1️⃣ Normalize ve sadeleştir ---
+        q = re.sub(r"[^0-9a-zçğıöşü\s]", " ", user_query.lower()).strip()
+        if not q or not columns:
+            return None
+
+        try:
+            # --- 2️⃣ Kullanıcı sorgusunun embedding'i ---
+            q_emb = np.array(client.embeddings.create(model=model, input=q).data[0].embedding)
+
+            # --- 3️⃣ Kolon embedding'leri ---
+            sims = []
+            for col in columns:
+                col_norm = re.sub(r"[^0-9a-zçğıöşü\s]", " ", col.lower()).strip()
+                c_emb = np.array(client.embeddings.create(model=model, input=col_norm).data[0].embedding)
+                sim = float(np.dot(q_emb, c_emb) / (np.linalg.norm(q_emb) * np.linalg.norm(c_emb)))
+                sims.append((sim, col))
+
+            # --- 4️⃣ En benzer kolon seçimi ---
+            sims.sort(reverse=True)
+            best_sim, best_col = sims[0]
+            if best_sim > 0.75:
+                self.logger.info(f"[EMB-MATCH] '{user_query}' → '{best_col}' (sim={best_sim:.2f})")
+                return best_col
+        except Exception as e:
+            self.logger.error(f"[EMB-MATCH] hata: {e}")
+        return None
+
     
+    def _emit_spec_sentence(self, model: str | None, title: str, val: str) -> bytes:
+        """
+        SQL'den bulunan tek bir teknik değer için:
+        - OpenAI ile doğal cümle üret,
+        - sayı/ölçü imzası korunmazsa güvenli şablona düş,
+        - bytes döndür (yield için hazır).
+        """
+        if not re.search(r"\d", val or ""):
+            return f"{(model or '').title()} için {title.lower()} değeri veritabanında sayısal olarak bulunamadı.".encode("utf-8")
+        nlg = self._nlg_via_openai(
+            model_name=(model or ""),
+            metric=title,
+            value=val,
+            tone=os.getenv("NLG_TONE","neutral"),
+            length=os.getenv("NLG_LENGTH","short"),
+        )
+        if nlg:
+            return nlg.encode("utf-8")
+        # Güvenli yedek cümle
+        return f"{(model or '').title()} için {title.lower()}, {val}.".encode("utf-8")
+
+    def _nlg_via_openai(self, *, model_name: str, metric: str, value: str,
+                    tone: str = "neutral", length: str = "short") -> str:
+        """
+        SQL'den gelen değeri OpenAI ile 1 paragraf doğal Türkçe cümleye çevirir.
+        Rakam/ölçüleri aynen korumaya zorlar. Hata olursa "" döner.
+        """
+        import json, re, os
+
+        def _sig_tokens(s: str):
+            import re
+            s = s or ""
+            # sayıları topla (1,978 / 2.033 / 85x → 1978, 2033, 85)
+            nums = re.findall(r"\d+(?:[.,]\d+)?", s)
+            nums_norm = {"".join(ch for ch in n if ch.isdigit()) for n in nums if n}
+            # temel ünite/desenleri yakala
+            units = set()
+            low = s.lower()
+            for u in ["kg","nm","kw","ps","hp","km/h","dm3","sn","l/100 km","wltp","%","kwh"]:
+                if u in low.replace(" ", ""):
+                    units.add(u.replace(" ", ""))
+            return nums_norm, units
+
+        def _sig_ok(value: str, text: str) -> bool:
+            v_nums, v_units = _sig_tokens(value)
+            t_nums, t_units = _sig_tokens(text)
+            # Değer tarafındaki tüm sayılar metinde geçiyorsa ve (varsa) birimler de korunmuşsa ok
+            if v_nums and not v_nums.issubset(t_nums):
+                return False
+            if v_units and not v_units.issubset(t_units):
+                return False
+            return True
+
+        sys_msg = (
+            "You are a Turkish automotive sales consultant working for Škoda Türkiye. "
+            "You write rich, emotional, and persuasive paragraphs that sound like a human consultant "
+            "talking to a customer in a showroom. "
+            "Always respond in fluent Turkish, using long, descriptive sentences (3–5 sentences total). "
+            "Blend technical facts with sensory and emotional details — how the car feels, what it says about lifestyle, "
+            "and how it makes driving enjoyable. "
+            "Include all numbers and units EXACTLY as provided (never change them). "
+            "End with one short, friendly question that naturally invites engagement, "
+            "like 'Denemek ister misiniz?' or 'Sizce bu size yakışmaz mı?'. "
+            "Example style: "
+            "‘Octavia, 8,5 saniyelik 0-100 km/s hızlanmasıyla sadece performans değil, konforla birleşen çevikliğini de hissettiriyor. "
+            "Modern çizgileri ve sessiz motor yapısıyla her yolculuk keyifli hale geliyor. "
+            "Peki siz bu dinamizmi direksiyon başında denemek ister misiniz?’"
+        )
+        user_payload = {
+            "lang": "tr",
+            "tone": tone,            # neutral|persuasive|sporty|formal
+            "length": length,        # short|medium|long
+            "model": model_name,
+            "metric": metric,
+            "value": value,
+        }
+
+        try:
+            resp = self.client.chat.completions.create(
+                model=os.getenv("NLG_MODEL", "gpt-4o"),
+                messages=[
+                    {"role":"system","content": sys_msg},
+                    {"role":"user","content": json.dumps(user_payload, ensure_ascii=False)}
+                ],
+                temperature=0.4,
+                max_tokens=220,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            # Sayısal koruma: value’daki rakam/ölçü imzası çıktıda da olmalı
+            if _sig_ok(value, text):
+                return text
+            return ""  # imza tutmadıysa güvenlik gereği boş dön
+        except Exception:
+            return ""
+
+    def _has_fulltext(self, conn, table_name: str, column_name: str) -> bool:
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT 1
+                FROM sys.fulltext_indexes fi
+                JOIN sys.objects o ON o.object_id = fi.object_id
+                JOIN sys.fulltext_index_columns fic ON fic.object_id = fi.object_id
+                JOIN sys.columns c ON c.object_id = fic.object_id AND c.column_id = fic.column_id
+                WHERE o.name = ? AND c.name = ?
+            """, (table_name, column_name))
+            return cur.fetchone() is not None
+        except Exception:
+            return False
+
+    def _sanitize_for_fulltext(self, s: str) -> str:
+        # CONTAINS güvenliği için harf/rakam/boşluk dışını at
+        import re
+        return re.sub(r"[^0-9a-zçğıöşü\s]", " ", (s or "").lower()).strip()
+
+    def _make_where_for_keywords(self, feat_col: str, kws: list[str], use_fulltext: bool, collate: str):
+        """
+        Full-Text açıksa: CONTAINS(FORMSOF(THESAURUS,...)), değilse: LIKE %...%
+        Güvenli olanları FT'ye, kalanları LIKE'a yollar.
+        """
+        import re
+        where_parts, params = [], []
+        if use_fulltext:
+            safe_terms = []
+            like_terms = []
+            for kw in kws:
+                k = self._sanitize_for_fulltext(kw)
+                # Çok kısa/boş veya sadece sayı ise LIKE'a bırak
+                if len(k) < 2 or re.fullmatch(r"\d+", k):
+                    like_terms.append(kw)
+                else:
+                    safe_terms.append(k)
+            # FT: her güvenli terim için FORMSOF(THESAURUS, "...")
+            for st in safe_terms:
+                where_parts.append(f"CONTAINS([{feat_col}], 'FORMSOF(THESAURUS, \"{st}\")')")
+            # LIKE fallback
+            for kw in like_terms:
+                where_parts.append(f"LOWER(CONVERT(NVARCHAR(4000),[{feat_col}])) COLLATE {collate} LIKE ?")
+                params.append(f"%{kw}%")
+        else:
+            for kw in kws:
+                where_parts.append(f"LOWER(CONVERT(NVARCHAR(4000),[{feat_col}])) COLLATE {collate} LIKE ?")
+                params.append(f"%{kw}%")
+        if not where_parts:
+            where_parts.append("1=0")
+        return " OR ".join(where_parts), params
+
+    def _gen_variants(self, s: str) -> list[str]:
+        return _gen_variants(s)
+
+    def _forced_match_rules(self, q_norm: str):
+        """Soruya göre zorunlu POS/NEG eşleşme regex’lerini döndürür."""
+        def rx(s): return re.compile(s, re.I)
+
+        # rule tetik anahtarları (soruda geçerse kural aktif)
+        rules = []
+
+        # CAM TAVAN / SUNROOF
+        if re.search(r"\bcam\s*tavan\b|\bsun\s*roof\b|\bsunroof\b|\bpanoramik\s*cam\s*tavan\b|\ba[cç]ılır\s*cam\s*tavan\b", q_norm):
+            rules.append((
+                # POS: şu ifadelerden biri şart
+                [rx(r"cam\s*tavan"), rx(r"sun\s*roof|sunroof"),
+                rx(r"panoramik\s*cam\s*tavan"), rx(r"a[cç]ılır\s*cam\s*tavan")],
+                # NEG: geçerse elenir
+                [rx(r"tavan\s*ray")]
+            ))
+
+        # MATRIX LED FAR
+        if re.search(r"\bmatrix\b|\bdla\b", q_norm):
+            rules.append((
+                [
+                    # “LED Matrix”, “Full LED Matrix”, “Matrix LED”, DLA…
+                    rx(r"(?:full\s*)?led\s*matrix"),
+                    rx(r"matrix\s*led"),
+                    rx(r"\bdla\b"),
+                    rx(r"dynamic\s*light\s*assist"),
+                    # güvenli varyant: 'matrix' ve 'far' aynı satırda
+                    rx(r"matrix.*far|far.*matrix"),
+                ],
+                # arka aydınlatma/Top LED gibi alakasızları dışla
+                [rx(r"top\s*led\s*arka"), rx(r"arka\s*ayd[ıi]nlatma")]
+            ))
+
+        # DCC / DCC PRO
+        if re.search(r"\bdcc\b", q_norm) or "dcc pro" in q_norm:
+            rules.append((
+                [rx(r"\bdcc(\s*pro)?\b"), rx(r"dynamic\s*chassis\s*control")],
+                []
+            ))
+
+        # Kör nokta (örnek)
+        if re.search(r"k[öo]r\s*nokta|blind\s*spot", q_norm):
+            rules.append((
+                [rx(r"k[öo]r\s*nokta"), rx(r"blind\s*spot")],
+                []
+            ))
+        # PARK ASİSTANI (otomatik park)
+        if re.search(r"\bpark\s*asistan[ıi]\b|\botomatik\s*park\b|park\s*assist", q_norm):
+            rules.append((
+                [rx(r"park\s*asistan[ıi]"), rx(r"park\s*assist"), rx(r"otomatik\s*park")],
+                [rx(r"far\s*asistan[ıi]"), rx(r"\bhba\b")]  # uzun/dinamik farı dışla
+            ))
+
+
+        # Kural yoksa boş döndür
+        return rules
+
+    def _load_imported_table_all(self, model_code: str) -> list[dict]:
+        """
+        Imported_* tablo(lar)ından ilgili modelin TÜM satırlarını RAM'e alır.
+        Dönüş: [{'ozellik': str, 'ePrestige': str|None, 'deger': str|None}, ...]
+        """
+        key = (model_code or "").upper().strip()
+        if not key:
+            return []
+        if key in self._imported_cache:
+            return self._imported_cache[key]
+
+        rows_out = []
+        coll = os.getenv("SQL_CI_COLLATE", "Turkish_100_CI_AI")
+
+        with self._sql_conn() as conn:
+            cur = conn.cursor()
+            # ELROQ için: Imported_KODA_ELROQ_MY_% gibi isimler seti
+            cur.execute("""
+                SELECT name FROM sys.tables
+                WHERE name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR name LIKE ?
+                OR name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\'
+                ORDER BY name DESC
+            """, (f"Imported\\_KODA\\_{key}\\_MY\\_%", f"Imported\\_{key}%", f"Imported\\_{key.title()}%",
+          f"TechSpecs\\_KODA\\_{key}\\_%", f"KODA\\_{key}\\_%"))
+            tables = [r[0] for r in cur.fetchall()]
+
+            for t in tables:
+                try:
+                    cur.execute(f"SELECT TOP 0 * FROM [{t}]")
+                except Exception:
+                    continue
+                cols = [c[0] for c in cur.description] if cur.description else []
+                # Kolon isimlerini tolerant seç
+                prest_col = next((c for c in cols if re.search(r"^(ePrestige|Prestige|StdOps|Status)$", c, re.I)), None)
+                name_col = next((c for c in cols if re.search(
+                    r"^(Ozellik|Özellik|Donanim|Donanım|Name|Title|Attribute|SpecName|FeatureName|Description)$", c, re.I)), None)
+                val_col = next((c for c in cols if re.search(
+                    r"^(Deger|Değer|Value|Content|Description|Icerik|İçerik|SpecValue|Data|Veri)$", c, re.I)), None)
+                if not name_col and not val_col:
+                    continue
+
+                # Tüm satırları çek (gerekirse sayıyı sınırlayabilirsin)
+                cur.execute(f"SELECT {', '.join([c for c in [name_col, prest_col, val_col] if c])} FROM [{t}] WITH (NOLOCK)")
+                for r in cur.fetchall():
+                    d = {}
+                    i = 0
+                    if name_col:
+                        d["ozellik"] = (r[i] or "").strip(); i += 1
+                    else:
+                        d["ozellik"] = ""
+                    if prest_col:
+                        d["ePrestige"] = (r[i] or "").strip(); i += 1
+                    else:
+                        d["ePrestige"] = None
+                    if val_col:
+                        d["deger"] = (r[i] or "").strip()
+                    else:
+                        d["deger"] = None
+
+                    # Boş şeritleri (---) eleyelim
+                    norm = normalize_tr_text(d["ozellik"]).lower()
+                    if norm and not re.fullmatch(r"[-–—\.]*", norm):
+                        rows_out.append(d)
+
+        self._imported_cache[key] = rows_out
+        return rows_out
+
+
+    def _query_all_features_from_imported(self, model_code: str, user_text: str, topn:int=1) -> list[dict]:
+        """
+        Imported_* RAM önbelleğinden arama yapar; SADECE en alakalı satır(lar)ı döndürür.
+        Dönüş: [{'ozellik':..., 'durum': 'Standart|Opsiyonel|Var|—', 'deger': '...','_score':float}, ...]
+        """
+        data = self._load_imported_table_all(model_code)
+        if not data:
+            return []
+
+        def nrm(s): return re.sub(r"\s+", " ", normalize_tr_text(s or "").lower()).strip()
+        q_norm = nrm(user_text)
+
+        # anahtar seti: tokenlar + bigramlar + TR→EN eşlemler + bilinen kısaltmalar
+        tokens = [w for w in re.findall(r"[0-9a-zçğıöşü]+", q_norm) if len(w) >= 2]
+        bigrams = [" ".join([tokens[i], tokens[i+1]]) for i in range(len(tokens)-1)]
+        terms = set(tokens + bigrams)
+        if hasattr(self, "_to_english_terms"):
+            for t in (self._to_english_terms(user_text) or []):
+                tt = nrm(t)
+                if tt: terms.add(tt)
+        for abbr in ["dcc","dcc pro","acc","isa","hud","rcta","drl","udc"]:
+            if re.search(rf"\b{abbr}\b", q_norm):
+                terms.add(abbr)
+
+        # Sık gelen ama genelde "genel" olan başlıkları zayıflat (alakasız kaçışı azaltır)
+        GENERIC_WEAK = {
+            "ağırlık","agırlık","güç aktarımı","guc aktarimi","rejeneratif frenleme",
+            "arka cam sileceği","ambiyans aydınlatma","karartılmış arka camlar"
+        }
+
+        # eşiği belirle (iki kelimelik aramalar daha seçici)
+        SCORE_MIN = 3 if len(tokens) >= 2 else 2
+
+        patt_exact = [re.compile(rf"(?<!\w){re.escape(t)}(?!\w)") for t in terms if " " not in t]
+        patt_phrase = [re.compile(re.escape(t)) for t in terms if " " in t]
+
+        hits = []
+        for row in data:
+            oz = nrm(row.get("ozellik"))
+            dg = nrm(row.get("deger"))
+            if not oz and not dg:
+                continue
+
+            score = 0.0
+
+            # tam ifade (bigrams/fraseler) → +3
+            for p in patt_phrase:
+                if p.search(oz):
+                    score += 3
+                elif dg and p.search(dg):
+                    score += 1.5
+
+            # tam kelime sınırı → +2, kısmi içerme → +1
+            for p in patt_exact:
+                if p.search(oz):
+                    score += 2
+                elif dg and p.search(dg):
+                    score += 1
+
+            # kaba kısmi: soru metninin parçası özellikte geçiyorsa
+            for t in terms:
+                if t in oz:
+                    score += 1
+
+            # “genel” başlıkları zayıflat
+            if any(g in oz for g in GENERIC_WEAK):
+                score -= 1.0
+
+            if score <= 0:
+                continue
+
+            # DURUM üretimi
+            raw_p = nrm(row.get("ePrestige") or "")
+            if raw_p in {"standart","standard","std","s"}:
+                durum = "Standart"
+            elif raw_p in {"ops","opsiyonel","optional","o"}:
+                durum = "Opsiyonel"
+            else:
+                durum = "Var" if row.get("deger") else "—"
+
+            hits.append({
+                "ozellik": (row.get("ozellik") or "").strip(),
+                "durum": durum,
+                "deger": (row.get("deger") or "").strip(),
+                "_score": score
+            })
+
+            # … mevcut skor hesapları bitti, hits listesi oluştu …
+
+        if not hits:
+            return []
+
+        # ZORUNLU KURALLAR: soru belirli bir özelliği net istiyorsa
+        rules = self._forced_match_rules(q_norm)
+        if rules:
+            def ok_by_rules(oz_low: str) -> bool:
+                for pos_list, neg_list in rules:
+                    # NEG biri tutarsa elenir
+                    if any(n.search(oz_low) for n in neg_list):
+                        return False
+                    # POS en az biri tutmalı
+                    if not any(p.search(oz_low) for p in pos_list):
+                        return False
+                return True
+
+            filtered = [h for h in hits if ok_by_rules(nrm(h["ozellik"]))]
+            # kuralı geçen yoksa: "bulunmuyor" demek için boş dön
+            if filtered:
+                hits = filtered
+            else:
+                return []
+
+        # kalanları sırala
+        hits.sort(key=lambda h: (-h["_score"], len(h["ozellik"])))
+
+        # SERT EŞİK: skor çok düşükse yanlış pozitif olmasın
+        HARD_MIN = 3.0
+        best = hits[0]
+        if best["_score"] < HARD_MIN:
+            return []
+
+        # En alakalı 1 satırı döndür (veya istersen 2)
+        return hits[:1]
+
+
+        # en alakalıları topla: skor ≥ eşiği ve en yüksek skora bağlı bağıl eşik
+        hits.sort(key=lambda h: (-h["_score"], len(h["ozellik"])))
+        best = hits[0]["_score"]
+        filtered = [h for h in hits if h["_score"] >= max(SCORE_MIN, best - 1)]
+        return filtered[:max(1, topn)]
+    def _render_feature_hits_compact(self, rows: list[dict]) -> str:
+        if not rows:
+            return ""
+        if len(rows) == 1:
+            r = rows[0]
+            val = f" — {r['deger']}" if r["deger"] else ""
+            return f"**{r['ozellik']}**: {r['durum']}{val}"
+        # 2–3 satır gerekiyorsa min tablo:
+        out = ["| Özellik | Durum | Değer |", "|---|---|---|"]
+        for r in rows:
+            out.append(f"| {r['ozellik']} | {r['durum']} | {r['deger'] or '—'} |")
+        return "\n".join(out)
+
+
+
+    def _render_feature_hits_table(self, hits: list[dict]) -> str:
+        if not hits:
+            return ""
+        lines = ["| Özellik | Durum | Değer |", "|---|---|---|"]
+        for h in hits:
+            lines.append(f"| {h['ozellik']} | {h['durum']} | {h['deger'] or '—'} |")
+        return "\n".join(lines)
+
+    def _feature_lookup_any(self, model: str, user_text: str) -> tuple[list[str], dict]:
+        """
+        HIZLI YOL: SP/alias yok. Kullanıcı ifadesini varyantlara genişlet,
+        doğrudan EquipmentList_* tablosunda LIKE ile ara ve S/O/— döndür.
+        """
+        import re
+        if not model or not user_text:
+            return [], {}
+
+        q = self._norm_alias(user_text)
+
+        # 1) çekirdek ipuçları (kritikler)
+        QUICK_HINTS = {
+            "park asistan": ["park asistan", "park assist", "otomatik park"],
+            "cam tavan": ["cam tavan", "panoramik cam tavan", "açılır cam tavan", "sunroof", "glass roof"],
+            "matrix": ["matrix", "matrix led", "dla", "dynamic light assist"],
+            "geri görüş": ["geri görüş kamera", "rear view camera", "reverse camera"],
+            "360": ["360 kamera", "area view", "top view camera"],
+        }
+        needles = set()
+        for k, lst in QUICK_HINTS.items():
+            if k in q:
+                needles.update(lst)
+
+        # 2) TR→EN eşlemeler ve token/bigramlar
+        needles.update(self._to_english_terms(user_text))
+        toks = [t for t in re.findall(r"[0-9a-zçğıöşü]+", q) if len(t) >= 2]
+        bigrams = [" ".join([toks[i], toks[i+1]]) for i in range(len(toks)-1)]
+        needles.update(toks)
+        needles.update(bigrams)
+
+        # 3) gereksizleri at, sıralı tekilleştir
+        needles = [n for n in dict.fromkeys([self._norm_alias(x) for x in needles]) if len(n) >= 2]
+
+        # 4) doğrudan EquipmentList LIKE
+        trims, status_map = self._feature_status_from_equipment(model, feature_keywords=needles)
+        return trims, status_map
+
+    def seed_feature_catalog_from_equipment(self):
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            cur.execute("SELECT name FROM sys.tables WHERE name LIKE 'EquipmentList\\_KODA\\_%' ESCAPE '\\'")
+            tables = [r[0] for r in cur.fetchall()]
+            cand_cols = ["Equipment","Donanim","Donanım","Ozellik","Özellik","Name","Title","Attribute","Feature"]
+
+            seen = set()
+            for t in tables:
+                # özellik kolonu
+                cur.execute("""
+                SELECT TOP 1 c.name
+                FROM sys.columns c
+                WHERE c.object_id = OBJECT_ID(?) AND c.name IN ({})
+                """.format(",".join(["?"]*len(cand_cols))), [t] + cand_cols)
+                row = cur.fetchone()
+                if not row: 
+                    continue
+                feat_col = row[0]
+                cur.execute(f"SELECT DISTINCT CAST([{feat_col}] AS NVARCHAR(200)) FROM {t} WHERE [{feat_col}] IS NOT NULL")
+                for (val,) in cur.fetchall():
+                    raw = (val or "").strip()
+                    if not raw: 
+                        continue
+                    key = raw  # kanonik gösterimi şimdilik ham ad
+                    if key in seen: 
+                        continue
+                    seen.add(key)
+
+                    # 1) katalog'a ekle (yoksa)
+                    cur.execute("IF NOT EXISTS(SELECT 1 FROM dbo.FeatureCatalog WHERE feature_key = ?) INSERT INTO dbo.FeatureCatalog(feature_key,display_name) VALUES(?,?)",
+                                (key, key, raw))
+
+                    # 2) alias çeşitleri
+                    variants = _gen_variants(raw)
+                    for a in variants:
+                        cur.execute("IF NOT EXISTS(SELECT 1 FROM dbo.FeatureAlias WHERE alias_norm = ?) INSERT INTO dbo.FeatureAlias(alias_norm,feature_key,lang,source_note) VALUES(?,?,?,?)",
+                                    (a, key, None, 'harvest'))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+
+    # --- Basit TR→EN/EN→TR mini sözlük (ihtiyaca göre genişletilebilir) ---
+    # TR→EN sözlük: ihtiyaca göre genişlet
+    TR_EN_MAP = {
+        "dcc pro": ["dcc pro", "dynamic chassis control pro"],
+        "dcc": ["dcc", "dynamic chassis control", "adaptive suspension"],
+        "adaptif süspansiyon": ["adaptive suspension", "dcc"],
+        "panoramik cam tavan": ["panoramic roof", "glass roof"],
+        "cam tavan": ["sunroof", "glass roof", "opening roof"],
+        "açılır cam tavan": ["sunroof", "opening roof"],
+        "geri görüş kamerası": ["rear view camera", "reverse camera"],
+        "360 kamera": ["360 camera", "area view", "top view camera"],
+        "kör nokta": ["blind spot", "blind spot monitor"],
+        "arka çapraz trafik": ["rear cross traffic", "rcta"],
+        "şerit takip": ["lane assist", "lane keeping"],
+        "şerit ortalama": ["lane centering"],
+        "ön bölge asistanı": ["front assist", "aeb", "automatic emergency braking"],
+        "ambiyans aydınlatma": ["ambient light", "ambient lighting"],
+        "kablosuz şarj": ["wireless charging", "qi charging"],
+        "matrix led": ["matrix led", "dynamic light assist", "dla"],
+        "uzun far asistanı": ["high beam assist", "hba"],
+        "elektrikli bagaj kapağı": ["power tailgate", "power liftgate"],
+    }
+
+    @staticmethod
+    def _norm_alias(s: str) -> str:
+        import re
+        return re.sub(r"\s+", " ", normalize_tr_text(s or "").lower()).strip()
+
+    @staticmethod
+    def _to_english_terms(text: str) -> list[str]:
+        base = ChatbotAPI._norm_alias(text)
+        terms = set()
+        for tr_key, en_list in ChatbotAPI.TR_EN_MAP.items():
+            if tr_key in base:
+                for en in en_list:
+                    t = ChatbotAPI._norm_alias(en)
+                    terms.add(t); terms.add(t.replace(" ", ""))
+        # yaygın kısaltmalar
+        for abbr in ["dcc","acc","isa","hud","rcta","drl"]:
+            if re.search(rf"\b{abbr}\b", base):
+                terms.add(abbr)
+        # cam tavan birleşik varyant
+        if "cam tavan" in base or "camtavan" in base.replace(" ",""):
+            terms.update(["sunroof","glass roof","glassroof"])
+        return [t for t in terms if len(t) >= 2]
+
+    def _feature_exists_tr_en(self, model_slug: str, user_text: str) -> bool:
+        """
+        Imported_* (ve benzeri) tablolarda Özellik/Değer alanlarında
+        TR+EN anahtar kelime arar. Bulursa True döner.
+        """
+        import contextlib, re
+        if not model_slug or not user_text:
+            return False
+
+        needles = set()
+        q = self._norm_alias(user_text)
+        needles |= {q, q.replace(" ", "")}
+        for w in q.split():
+            needles.add(w); needles.add(w.replace(" ",""))
+        for e in self._to_english_terms(user_text):
+            needles.add(e); needles.add(e.replace(" ",""))
+        needles = [n for n in needles if len(n) >= 2]
+
+        m = (model_slug or "").strip().upper()
+        coll = os.getenv("SQL_CI_COLLATE", "Turkish_100_CI_AI")
+
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            # İlgili Imported_* tablolarını topla
+            pats = [f"Imported\\_KODA\\_{m}\\_MY\\_%", f"Imported\\_{m}%", f"Imported\\_{m.capitalize()}%"]
+            tables = []
+            for p in pats:
+                cur.execute("SELECT name FROM sys.tables WHERE name LIKE ? ESCAPE '\\' ORDER BY name DESC", (p,))
+                tables += [r[0] for r in cur.fetchall()]
+
+            for t in dict.fromkeys(tables):
+                try:
+                    cur.execute(f"SELECT TOP 0 * FROM [{t}]")
+                except Exception:
+                    continue
+                cols = [c[0] for c in cur.description]
+                name_cols = [c for c in cols if re.search(r"(ozellik|özellik|name|title|attribute)", c, re.I)]
+                val_cols  = [c for c in cols if re.search(
+                    r"(deger|değer|value|val|content|desc|açıklama|aciklama|icerik|içerik|spec|specval|spec_value|unit|birim|data|veri|number|num)",
+                    c, re.I)]
+
+                if not name_cols and not val_cols:
+                    continue
+
+                where, params = [], []
+                for nc in (name_cols + val_cols):
+                    for n in needles:
+                        where.append(f"LOWER(CONVERT(NVARCHAR(4000),[{nc}])) COLLATE {coll} LIKE ?")
+                        params.append(f"%{n}%")
+                if not where:
+                    continue
+
+                sql = f"SELECT TOP 1 1 FROM [{t}] WITH (NOLOCK) WHERE " + " OR ".join(where)
+                cur.execute(sql, params)
+                if cur.fetchone():
+                    return True
+        finally:
+            with contextlib.suppress(Exception): cur.close()
+            with contextlib.suppress(Exception): conn.close()
+        return False
+
+    def _feature_status_from_equipment(self, model: str, feature_keywords: list[str]) -> tuple[list[str], dict]:
+        """
+        Modelin en güncel EquipmentList tablosunda verilen anahtarları (LIKE) arar.
+        Dönüş:
+        trims: trim kolonları (bulunanlar)
+        status_map: {trim: 'S'|'O'|'—'}  (ilk eşleşen satır baz alınır)
+        """
+        import re, contextlib
+        m = (model or "").strip().upper()
+        if not m or not feature_keywords:
+            return [], {}
+
+        # 1) En güncel tablo
+        tname = self._latest_equipment_table_for(model)
+        if not tname:
+            return [], {}
+
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            # 2) Kolonları çek
+            cur.execute(f"SELECT TOP 0 * FROM [dbo].[{tname}] WITH (NOLOCK)")
+            cols = [c[0] for c in cur.description] if cur.description else []
+            if not cols:
+                return [], {}
+
+            # Özellik/isim kolonu
+            name_candidates = ["Equipment","Donanim","Donanım","Ozellik","Özellik","Name","Title","Attribute","Feature"]
+            feat_col = next((c for c in name_candidates if c in cols), None)
+            if not feat_col:
+                # heuristik
+                feat_col = next((c for c in cols if re.search(r"(equip|donan|özellik|ozellik|name|title|attr)", c, re.I)), None)
+            if not feat_col:
+                return [], {}
+
+            # Trim kolonları
+            known_trims = ["premium","elite","prestige","sportline","monte carlo","rs",
+                        "l&k crystal","sportline phev","e prestige 60","e sportline 60",
+                        "coupe e sportline 60","e sportline 85x","coupe e sportline 85x"]
+            trim_cols = []
+            low2orig = {c.lower(): c for c in cols}
+            for t in known_trims:
+                if t in low2orig:
+                    trim_cols.append(low2orig[t])
+            if not trim_cols:
+                # fallback: adında trim çağrışımı olan tüm kolonlar
+                trim_cols = [c for c in cols if re.search(r"(premium|elite|prestige|sportline|monte|rs|crystal|phev|e\s*sportline|e\s*prestige)", c, re.I)]
+            if not trim_cols:
+                return [], {}
+
+            # 3) LIKE filtresi
+            coll = os.getenv("SQL_CI_COLLATE", "Turkish_100_CI_AI")
+            use_ft_env = os.getenv("USE_MSSQL_FULLTEXT", "0") == "1"
+            use_ft = False
+            try:
+                use_ft = use_ft_env and self._has_fulltext(conn, tname, feat_col)
+            except Exception:
+                use_ft = False
+
+            where_sql, params = self._make_where_for_keywords(feat_col, feature_keywords, use_ft, coll)
+            sql = f"SELECT TOP 30 [{feat_col}], {', '.join(f'[{c}]' for c in trim_cols)} FROM [dbo].[{tname}] WITH (NOLOCK) WHERE {where_sql}"
+            cur.execute(sql, params)
+
+            rows = cur.fetchall()
+            if not rows:
+                return [], {}
+
+            # 4) İlk eşleşen satır(lar)dan statü çıkar
+            status_map = {}
+            for r in rows:
+                rec = { ([feat_col] + trim_cols)[i]: r[i] for i in range(1+len(trim_cols)) }
+                for tc in trim_cols:
+                    raw = rec.get(tc)
+                    status_map[tc] = self._normalize_equipment_status(raw)
+
+            # 5) Trim başlık sırası
+            trims_pretty = [tc for tc in trim_cols]
+            return trims_pretty, status_map
+
+        finally:
+            with contextlib.suppress(Exception): cur.close()
+            with contextlib.suppress(Exception): conn.close()
+
+    # ChatbotAPI sınıfına ekleyin
+    _SPEC_KEYWORDS = {
+        # norm_key            : (ad_kolonunda aranan terimler, md'de aranan başlık)
+        "tork":               (["%tork%", "%torque%"],                          "Maks. tork (Nm @ dev/dak)"),
+        "güç":                (["%güç%", "%guc%", "%power%", "%ps%", "%hp%"],   "Maks. güç (kW/PS @ dev/dak)"),
+        "beygir":             (["%beygir%", "%ps%", "%hp%", "%power%"],         "Maks. güç (kW/PS @ dev/dak)"),
+        "maksimum hız":       (["%maks%hız%", "%max%speed%", "%top%speed%"],    "Maks. hız (km/h)"),
+        "0-100":              (["%0%100%", "%0-100%", "%ivme%", "%accel%"],     "0-100 km/h (sn)"),
+        "0 100":              (["%0%100%", "%0-100%", "%ivme%", "%accel%"],     "0-100 km/h (sn)"),
+        "co2":                (["%co2%", "%emisyon%"],                          "CO2 Emisyonu (g/km)"),
+        "yakıt tüketimi":     (["%tüketim%", "%l/100%", "%consumption%"],       "Birleşik (l/100 km)"),
+        "menzil":             (["%menzil%", "%range%"],                         "Menzil (WLTP)"),
+    }
+
+    def _generic_spec_from_sql(self, model_slug: str, want: str) -> str | None:
+        import re, contextlib
+        m = (model_slug or "").strip().upper()
+        if not m or not want:
+            return None
+
+        self.logger.info(f"[SQL-SPEC] Checking model={m}, want={want}, STRICT={getattr(self,'STRICT_MODEL_ONLY',False)}")
+
+        # 1) İstekten anahtar TERİM(ler)i çıkar (tork, 0-100, güç, menzil, co2, tüketim, max hız …)
+        want_norm_all = normalize_tr_text(want).lower()
+
+        # (a) doğrudan sözlük eşlemesi
+        key_hits = []
+        for canon, (like_terms, _) in (self._SPEC_KEYWORDS or {}).items():
+            key_low = normalize_tr_text(canon).lower()
+            if key_low in want_norm_all:
+                key_hits.append(canon)
+        # (b) düzenli ifade eşleşmeleri (0-100 vb.)
+        if re.search(r"\b0\s*[-–—]?\s*100\b", want_norm_all):
+            if "0-100" not in key_hits:
+                key_hits.append("0-100")
+        # (c) kelime bazlı sezgisel tarama
+        word_map = {
+            "tork":       "tork",
+            "torque":     "tork",
+            "güç":        "güç",
+            "beygir":     "güç",
+            "hp":         "güç",
+            "ps":         "güç",
+            "menzil":     "menzil",
+            "range":      "menzil",
+            "co2":        "co2",
+            "emisyon":    "co2",
+            "tüketim":    "yakıt tüketimi",
+            "l/100":      "yakıt tüketimi",
+            "maks":       "maksimum hız",
+            "hız":        "maksimum hız",
+            "hiz":        "maksimum hız",
+        }
+        for w, k in word_map.items():
+            if w in want_norm_all and k not in key_hits:
+                key_hits.append(k)
+
+        # Bu fonksiyon, LIKE’a vereceği terimleri burada hesaplar:
+        def terms_for(canon_key: str) -> list[str]:
+            # _SPEC_KEYWORDS içindeki LIKE kalıpları (ör: %tork% / %torque% / %0%100% …)
+            like_terms, _ = self._SPEC_KEYWORDS.get(canon_key, ([], None))
+            if like_terms:
+                return like_terms[:]
+            # sözlükte yoksa, güvenli fallback: canon kendisi
+            return [f"%{normalize_tr_text(canon_key).lower()}%"]
+
+        # Nihai arama terimleri (ör. “tork” seçildiyse: ["%tork%","%torque%"])
+        final_like_terms: list[str] = []
+        for k in key_hits:
+            final_like_terms.extend(terms_for(k))
+
+        # Hiçbir anahtar tespit edilemediyse, eski davranışa düş:
+        # tam cümleyi parçalamak yerine en azından kelimelerin ANY LIKE’ı
+        if not final_like_terms:
+            # Minimal güvenli fallback: kısa anlamlı token’lar
+            toks = [t for t in re.findall(r"[0-9a-zçğıöşü]+", want_norm_all) if len(t) >= 2]
+            final_like_terms = [f"%{t}%" for t in dict.fromkeys(toks)]
+            self.logger.info(f"[SQL-SPEC] fallback terms={final_like_terms[:5]}..")
+
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            patterns = [
+                f"Imported\\_KODA\\_{m}\\_MY\\_%",
+                f"Imported\\_{m}%",
+                f"TechSpecs\\_KODA\\_{m}\\_MY\\_%",
+                f"EquipmentList\\_KODA\\_{m}\\_MY\\_%",
+                f"PriceList\\_KODA\\_{m}\\_MY\\_%",
+                f"%{m}%",  # ← ek (adın başına/sonuna bakmadan)
+
+            ]
+            collate = os.getenv("SQL_CI_COLLATE", "Turkish_100_CI_AI")
+
+            for p in patterns:
+                self.logger.info(f"[SQL-SPEC] scanning pattern={p}")
+                cur.execute("SELECT name FROM sys.tables WHERE name LIKE ? ESCAPE '\\' ORDER BY name DESC", (p,))
+                for (tname,) in cur.fetchall():
+                    if getattr(self, "STRICT_MODEL_ONLY", False):
+                        T = tname.upper()
+                        if not (f"_{m}_" in T or T.endswith(f"_{m}") or T.startswith(f"{m}_")):
+                            continue
+                    try:
+                        cur.execute(f"SELECT TOP 0 * FROM [{tname}]")
+                        cols = [c[0] for c in cur.description]
+                        val_cols = [c for c in cols if re.search(
+                            r"(deger|değer|value|val|content|desc|description|açıklama|aciklama|icerik|içerik|spec|specval|spec_value|unit|birim|data|veri|number|num)",
+                            c, re.I
+                        )]
+                        if not val_cols:
+                            val_cols = [c for c in cols if c.lower() not in ('id','model','ozellik','özellik')]
+
+                        # 2) İsim/başlık kolonları (Description/Desc buradan çıkarıldı)
+                        name_cols = [c for c in cols if re.search(
+                            r"(ozellik|özellik|name|title|attribute|specname|featurename)",
+                            c, re.I
+                        ) and c not in val_cols]
+                        if not name_cols and not val_cols:
+                            continue
+
+                        # 2) LIKE WHERE: anahtar terimler için geniş OR kurgula
+                        where_parts, params = [], []
+                        target_cols = (name_cols + val_cols)
+                        for nc in target_cols:
+                            for lt in final_like_terms:
+                                where_parts.append(f"LOWER(CONVERT(NVARCHAR(4000),[{nc}])) COLLATE {collate} LIKE ?")
+                                params.append(lt)
+
+                        if not where_parts:
+                            continue
+
+                        # 1) Değer kolonlarını bir araya getir (boşsa en azından '')
+                        vblob_expr = " + ' ' + ".join([f"CONVERT(NVARCHAR(4000),[{c}])" for c in val_cols]) if val_cols else "''"
+
+                        # 2) Değer içeren satırları öne al: önce rakam var mı, sonra uzunluk
+                        sql = (
+                            f"SELECT TOP 20 {', '.join(target_cols)}, ({vblob_expr}) AS _vblob "
+                            f"FROM [{tname}] WITH (NOLOCK) WHERE " + " OR ".join(where_parts) + " "
+                            f"ORDER BY CASE WHEN ({vblob_expr}) LIKE '%[0-9]%' THEN 0 ELSE 1 END, "
+                            f"LEN(({vblob_expr})) DESC"
+                        )
+                        cur.execute(sql, params)
+                        row = cur.fetchone()
+
+                        if row:
+                            # Kolon listeleri
+                            cols = target_cols  # SELECT sırasında kullandığımız birleşik liste
+                            # İsim kolonlarını ayrı tut
+                            name_cols_set = set(name_cols)
+
+                            # ❶ Önce “değer” benzeri kolonlardan en iyi hücreyi çek
+                            val_blob = self._best_value_from_row(cols, row, name_cols_set)
+
+                            # _generic_spec_from_sql içinde, val_blob üretiminden HEMEN SONRA ekle:
+                            import re
+
+                            def _pick_metric_from_row_blob(metric_key: str, row_text: str) -> str | None:
+                                txt = (row_text or "").lower().replace(",", ".")
+                                # Temel metrik regex’leri
+                                patterns = {
+                                    "tork":        r"(\d{2,4}(?:\.\d+)?)\s*nm\b",
+                                    "güç":         r"(\d{2,4}(?:\.\d+)?)\s*(ps|hp|kw)\b",
+                                    "0-100":       r"(\d{1,2}(?:\.\d+)?)\s*(sn|s)\b",
+                                    "maksimum hız":r"(\d{2,3}(?:\.\d+)?)\s*km/?h\b",
+                                    "co2":         r"(\d{2,3}(?:\.\d+)?)\s*g/?km\b",
+                                    "yakıt tüketimi": r"(\d(?:\.\d+)?)\s*l/100\s*km\b",
+                                    "menzil":      r"(\d{2,4})\s*km\b",
+                                }
+                                # anahtar normalizasyonu
+                                key = "tork" if "tork" in metric_key else \
+                                    "güç" if any(k in metric_key for k in ("güç","beygir","hp","ps","power","kw")) else \
+                                    "0-100" if re.search(r"\b0\s*[-–—]?\s*100\b", metric_key) else \
+                                    "maksimum hız" if "hız" in metric_key or "hiz" in metric_key else \
+                                    "co2" if "co2" in metric_key or "emisyon" in metric_key else \
+                                    "yakıt tüketimi" if "tüketim" in metric_key or "l/100" in metric_key else \
+                                    "menzil" if "menzil" in metric_key or "range" in metric_key else None
+                                if not key or key not in patterns: 
+                                    return None
+                                m = re.search(patterns[key], txt)
+                                if not m:
+                                    return None
+                                # birim üretimi
+                                if key == "tork":        return f"{m.group(1)} Nm"
+                                if key == "güç":         return f"{m.group(1)} {m.group(2).upper()}"
+                                if key == "0-100":       return f"{m.group(1)} sn"
+                                if key == "maksimum hız":return f"{m.group(1)} km/h"
+                                if key == "co2":         return f"{m.group(1)} g/km"
+                                if key == "yakıt tüketimi": return f"{m.group(1)} l/100 km"
+                                if key == "menzil":      return f"{m.group(1)} km"
+                                return None
+
+                            # … val_blob seçiminin ALTINA:
+                            if not re.search(r"\d", val_blob or ""):
+                                row_blob = " ".join(str(row[cols.index(c)] or "") for c in cols)
+                                picked = _pick_metric_from_row_blob(want_norm_all, row_blob)
+                                if picked:
+                                    self.logger.info(f"[SQL-SPEC] ROW-BLOB pick -> {picked}")
+                                    return picked
+
+
+                            # ❷ Hâlâ boşsa, tüm value-type kolonları birleştir (eski davranış)
+                            if not val_blob:
+                                val_blob = " ".join(
+                                    str(row[cols.index(c)] or "").strip()
+                                    for c in cols
+                                    if re.search(r"(deger|değer|value|val|content|desc|açıklama|aciklama|icerik|içerik|spec|specval|spec_value|unit|birim|data|veri|number|num)", c, re.I)
+                                ).strip()
+
+                            # ❸ Yine boşsa, satırdaki isim + ilk dolu komşu hücreyi kullan (son çare)
+                            if not val_blob:
+                                names_join = " ".join(str(row[cols.index(c)] or "").strip() for c in name_cols)
+                                others = [str(row[i] or "").strip() for i, c in enumerate(cols) if c not in name_cols_set and str(row[i] or "").strip()]
+                                val_blob = (others[0] if others else names_join).strip()
+
+                            self.logger.info(f"[SQL-SPEC] HIT {tname} -> {val_blob[:160]}")
+                            return val_blob or None
+                    except Exception as e:
+                        self.logger.warning(f"[SQL-SPEC] table read failed: {tname}, err: {e}")
+                        continue
+            
+                    # === patterns döngüsünden SONRA ve henüz return edilmediyse: geniş wildcard tarama ===
+            if getattr(self, "STRICT_MODEL_ONLY", False):
+                try:
+                    wild = f"%{m}%"  # KODIAQ
+                    # Tablolar
+                    cur.execute("SELECT name FROM sys.tables WHERE UPPER(name) LIKE ? ORDER BY name DESC", (wild,))
+                    table_names = [r[0] for r in cur.fetchall()]
+
+                    # View'lar
+                    cur.execute("SELECT name FROM sys.views WHERE UPPER(name) LIKE ? ORDER BY name DESC", (wild,))
+                    view_names = [r[0] for r in cur.fetchall()]
+
+                    for tname in (table_names + view_names):
+                        try:
+                            cur.execute(f"SELECT TOP 0 * FROM [{tname}]")
+                            cols = [c[0] for c in cur.description]
+                            # 1) Değer benzeri kolonları önce seç
+                            val_cols = [c for c in cols if re.search(
+                                r"(deger|değer|value|val|content|desc|description|açıklama|aciklama|icerik|içerik|spec|specval|spec_value|unit|birim|data|veri|number|num)",
+                                c, re.I
+                            )]
+
+                            # 2) İsim/başlık kolonları (Description/Desc buradan çıkarıldı)
+                            name_cols = [c for c in cols if re.search(
+                                r"(ozellik|özellik|name|title|attribute|specname|featurename)",
+                                c, re.I
+                            ) and c not in val_cols]
+
+                            if not name_cols and not val_cols:
+                                continue
+
+                            where_parts, params = [], []
+                            collate = os.getenv("SQL_CI_COLLATE", "Turkish_100_CI_AI")
+                            final_like_terms = final_like_terms or [f"%{normalize_tr_text(want).lower()}%"]
+                            for nc in (name_cols + val_cols):
+                                for lt in final_like_terms:
+                                    where_parts.append(f"LOWER(CONVERT(NVARCHAR(4000),[{nc}])) COLLATE {collate} LIKE ?")
+                                    params.append(lt)
+                            if not where_parts:
+                                continue
+
+                            sql = f"SELECT TOP 1 {', '.join(name_cols + val_cols)} FROM [{tname}] WITH (NOLOCK) WHERE " + " OR ".join(where_parts)
+                            cur.execute(sql, params)
+                            row = cur.fetchone()
+                            if row:
+                                cols2 = (name_cols + val_cols)
+                                val_blob = self._best_value_from_row(cols2, row, set(name_cols))
+                                if not val_blob:
+                                    val_blob = " ".join(str(x or "").strip() for x in row if x).strip()
+                                self.logger.info(f"[SQL-SPEC] HIT* {tname} -> {val_blob[:160]}")
+                                return val_blob or None
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.logger.error(f"[SQL-SPEC] generic error: {e}")
+        finally:
+            with contextlib.suppress(Exception): cur.close()
+            with contextlib.suppress(Exception): conn.close()
+        # _generic_spec_from_sql sonunda, return None; ÖNCESİNE ekle:
+        try:
+            # SQL başarısızsa teknik tablo fallback
+            model_low = (model_slug or "").lower()
+            md = self._get_teknik_md_for_model(model_low)
+            if md:
+                _, d = self._parse_teknik_md_to_dict(md)
+                # Seçilecek anahtar (ör: 'Maks. tork (Nm @ dev/dak)')
+                key_guess = None
+                if "tork" in want_norm_all: key_guess = "Maks. tork (Nm @ dev/dak)"
+                elif any(k in want_norm_all for k in ["güç","beygir","hp","ps","power","kw"]):
+                    key_guess = "Maks. güç (kW/PS @ dev/dak)"
+                elif re.search(r"\b0\s*[-–—]?\s*100\b", want_norm_all):
+                    key_guess = "0-100 km/h (sn)"
+                elif any(k in want_norm_all for k in ["hız","hiz","max speed","top speed","maks"]):
+                    key_guess = "Maks. hız (km/h)"
+                elif "co2" in want_norm_all or "emisyon" in want_norm_all:
+                    key_guess = "CO2 Emisyonu (g/km)"
+                elif any(k in want_norm_all for k in ["tüketim","l/100"]):
+                    key_guess = "Birleşik (l/100 km)"
+                elif "menzil" in want_norm_all or "range" in want_norm_all:
+                    key_guess = "Menzil (WLTP)"
+                if key_guess:
+                    v = self._get_spec_value_from_dict(d, key_guess)
+                    if v and re.search(r"\d", v):
+                        self.logger.info(f"[SQL-SPEC] FALLBACK Teknik MD -> {v}")
+                        return v
+        except Exception as _e:
+            self.logger.warning(f"[SQL-SPEC] teknik MD fallback err: {_e}")
+
+        return None
+        
+
+
+    def _bagaj_hacmi_from_sql(self, model_slug: str) -> str | None:
+        """
+        Ör: model_slug='scala' -> TechSpecs/Imported tablolardan bagaj hacmi satırını bulur.
+        Dönüş: '467 / 1.410 dm3' gibi ham değer (bulursa).
+        Yedek: Teknik MD tablosundan 'Bagaj hacmi (dm3)' anahtarını okur.
+        """
+        import re, contextlib
+        m = (model_slug or "").strip().upper()
+        if not m:
+            return None
+
+        name_cols_candidates  = ["SpecName","Name","Title","Attribute","Ozellik","Özellik","Donanim","Donanım","Key","Anahtar"]
+        value_cols_candidates = ["SpecValue","Value","Deger","Değer","Content","Description","Icerik","İçerik","Data","Veri","Unit","Birim"]
+
+        # Çok dilli/desenli arama: bagaj + boot + luggage + cargo + trunk
+        # dm3/Litre gibi birim ipuçları sonradan ikinci filtrede kullanılacak
+        name_like_terms = ["%bagaj%", "%bagaj hacmi%", "%boot%", "%luggage%", "%cargo%", "%trunk%"]
+
+        patts = [
+            f"TechSpecs\\_KODA\\_{m}\\_MY\\_%",
+            f"Imported\\_KODA\\_{m}\\_MY\\_%",
+            f"Imported\\_{m.capitalize()}%",   # Imported_Scala...
+            f"Imported\\_{m}%"                 # Imported_SCALA...
+        ]
+
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            cand_tables = []
+            for p in patts:
+                cur.execute("""
+                    SELECT TOP 8 name FROM sys.tables
+                    WHERE name LIKE ? ESCAPE '\\'
+                    ORDER BY name DESC
+                """, (p,))
+                cand_tables += [r[0] for r in cur.fetchall()]
+
+            seen = set()
+            for tname in [x for x in cand_tables if not (x in seen or seen.add(x))]:
+                # Kolonları al
+                try:
+                    cur.execute(f"SELECT TOP 0 * FROM [{tname}]")
+                except Exception:
+                    continue
+                cols = [c[0] for c in cur.description] if cur.description else []
+                if not cols:
+                    continue
+
+                # Kolon adaylarını çıkar
+                name_cols  = [c for c in name_cols_candidates  if c in cols]
+                value_cols = [c for c in value_cols_candidates if c in cols]
+                if not name_cols:
+                    # heuristik kolon seçimi
+                    name_cols = [c for c in cols if re.search(r"(name|title|attr|özellik|ozellik|donan[ıi]m|key)", c, re.I)]
+                if not value_cols:
+                    value_cols = [c for c in cols if re.search(r"(value|değer|deger|content|desc|birim|unit|data|veri)", c, re.I)]
+                if not name_cols or not value_cols:
+                    continue
+
+                # Çoklu LIKE ile ara
+                where_parts = []
+                params = []
+                for nc in name_cols:
+                    for term in name_like_terms:
+                        where_parts.append(f"[{nc}] LIKE ?")
+                        params.append(term)
+                sql = f"SELECT TOP 20 {', '.join([f'[{c}]' for c in name_cols+value_cols])} FROM [{tname}] WHERE " + " OR ".join(where_parts)
+                try:
+                    cur.execute(sql, params)
+                    rows = cur.fetchall()
+                except Exception:
+                    continue
+
+                # Önce 'bagaj' içerenleri, yoksa 'boot/luggage/...' içerenleri değerlendir
+                for r in rows:
+                    rec = { (name_cols+value_cols)[i]: r[i] for i in range(len(name_cols+value_cols)) }
+                    name_blob = " ".join(str(rec.get(c) or "") for c in name_cols).lower()
+                    val_blob  = " ".join(str(rec.get(c) or "") for c in value_cols).strip()
+                    if any(k in name_blob for k in ["bagaj", "boot", "luggage", "cargo", "trunk"]) and val_blob:
+                        return val_blob
+
+            # --- Yedek: Teknik MD tablosundan çek ---
+             
+
+        finally:
+            with contextlib.suppress(Exception): cur.close()
+            with contextlib.suppress(Exception): conn.close()
+
+        return None
+    def _kapi_sayisi_from_sql(self, model_slug: str) -> str | None:
+        """
+        'kapı' / 'door(s)' satırını bulur. Yedek: teknik MD’den 'Kapı sayısı' benzeri anahtarları dener.
+        """
+        import re, contextlib
+        m = (model_slug or "").strip().upper()
+        if not m:
+            return None
+
+        name_terms = ["%kapı%", "%kapi%", "%door%"]
+        name_cols_candidates  = ["SpecName","Name","Title","Attribute","Ozellik","Özellik","Donanim","Donanım","Key","Anahtar"]
+        value_cols_candidates = ["SpecValue","Value","Deger","Değer","Content","Description","Icerik","İçerik","Data","Veri","Unit","Birim"]
+
+        patts = [
+            f"TechSpecs\\_KODA\\_{m}\\_MY\\_%",
+            f"Imported\\_KODA\\_{m}\\_MY\\_%",
+            f"Imported\\_{m.capitalize()}%",
+            f"Imported\\_{m}%"
+        ]
+
+        conn = self._sql_conn(); cur = conn.cursor()
+        try:
+            cand_tables = []
+            for p in patts:
+                cur.execute("""SELECT TOP 8 name FROM sys.tables WHERE name LIKE ? ESCAPE '\\' ORDER BY name DESC""", (p,))
+                cand_tables += [r[0] for r in cur.fetchall()]
+
+            seen = set()
+            for tname in [x for x in cand_tables if not (x in seen or seen.add(x))]:
+                try:
+                    cur.execute(f"SELECT TOP 0 * FROM [{tname}]")
+                except Exception:
+                    continue
+                cols = [c[0] for c in cur.description] if cur.description else []
+                if not cols: continue
+                name_cols  = [c for c in name_cols_candidates  if c in cols] or [c for c in cols if re.search(r"(name|title|attr|özellik|donan[ıi]m|key)", c, re.I)]
+                value_cols = [c for c in value_cols_candidates if c in cols] or [c for c in cols if re.search(r"(value|değer|content|desc|data|veri)", c, re.I)]
+                if not name_cols or not value_cols: continue
+
+                where_parts, params = [], []
+                for nc in name_cols:
+                    for term in name_terms:
+                        where_parts.append(f"[{nc}] LIKE ?")
+                        params.append(term)
+                if not where_parts: 
+                    continue
+                sql = f"SELECT TOP 20 {', '.join([f'[{c}]' for c in name_cols+value_cols])} FROM [{tname}] WHERE " + " OR ".join(where_parts)
+                try:
+                    cur.execute(sql, params)
+                    rows = cur.fetchall()
+                except Exception:
+                    continue
+
+                for r in rows:
+                    rec = { (name_cols+value_cols)[i]: r[i] for i in range(len(name_cols+value_cols)) }
+                    name_blob = " ".join(str(rec.get(c) or "") for c in name_cols).lower()
+                    val_blob  = " ".join(str(rec.get(c) or "") for c in value_cols).strip()
+                    if any(k in name_blob for k in ["kapı","kapi","door"]) and val_blob:
+                        return val_blob
+        finally:
+            with contextlib.suppress(Exception): cur.close()
+            with contextlib.suppress(Exception): conn.close()
+
+        # Yedek: teknik MD’den yakalamaya çalış
+         
+        return None
+
+
     def _strip_code_fences(self, s: str) -> str:
     
         if not s:
@@ -1020,14 +2382,13 @@ class ChatbotAPI:
             # 3) Yükle
             batches_api = getattr(vs_api, "file_batches", None)
             files_api   = getattr(vs_api, "files", None)
+            from contextlib import ExitStack  # <-- dosyanın başında da olabilir
             if batches_api and hasattr(batches_api, "upload_and_poll"):
                 with ExitStack() as stack:
-                    from contextlib import ExitStack
                     fhs = [stack.enter_context(open(p, "rb")) for p in files]
-                    batches_api.upload_and_poll(
-                        vector_store_id=self.VECTOR_STORE_SQL_ID,
-                        files=fhs
-                    )
+                    batches_api.upload_and_poll(vector_store_id=self.VECTOR_STORE_SQL_ID, files=fhs)
+
+                     
             elif files_api and hasattr(files_api, "create_and_poll"):
                 for p in files:
                     with open(p, "rb") as fh:
@@ -1044,54 +2405,42 @@ class ChatbotAPI:
         except Exception as e:
             self.logger.error(f"[SQL-RAG] init failed: {e}")
     # Trim adları: standart donanım tablosu başlığında sık geçer
+    # ChatbotAPI içinde, _answer_with_sql_rag'i DB vektörlerine çevirelim
     def _answer_with_sql_rag(self, user_message: str, user_id: str) -> bytes | None:
-        """
-        Her soruda *.sql.md tabanlı RAG bağlamı ile yanıt üretir.
-        Çıktı: Markdown (tablo/kod bloğu korunur).
-        """
-        try:
-            ctx = self.sqlrag.as_context(user_message, limit=int(os.getenv("SQL_RAG_TOPK", "6")))
-        except Exception as e:
-            self.logger.error(f"[SQL-RAG] bağlam üretilemedi: {e}")
-            ctx = ""
+        # 1) DB vektörlerinden bağlamı çek
+        top = self._kb_vector_search(user_message, k=15)
 
-        if not ctx:
-            return None
+        if not top:
+            # Bağlam yoksa boş dönmeyelim; üst akışta RAG_ONLY=1 olduğu için direkt duracağız.
+            return b"SQL RAG: kayit bulunamadi."
 
-        # Yalnızca BAĞLAM'a dayanarak yanıt verdiriyoruz.
+        ctx = "\n".join([f"- [{round(s,3)}] {d['text']}" for s, d in top])
+
         instruction = (
-            "Yalnızca AŞAĞIDAKİ BAĞLAM'a dayanarak cevap ver. "
-            "Bağlam dışı bilgi ekleme. "
-            "Soru SQL ile ilgiliyse örnekleri ```sql kod bloğu``` içinde ver. "
-            "Liste/anahtar-değer içerik varsa düzgün bir Markdown TABLO üret. "
-            "Türkçe yaz. Kaynak metni aynen kopyalama, özlü ve net ol.\n\n"
-            f"=== BAĞLAM BAŞLANGIÇ ===\n{ctx}\n=== BAĞLAM BİTİŞ ==="
+            "Yalnızca AŞAĞIDAKİ SQL BAĞLAMI'na dayanarak cevap ver. "
+            "Bağlam dışı bilgi ekleme. Tablo/anahtar-değer varsa Markdown TABLO yap. "
+            "SQL sorgusu/kaynak id yazma. Türkçe ve net yaz.\n\n"
+            f"=== SQL BAĞLAM BAŞLANGIÇ ===\n{ctx}\n=== SQL BAĞLAM BİTİŞ ==="
         )
 
         out = self._ask_assistant(
             user_id=user_id,
             assistant_id=self.user_states.get(user_id, {}).get("assistant_id") or self._pick_least_busy_assistant(),
             content=user_message,
-            timeout=60.0,
+            timeout=45.0,
             instructions_override=instruction,
             ephemeral=True
         ) or ""
 
-        # Var olan biçimleyicilerinizi kullanarak tabloyu düzgünleştirelim
         out_md = self.markdown_processor.transform_text_to_markdown(out)
         if '|' in out_md and '\n' in out_md:
             out_md = fix_markdown_table(out_md)
         else:
             out_md = self._coerce_text_to_table_if_possible(out_md)
+
         return out_md.encode("utf-8")
+ 
 
-    TRIM_HINTS = ("premium","monte carlo","elite","prestige","sportline","rs","l&k crystal","sportline phev")
-
-    # Teknik tablo ipuçları: seçme sırasında cezalandır
-    TECH_HINTS = (
-        "silindir","çap","strok","maks.","maks ", "0-100","co2","wltp","kw","ps","nm",
-        "km/h","mm","kg","dm3","lastik","hacmi","ivme","emisyon","dingil","uzunluk","genişlik","yükseklik"
-    )
     def _drop_kb_missing_rows_from_markdown(self, md: str) -> str:
         if not md or '|' not in md:
             return md
@@ -1966,11 +3315,24 @@ class ChatbotAPI:
         denom = (np.linalg.norm(a) * np.linalg.norm(b))
         return float(np.dot(a, b) / denom) if denom > 0 else 0.0
 
-    def _guess_model_for_query(self, query: str) -> str | None:
-        mset = self._extract_models(query or "")
-        if mset:
-            return list(mset)[0].upper()
+    def _guess_model_for_query(self, s: str) -> str | None:
+        if not s:
+            return None
+        t = normalize_tr_text(str(s)).lower()
+
+        # 1) Normal cümle içinden (token güvenli)
+        for m in ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]:
+            # kelime sınırları veya alfasayısal olmayan ayırıcılar
+            if re.search(rf"(^|[^a-zçğıöşü]){m}([^a-zçğıöşü]|$)", t):
+                return m.upper()
+
+        # 2) TABLO ADLARINDAN (Örn: Imported_KODA_SCALA_MY_20251)
+        m2 = re.search(r"koda[_\-](fabia|scala|kamiq|karoq|kodiaq|octavia|superb|enyaq|elroq)", t, re.I)
+        if m2:
+            return m2.group(1).upper()
+
         return None
+
 
     def _relevant_table_hints(self, query: str) -> list[str]:
         q = (query or "").lower()
@@ -1979,11 +3341,16 @@ class ChatbotAPI:
             hints.append("PriceList")
         if any(k in q for k in ["donanım","özellik","paket","equipment"]):
             hints.append("EquipmentList")
-        if any(k in q for k in ["menzil","batarya","şarj","kwh","ev","phev"]):
-            hints.append("BatterySpecs")
-        if not hints:
-            hints = ["PriceList","EquipmentList"]
-        return hints
+
+        # >>> YENİ: teknik & bagaj ipuçları
+        if any(k in q for k in ["bagaj","hacim","dm3","bagaj hacmi","bagaj hacmı"]):
+            hints += ["TechSpecs", "Imported"]
+        if any(k in q for k in ["menzil","batarya","şarj","kwh","co2","0-100","hız","tork","güç","ps","kw"]):
+            hints += ["TechSpecs", "Imported"]
+
+        # >>> YENİ: Boşsa artık default verme (tüm KbVectors havuzuna bak)
+        return list(dict.fromkeys(hints))
+
 
     def _row_to_text(self, table_name: str, row: dict) -> str:
         parts = [f"Tablo={table_name}"]
@@ -2062,7 +3429,13 @@ class ChatbotAPI:
         sys.tables’tan dinamik olarak tüm PriceList_%1 ve EquipmentList_%1 tablolarını tarar,
         KbVectors’a embedding yazar. (Tek tuş ReIndex için)
         """
-        patterns = ["PriceList\\_%", "EquipmentList\\_%"]  # BatterySpecs_* varsa ekleyebilirsin
+        patterns = [
+            r"PriceList\_KODA\_%",        # fiyat
+            r"EquipmentList\_KODA\_%",    # donanım
+            r"Imported\_KODA\_%",         # ithal/karma (KODA_*)
+            r"Imported\_%",               # bazıları KODA_ içermiyor (Imported_Enyaq1 gibi)
+            r"TechSpecs\_KODA\_%",        # varsa teknik spesifikasyon tablolarınız
+        ]
         conn = self._sql_conn()
         cur  = conn.cursor()
         tabs = []
@@ -2139,6 +3512,9 @@ class ChatbotAPI:
         """
         KbVectors’tan top-k bağlamı getir, OpenAI’ye 'sadece bu bağlamla' yanıt üret.
         """
+        if getattr(self, "STRICT_SQL_ONLY", False):
+            return ""
+
         top = self._kb_vector_search(query, k=15)
         context = "\n".join([f"- [{round(s,3)}] {d['text']}" for s,d in top])
 
@@ -3216,10 +4592,12 @@ class ChatbotAPI:
                 if pairs:
                     if len(pairs) == 1:
                         key, val = pairs[0]
-                        return f"{model.title()} {key}: {val}.".encode("utf-8")
+                        return self._emit_spec_sentence(model, key, val)
                     else:
-                        lines = [f"• {k}: {v}" for k, v in pairs]
-                        return (f"{model.title()} — öne çıkan veriler:\n" + "\n".join(lines)).encode("utf-8")
+                        sent_list = []
+                        for k, v in pairs:
+                            sent_list.append(self._emit_spec_sentence(model, k, v).decode("utf-8", "ignore"))
+                        return (" ".join(sent_list)).encode("utf-8")
 
         # === 2) DONANIM LİSTESİNDEN ARA ===
          # === 2) STANDART DONANIM LİSTESİNDEN ARA (yalnızca donanım niyeti varsa) ===
@@ -4599,6 +5977,8 @@ class ChatbotAPI:
             template_folder=os.path.join(os.getcwd(), template_folder),
             
         )
+        self._imported_cache = {}   # { "ELROQ": [ {"ozellik":..., "ePrestige":..., "deger":...}, ... ] }
+
             # Logger'ı en başta kur (ilk self.logger.info() çağrısından önce)
         self.logger = logger if logger else self._setup_logger()
         self.logger.info("ChatbotAPI initializing...")
@@ -4679,14 +6059,42 @@ class ChatbotAPI:
         self.SQL_RAG_ALWAYS_ON = os.getenv("SQL_RAG_ALWAYS_ON", "1") == "1"
         self.SQL_RAG_SHORT_CIRCUIT = os.getenv("SQL_RAG_SHORT_CIRCUIT", "1") == "1"
         self.SQL_MD_GLOB = os.getenv("SQL_MD_GLOB", os.path.join("sql_docs", "**", "*.sql.md"))
+        # __init__ içinde, ENV okumalarının hemen altına ekleyin:
+        self.STRICT_SQL_ONLY = os.getenv("STRICT_SQL_ONLY", "0") == "1"
+        self.STRICT_MODEL_ONLY = True
+        if self.STRICT_SQL_ONLY:
+    # 1) Modül içi MD sözlüklerini boşalt
+            self.TECH_SPEC_TABLES = {}
+            self.STANDART_DONANIM_TABLES = {}
+            self.ALL_DATA_TEXTS = {}
 
-        self.sqlrag = SQLRAG(kb_glob=self.SQL_MD_GLOB, db_path=os.getenv("SQL_RAG_DB", "/mnt/data/sql_rag.db"))
-        try:
-            self.sqlrag.build_or_update_index()
-            self.logger.info(f"[SQL-RAG] Index hazır: {self.SQL_MD_GLOB}")
-        except Exception as e:
-            self.logger.error(f"[SQL-RAG] indeksleme hatası: {e}")
+            # 2) MD’ye bakan yardımcıları etkisizleştir
+            def _return_none(*a, **k): return None
+            def _files_off(*a, **k):   return (None, {})   # expected_answer_from_files için
 
+            self._lookup_standart_md = _return_none
+            self._lookup_opsiyonel_md = _return_none
+            self._expected_answer_from_files = _files_off
+            self._collect_all_data_texts = lambda *a, **k: None
+
+            # 3) Vector store’a MD yükleme/üretme yollarını kapat
+            self.USE_OPENAI_FILE_SEARCH = False
+            self.RAG_SUMMARY_EVERY_ANSWER = False
+            self._export_openai_glossary_text = lambda *a, **k: ""
+            self._export_openai_kb_from_sql  = lambda *a, **k: []        # .sql.md üretmesin
+            self._ensure_vector_store_and_upload = lambda *a, **k: None  # hiç çağırmasın
+            self._enable_file_search_on_assistants = lambda *a, **k: None
+
+        #self.sqlrag = SQLRAG(kb_glob=self.SQL_MD_GLOB, db_path=os.getenv("SQL_RAG_DB", "/mnt/data/sql_rag.db"))
+        self.USE_SQL_RAG = os.getenv("USE_SQL_RAG", "0") == "1"
+
+        if self.USE_SQL_RAG:
+            self.sqlrag = SQLRAG(kb_glob=self.SQL_MD_GLOB, db_path=os.getenv("SQL_RAG_DB", "/mnt/data/sql_rag.db"))
+            try:
+                self.sqlrag.build_or_update_index()
+                self.logger.info(f"[SQL-RAG] Index hazır: {self.SQL_MD_GLOB}")
+            except Exception as e:
+                self.logger.error(f"[SQL-RAG] indeksleme hatası: {e}") 
         # 🔴 Model+trim kıyaslarında RAG'i zorunlu kıl
         self.RAG_FOR_MODEL_TRIM_COMPARE = os.getenv("RAG_FOR_MODEL_TRIM_COMPARE", "1") == "1"
 
@@ -5208,17 +6616,27 @@ class ChatbotAPI:
         self.fuzzy_cache_queue.put(record)
 
     def _extract_models(self, text: str) -> set:
+        """
+        Metindeki Skoda model adlarını diakritik güvenli şekilde yakalar.
+        Örnek: 'Fabia'nın torku nedir?' → {'fabia'}
+        """
         if not text:
             return set()
+
+        # Normalize et
         s = normalize_tr_text(text).lower()
-        CANON = ("fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq","test")
-        # Sadece doğrudan içerme + token bazlı exact eşleşme
-        tokens = [re.sub(r"[’'`´‘’]?[ıiuü]?$", "", t) for t in re.findall(r"[0-9a-zçğıöşü]+", s)]
-        return {m for m in CANON if m in tokens or m in s}
 
-    
-        
+        # Model listesi
+        MODELS = ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
 
+        found = set()
+        for m in MODELS:
+            # ✅ kelime sınırlarıyla tam eşleşme (ör. fabia'nın, fabia’da)
+            if re.search(rf"\b{m}\b", s):
+                found.add(m)
+        return found
+
+ 
     def _assistant_id_from_model_name(self, model_name: str):
         model_name = model_name.lower()
         for asst_id, keywords in self.ASSISTANT_CONFIG.items():
@@ -5315,12 +6733,21 @@ class ChatbotAPI:
         prev_ans = (self.user_states.get(user_id, {}) or {}).get("last_assistant_answer")
         self.user_states[user_id]["prev_assistant_answer"] = prev_ans
 
+        # Gevşek model yakalama: kullanıcı yeni bir model yazmaya çalışıyorsa 'last_models' enjekte ETME
+        loose_models_now = self._extract_models_loose(corrected_message) | self._extract_models_spaced(corrected_message)
+        if not user_models_in_msg and loose_models_now:
+            user_models_in_msg = loose_models_now  # yeni/gevşek model yakalandı
+            # NOT: corrected_message'a eski modeli EKLEME!
+
         last_models = self.user_states[user_id].get("last_models", set())
-        if (not user_models_in_msg) and last_models and (not price_intent):
+
+        # Sadece hiçbir model sinyali YOKSA ve fiyat niyeti de değilse eski modeli ekle
+        if (not user_models_in_msg) and (not loose_models_now) and last_models and (not price_intent):
             joined_models = " ve ".join(last_models)
             corrected_message = f"{joined_models} {corrected_message}".strip()
             user_models_in_msg = self._extract_models(corrected_message)
             lower_corrected = corrected_message.lower().strip()
+
         if (not user_models_in_msg) and last_models and ("fiyat" not in lower_corrected):
             joined_models = " ve ".join(last_models)
             corrected_message = f"{joined_models} {corrected_message}".strip()
@@ -5802,6 +7229,9 @@ class ChatbotAPI:
             threads[assistant_id] = thread_id
         return thread_id
     def _yield_sql_rag_block(self, *, user_id: str, user_message: str):
+        if getattr(self, "STRICT_SQL_ONLY", False):
+            return
+
         """Her cevabın SONUNA 'SQL RAG' kısa bloğu ekler."""
         if not (self.USE_SQL_RAG and self.SQL_RAG_ALWAYS_ON):
             return
@@ -5958,6 +7388,156 @@ class ChatbotAPI:
         #if self._mentions_non_skoda(corrected_message):
          #   return self.app.response_class("Üzgünüm sadece Skoda hakkında bilgi verebilirim.", mimetype="text/plain")
         # --- SQL-RAG: her soruda devrede ---
+        # --- normalize & basit çıkarımlar (ilk satırlara koy) ---
+        # --- normalize & çıkarımlar ---
+        q = normalize_tr_text(user_message or "").lower()
+        models_in_msg = list(self._extract_models(q))
+
+        # ✅ MODEL ALGILAMA: sadece kullanıcının yazdığı modele bak
+        picked_model = models_in_msg[0] if models_in_msg else None
+
+        # 🔒 Kullanıcı açıkça model belirttiyse sadece o modelin veritabanına bak
+        if picked_model:
+            val = self._generic_spec_from_sql(picked_model, q)
+            if val:
+                title = "Değer"
+                if "tork" in q: title = "Tork"
+                elif any(k in q for k in ["güç", "beygir", "hp", "ps", "power", "kw"]): title = "Güç"
+                elif re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
+                elif any(k in q for k in ["maks", "max speed", "top speed", "hız"]): title = "Maksimum hız"
+                elif "co2" in q or "emisyon" in q: title = "CO₂"
+                elif any(k in q for k in ["tüketim", "l/100", "consum"]): title = "Birleşik tüketim"
+                elif "menzil" in q or "range" in q: title = "Menzil (WLTP)"
+                elif any(k in q for k in ["ağırl", "agirlik"]):
+                    title = "Ağırlık (Sürücü Dahil) (kg)"
+                    if not re.search(r"\bkg\b", val, re.I):
+                        val = val.strip() + " kg"
+
+                yield self._emit_spec_sentence(picked_model, title, val)
+                return
+
+            # Model yazıldı ama değer bulunamadıysa diğer modellere bakma
+            yield f"{picked_model.title()} için bu metrik veritabanında bulunamadı.".encode("utf-8")
+            return
+
+        # 🚨 Eğer kullanıcı model yazmadıysa o zaman fallback devreye girsin
+        last_models = list(self.user_states.get(user_id, {}).get("last_models", []))
+        probe_models = last_models or ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
+        for m in probe_models:
+            val = self._generic_spec_from_sql(m, q)
+            if val:
+                yield self._emit_spec_sentence(m, "Değer", val)
+                return
+
+        yield "Bu metrik için veri bulunamadı."
+        q = normalize_tr_text(user_message or "").lower()
+        models_in_msg = list(self._extract_models(user_message))
+        if models_in_msg:
+            picked_model = models_in_msg[0]
+
+            val = self._generic_spec_from_sql(picked_model, q)
+
+            if val:
+                title = "Değer"
+                if "tork" in q: title = "Tork"
+                elif any(k in q for k in ["güç","beygir","hp","ps","power","kw"]): title = "Güç"
+                elif re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
+                elif any(k in q for k in ["maks","max speed","top speed","hız"]): title = "Maksimum hız"
+                elif "co2" in q or "emisyon" in q: title = "CO₂"
+                elif any(k in q for k in ["tüketim","l/100","consum"]): title = "Birleşik tüketim"
+                elif "menzil" in q or "range" in q: title = "Menzil (WLTP)"
+                elif any(k in q for k in ["ağırl","agirlik"]):
+                    title = "Ağırlık (Sürücü Dahil) (kg)"
+                    if not re.search(r"\bkg\b", val, re.I):
+                        val = val.strip() + " kg"
+
+                yield self._emit_spec_sentence(picked_model, title, val)
+                return
+
+            # Model yazıldı ama değer çıkmadıysa da başka modele düşme → net bilgi
+            yield f"{picked_model.title()} için bu metrik veritabanında bulunamadı.".encode("utf-8")
+            return
+        # 1) Kullanıcının açıkça yazdığı model
+        models_in_msg = list(self._extract_models(user_message))
+        picked_model = models_in_msg[0] if models_in_msg else None
+
+        val = None
+
+        if picked_model:
+            # KULLANICININ YAZDIĞI MODEL DIŞINA ÇIKMA!
+            val = self._generic_spec_from_sql(picked_model, q)
+        else:
+            # Model yoksa: önce last_models sonra tüm modeller
+            probe_list = []
+            ctx = self.user_states.get(user_id, {}) or {}
+            lm = list(ctx.get("last_models", []))
+            if lm: probe_list += list(lm)
+            for m in ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]:
+                if m not in probe_list:
+                    probe_list.append(m)
+            for m in probe_list:
+                val = self._generic_spec_from_sql(m, q)
+                if val:
+                    picked_model = m
+                    self.user_states.setdefault(user_id, {}).setdefault("last_models", set()).add(m)
+                    break
+
+        if val:
+            # başlık sezgisi
+            title = "Değer"
+            if "tork" in q: title = "Tork"
+            elif any(k in q for k in ["güç","beygir","hp","ps","power","kw"]): title = "Güç"
+            elif re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
+            elif any(k in q for k in ["maks","max speed","top speed","hız"]): title = "Maksimum hız"
+            elif "co2" in q or "emisyon" in q: title = "CO₂"
+            elif any(k in q for k in ["tüketim","l/100","consum"]): title = "Birleşik tüketim"
+            elif "menzil" in q or "range" in q: title = "Menzil (WLTP)"
+            elif any(k in q for k in ["ağırl","agirlik"]): 
+                title = "Ağırlık (Sürücü Dahil) (kg)"
+                if not re.search(r"\bkg\b", val, re.I):
+                    val = val.strip() + " kg"
+
+            # >>> burada sadece picked_model kullanılıyor
+            yield self._emit_spec_sentence(picked_model, title, val)
+            return
+
+
+         
+             
+
+
+        q = normalize_tr_text(user_message or "").lower()
+        models_in_msg0 = list(self._extract_models(user_message))
+        model = models_in_msg0[0] if models_in_msg0 else None
+
+        
+            # 3) Genel metrik yakalama (tork/güç/0-100/co2/menzil vb.)
+        val = None
+        if model:
+            val = self._generic_spec_from_sql(model, q)
+            if val:
+                picked_model = model
+        else:
+            for m in ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]:
+                val = self._generic_spec_from_sql(m, q)
+                if val:
+                    picked_model = m
+                    break
+        if val:
+            # Sorudan kısa bir başlık çıkaralım
+            title = "Değer"
+            if "tork" in q: title = "Tork"
+            elif "güç" in q or "beygir" in q or "power" in q: title = "Güç"
+            elif "0-100" in q or re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
+            elif "maks" in q and "hız" in q: title = "Maksimum hız"
+            elif "co2" in q: title = "CO₂"
+            elif "tüketim" in q or "l/100" in q: title = "Birleşik tüketim"
+            elif "menzil" in q: title = "Menzil (WLTP)"
+
+            yield self._emit_spec_sentence(model, title, val)
+            return
+
+
         if getattr(self, "SQL_RAG_ALWAYS_ON", False):
             rag_bytes = self._answer_with_sql_rag(user_message, user_id)
             if rag_bytes:
@@ -5967,9 +7547,8 @@ class ChatbotAPI:
                     yield rag_bytes
                     return
                 else:
-                    # RAG'i başa ekle, sonra mevcut akışa devam et
+                    # yine de ekranda göstermek istiyorsan göster; ama akış devam etsin
                     yield rag_bytes
-
         corrected_message = user_message
         if self._mentions_non_skoda(user_message):
             # Tam olarak istenen cümle (ek link/ekstra metin yok)
@@ -6209,13 +7788,48 @@ class ChatbotAPI:
                     yield ans.encode("utf-8")
                     return
             # birden çok metrik istendiyse eski teknik karşılaştırma tablosuna düş
+        # === FULL Imported_* kapsama: kullanıcı özellik/var mı niyeti → tüm tablo içinden ara ===
+        equip_like = any(w in lower_msg for w in ["donanım","donanim","özellik","ozellik","var mı","varmi","bulunuyor mu","matrix","dcc"])
+        if equip_like and model:
+            rows = self._query_all_features_from_imported(model, user_message, topn=1)  # sadece en alakalı satır
+            if rows:
+                compact = self._render_feature_hits_compact(rows)
+                # tek satırsa düz metin, tabloysa hizala
+                if "|" in compact and "\n" in compact:
+                    compact = fix_markdown_table(compact)
+                yield compact.encode("utf-8")
+                return
+            if not rows:
+                # İstersen sorudan kısa başlık üret; en basiti:
+                yield f"{model.title()} için bu özellik bulunmuyor.".encode("utf-8")
+                return
+
+            compact = self._render_feature_hits_compact(rows)
+            if "|" in compact and "\n" in compact:
+                compact = fix_markdown_table(compact)
+            yield compact.encode("utf-8")
+            return
+
+
+        equip_words = ["donanım","donanim","standart","opsiyonel","özellik","ozellik","paket"]
+        equip_intent = any(w in lower_msg for w in equip_words)
 
         # --- DONANIM (STANDART/OPSİYONEL) KARŞILAŞTIRMA — DB KAYNAKLI ---
-        equip_words = ["donanım","donanim","standart","opsiyonel","özellik","ozellik","paket"]
-        equip_intent   = any(w in lower_msg for w in equip_words)
-        compare_words  = ["karşılaştır","karşılaştırma","kıyas","kıyasla","kıyaslama","vs","vs."]
-        wants_compare  = any(ck in lower_msg for ck in compare_words)
+        if equip_intent:
+            # ör: user_text = "Octavia'da arka çapraz trafik uyarısı var mı?"
+            models = list(self._extract_models(user_message))
+            model = models[0] if models else self._resolve_display_model(user_id).lower()
+            trims, st = self._feature_lookup_any(model, user_message)
+            if trims and st:
+                # Küçük bir tablo üret
+                header = "| Özellik | " + " | ".join(trims) + " |\n|" + "|".join(["---"]*(len(trims)+1)) + "|\n"
+                # tek özellik soruldu varsayımıyla:
+                row = "| " + self._norm_alias(user_message) + " | " + " | ".join(("✓" if st.get(t)=="S" else ("○" if st.get(t)=="O" else "—")) for t in trims) + " |"
+                md = header + row
+                yield md.encode("utf-8")
+                return
 
+        
         # Teknik anahtar kelimesi var mı?
         requested_specs = self._find_requested_specs(user_message)  # ← 'hız', '0-100', 'beygir', 'tork' vb. yakalanır
         has_teknik_word = bool(requested_specs) or any(kw in lower_msg for kw in [
@@ -6677,6 +8291,11 @@ class ChatbotAPI:
         if getattr(self, "RAG_ONLY", False) and generic_info_intent:
             assistant_id = self.user_states[user_id].get("assistant_id")
             yield self._answer_via_rag_only(user_id=user_id, assistant_id=assistant_id, user_message=user_message)
+            return
+
+        # --- SQL-ONLY muhafaza: hiçbir SQL cevabı bulunamadıysa net mesaj ver ---
+        if getattr(self, "STRICT_SQL_ONLY", False):
+            yield b"DB: kayit bulunamadi."
             return
 
         # === 7.A) GENEL SORU → ÖNCE RAG (Vector Store) İLE YANITLA ===
