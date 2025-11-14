@@ -1026,6 +1026,80 @@ def strip_tr_suffixes(word: str) -> str:
         w = w + "k"   # → ağırlık / agırlık
 
     return w
+FEATURE_INDEX = [(canon, [re.compile(p, re.I) for p in pats]) for canon, pats in FEATURE_SYNONYMS.items()]
+# --- Teknik metrikler için LIKE kalıpları (SQL arama anahtarları) ---
+_SPEC_KEYWORDS = {
+    # TORK
+    "tork": (
+        [
+            "%tork%",          # Türkçe
+            "%torque%",        # İngilizce
+        ],
+        None
+    ),
+
+    # GÜÇ / BEYGİR
+    "güç": (
+        [
+            "%güç%", "%guc%",
+            "%beygir%", "%hp%", "%ps%",
+            "%power%", "%kw%",
+        ],
+        None
+    ),
+
+    # 0-100 HIZLANMA
+    "0-100": (
+        [
+            "%0-100%",
+            "%0 %100%",
+            "%0%100%",
+        ],
+        None
+    ),
+
+    # MAKSİMUM HIZ
+    "maksimum hız": (
+        [
+            "%maks%hız%",
+            "%maks%hiz%",
+            "%max%speed%",
+            "%top%speed%",
+        ],
+        None
+    ),
+
+    # MENZİL
+    "menzil": (
+        [
+            "%menzil%",
+            "%range%",
+            "%WLTP%menzil%",
+            "%WLTP%range%",
+        ],
+        None
+    ),
+
+    # CO2 / EMİSYON
+    "co2": (
+        [
+            "%co2%",
+            "%emisyon%",
+            "%emission%",
+        ],
+        None
+    ),
+
+    # YAKIT TÜKETİMİ
+    "yakıt tüketimi": (
+        [
+            "%tüketim%", "%tuketim%",
+            "%l/100 km%", "%l/100km%",
+            "%lt/100 km%",
+        ],
+        None
+    ),
+}
 
 
 class ChatbotAPI:
@@ -1699,14 +1773,14 @@ class ChatbotAPI:
             lines.append(f"| {h['ozellik']} | {h['durum']} | {h['deger'] or '—'} |")
         return "\n".join(lines)
 
-    def _feature_lookup_any(self, model: str, user_text: str) -> tuple[list[str], dict]:
+    def _feature_lookup_any(self, model: str, user_text: str) -> tuple[list[str], dict, str | None]:
         """
-        HIZLI YOL: SP/alias yok. Kullanıcı ifadesini varyantlara genişlet,
-        doğrudan EquipmentList_* tablosunda LIKE ile ara ve S/O/— döndür.
+        HIZLI YOL: ... 
+        Dönüş: (trims, status_map, feature_title)
         """
         import re
         if not model or not user_text:
-            return [], {}
+            return [], {}, None
 
         q = self._norm_alias(user_text)
 
@@ -1734,8 +1808,8 @@ class ChatbotAPI:
         needles = [n for n in dict.fromkeys([self._norm_alias(x) for x in needles]) if len(n) >= 2]
 
         # 4) doğrudan EquipmentList LIKE
-        trims, status_map = self._feature_status_from_equipment(model, feature_keywords=needles)
-        return trims, status_map
+        trims, status_map, feature_title = self._feature_status_from_equipment(model, feature_keywords=needles)
+        return trims, status_map, feature_title
 
     def seed_feature_catalog_from_equipment(self):
         conn = self._sql_conn(); cur = conn.cursor()
@@ -1886,22 +1960,23 @@ class ChatbotAPI:
             with contextlib.suppress(Exception): conn.close()
         return False
 
-    def _feature_status_from_equipment(self, model: str, feature_keywords: list[str]) -> tuple[list[str], dict]:
+    def _feature_status_from_equipment(self, model: str, feature_keywords: list[str]) -> tuple[list[str], dict, str | None]:
         """
         Modelin en güncel EquipmentList tablosunda verilen anahtarları (LIKE) arar.
         Dönüş:
-        trims: trim kolonları (bulunanlar)
-        status_map: {trim: 'S'|'O'|'—'}  (ilk eşleşen satır baz alınır)
+        trims:      trim kolonları (bulunanlar)
+        status_map: {trim: 'S'|'O'|'—'}  (EN İYİ EŞLEŞEN TEK SATIR baz alınır)
+        feature_title: Seçilen satırdaki Özellik başlığı (Donanım kolonu için)
         """
         import re, contextlib
         m = (model or "").strip().upper()
         if not m or not feature_keywords:
-            return [], {}
+            return [], {}, None
 
         # 1) En güncel tablo
         tname = self._latest_equipment_table_for(model)
         if not tname:
-            return [], {}
+            return [], {}, None
 
         conn = self._sql_conn(); cur = conn.cursor()
         try:
@@ -1909,31 +1984,34 @@ class ChatbotAPI:
             cur.execute(f"SELECT TOP 0 * FROM [dbo].[{tname}] WITH (NOLOCK)")
             cols = [c[0] for c in cur.description] if cur.description else []
             if not cols:
-                return [], {}
+                return [], {}, None
 
             # Özellik/isim kolonu
             name_candidates = ["Equipment","Donanim","Donanım","Ozellik","Özellik","Name","Title","Attribute","Feature"]
             feat_col = next((c for c in name_candidates if c in cols), None)
             if not feat_col:
-                # heuristik
                 feat_col = next((c for c in cols if re.search(r"(equip|donan|özellik|ozellik|name|title|attr)", c, re.I)), None)
             if not feat_col:
-                return [], {}
+                return [], {}, None
 
             # Trim kolonları
-            known_trims = ["premium","elite","prestige","sportline","monte carlo","rs",
-                        "l&k crystal","sportline phev","e prestige 60","e sportline 60",
-                        "coupe e sportline 60","e sportline 85x","coupe e sportline 85x"]
+            known_trims = [
+                "premium","elite","prestige","sportline","monte carlo","rs",
+                "l&k crystal","sportline phev",
+                "e prestige 60","e sportline 60",
+                "coupe e sportline 60","e sportline 85x","coupe e sportline 85x"
+            ]
             trim_cols = []
             low2orig = {c.lower(): c for c in cols}
             for t in known_trims:
                 if t in low2orig:
                     trim_cols.append(low2orig[t])
             if not trim_cols:
-                # fallback: adında trim çağrışımı olan tüm kolonlar
-                trim_cols = [c for c in cols if re.search(r"(premium|elite|prestige|sportline|monte|rs|crystal|phev|e\s*sportline|e\s*prestige)", c, re.I)]
+                trim_cols = [c for c in cols if re.search(
+                    r"(premium|elite|prestige|sportline|monte|rs|crystal|phev|e\s*sportline|e\s*prestige)",
+                    c, re.I)]
             if not trim_cols:
-                return [], {}
+                return [], {}, None
 
             # 3) LIKE filtresi
             coll = os.getenv("SQL_CI_COLLATE", "Turkish_100_CI_AI")
@@ -1944,43 +2022,62 @@ class ChatbotAPI:
             except Exception:
                 use_ft = False
 
-            where_sql, params = self._make_where_for_keywords(feat_col, feature_keywords, use_ft, coll)
-            sql = f"SELECT TOP 30 [{feat_col}], {', '.join(f'[{c}]' for c in trim_cols)} FROM [dbo].[{tname}] WITH (NOLOCK) WHERE {where_sql}"
+            where_sql, params = self._make_where_for_keywords(feat_col, feature_keywords, use_fulltext=use_ft, collate=coll)
+            sql = f"""
+                SELECT TOP 30 [{feat_col}], {', '.join(f'[{c}]' for c in trim_cols)}
+                FROM [dbo].[{tname}] WITH (NOLOCK)
+                WHERE {where_sql}
+            """
             cur.execute(sql, params)
-
             rows = cur.fetchall()
             if not rows:
-                return [], {}
+                return [], {}, None
 
-            # 4) İlk eşleşen satır(lar)dan statü çıkar
+            # 4) En iyi satırı seç (özellik adını keyword'lere göre skorla)
+            def nrm(s: str) -> str:
+                return re.sub(r"\s+", " ", normalize_tr_text(s or "").lower()).strip()
+
+            norm_keywords = [self._norm_alias(k) for k in feature_keywords if k]
+            norm_keywords = [k for k in dict.fromkeys(norm_keywords) if len(k) >= 2]
+
+            def row_score(oz_norm: str) -> float:
+                score = 0.0
+                for k in norm_keywords:
+                    if not k:
+                        continue
+                    if k in oz_norm:
+                        # daha uzun ifadeler (ör. "dcc pro") daha ağır bassın
+                        score += 2.0 + len(k) / 5.0
+                return score
+
+            best_idx, best_score = None, 0.0
+            for idx, r in enumerate(rows):
+                oz_norm = nrm(r[0])
+                sc = row_score(oz_norm)
+                if sc > best_score:
+                    best_score = sc
+                    best_idx = idx
+
+            # Skor yoksa güvenli tarafta ilk satırı al
+            if best_idx is None:
+                best_row = rows[0]
+            else:
+                best_row = rows[best_idx]
+
+            rec = { ([feat_col] + trim_cols)[i]: best_row[i] for i in range(1 + len(trim_cols)) }
             status_map = {}
-            for r in rows:
-                rec = { ([feat_col] + trim_cols)[i]: r[i] for i in range(1+len(trim_cols)) }
-                for tc in trim_cols:
-                    raw = rec.get(tc)
-                    status_map[tc] = self._normalize_equipment_status(raw)
+            for tc in trim_cols:
+                raw = rec.get(tc)
+                status_map[tc] = self._normalize_equipment_status(raw)
 
-            # 5) Trim başlık sırası
+            feature_title = (rec.get(feat_col) or "").strip()
             trims_pretty = [tc for tc in trim_cols]
-            return trims_pretty, status_map
+            return trims_pretty, status_map, feature_title
 
         finally:
             with contextlib.suppress(Exception): cur.close()
             with contextlib.suppress(Exception): conn.close()
 
-    # ChatbotAPI sınıfına ekleyin
-    _SPEC_KEYWORDS = {
-        # norm_key            : (ad_kolonunda aranan terimler, md'de aranan başlık)
-        "tork":               (["%tork%", "%torque%"],                          "Maks. tork (Nm @ dev/dak)"),
-        "güç":                (["%güç%", "%guc%", "%power%", "%ps%", "%hp%"],   "Maks. güç (kW/PS @ dev/dak)"),
-        "beygir":             (["%beygir%", "%ps%", "%hp%", "%power%"],         "Maks. güç (kW/PS @ dev/dak)"),
-        "maksimum hız":       (["%maks%hız%", "%max%speed%", "%top%speed%"],    "Maks. hız (km/h)"),
-        "0-100":              (["%0%100%", "%0-100%", "%ivme%", "%accel%"],     "0-100 km/h (sn)"),
-        "0 100":              (["%0%100%", "%0-100%", "%ivme%", "%accel%"],     "0-100 km/h (sn)"),
-        "co2":                (["%co2%", "%emisyon%"],                          "CO2 Emisyonu (g/km)"),
-        "yakıt tüketimi":     (["%tüketim%", "%l/100%", "%consumption%"],       "Birleşik (l/100 km)"),
-        "menzil":             (["%menzil%", "%range%"],                         "Menzil (WLTP)"),
-    }
 
     def _generic_spec_from_sql(self, model_slug: str, want: str) -> str | None:
         import re, contextlib
@@ -6100,6 +6197,7 @@ class ChatbotAPI:
             "0-100 km/h (sn)": [
                 r"h[ıi]zlanma", r"ivme(?:lenme)?", r"\b0\s*[-–—]?\s*100\b", r"s[ıi]f[ıi]rdan.*100"
             ],
+            
             "Maks. hız (km/h)": [r"maks(?:\.|imum)?\s*h[ıi]z", r"son\s*h[ıi]z"],
             "Maks. güç (kW/PS @ dev/dak)": [r"\bg[üu]ç\b", r"\bbeygir\b|\bhp\b|\bps\b|\bkw\b"],
             "Maks. tork (Nm @ dev/dak)": [r"\btork\b"],
@@ -6129,6 +6227,7 @@ class ChatbotAPI:
             "Sürtünme katsayısı": [r"s[üu]rt[üu]nme\s*katsay"],
             "Güç aktarımı": [r"g[üu]ç\s*aktar[ıi]m[ıi]|çekiş|önden|arkadan|4x4|awd"]
         }
+        self._SPEC_KEYWORDS = _SPEC_KEYWORDS
 
         # derlenmiş regex index’i
         self._SPEC_INDEX = None
@@ -7901,13 +8000,11 @@ class ChatbotAPI:
 
 
         if equip_intent and not wants_compare:
-            # Örnek: "Kodiaq head up display var mı?"
             models = list(self._extract_models(user_message))
             model = models[0] if models else self._resolve_display_model(user_id).lower()
-            trims, status_map = self._feature_lookup_any(model, user_message)
+            trims, status_map, feature_title = self._feature_lookup_any(model, user_message)
 
             if trims and status_map:
-                # Trim sütunlarında dönen S/O/— kodlarını okunur hale getir
                 def pretty_status(code: str | None) -> str:
                     if code == "S":
                         return "Standart"
@@ -7915,16 +8012,20 @@ class ChatbotAPI:
                         return "Opsiyonel"
                     return "Yok"
 
-                #feature_name = self._norm_alias(user_message).title()
-                canon_key, disp = canonicalize_feature(user_message)
-                norm_q    = normalize_tr_text(user_message).lower().strip()
-                norm_disp = normalize_tr_text(disp).lower().strip()
-
-                if (not disp) or (norm_disp == norm_q):
-                    # Eşleştiremediysek generic isim ver (soru asla yazılmasın)
-                    feature_name = "Sorgulanan donanım"
+                # 1️⃣ Donanım adını belirle
+                if feature_title:
+                    # SQL'den seçilen satırın 'Özellik' değeri
+                    feature_name = feature_title
                 else:
-                    feature_name = disp
+                    # Eski canonicalize fallback'i
+                    canon_key, disp = canonicalize_feature(user_message)
+                    norm_q    = normalize_tr_text(user_message).lower().strip()
+                    norm_disp = normalize_tr_text(disp).lower().strip()
+                    if (not disp) or (norm_disp == norm_q):
+                        feature_name = "Sorgulanan donanım"
+                    else:
+                        feature_name = disp
+
                 header = ["Donanım"] + [t.title() for t in trims]
                 lines = [
                     "| " + " | ".join(header) + " |",
@@ -7934,10 +8035,8 @@ class ChatbotAPI:
                 md = "\n".join(lines)
                 md = fix_markdown_table(md)
 
-                # 1) Tabloyu gönder
-                #yield md.encode("utf-8")
                 yield (md + "\n\n<br><br>").encode("utf-8")
-                # 2) Altına OpenAI cümlesi ekle
+
                 try:
                     sent = self._nlg_equipment_status(
                         model_name=model,
@@ -7949,10 +8048,9 @@ class ChatbotAPI:
                     sent = ""
 
                 if sent:
-                    # Tablo ile cümle arasında biraz boşluk bırak
                     yield (sent + "\n").encode("utf-8")
-
                 return
+
 
 
 
