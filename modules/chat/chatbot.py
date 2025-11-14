@@ -1032,6 +1032,47 @@ class ChatbotAPI:
     import difflib
     import re
     import re, unicodedata
+    def _nlg_equipment_status(
+            self,
+            model_name: str,
+            feature: str,
+            trims: list[str],
+            status_map: dict[str, str],
+            tone: str = None,
+            length: str = "short",
+        ) -> str:
+            """
+            Tek bir donanım için (örn. DCC Pro) trim bazlı S/O/Yok durumlarını
+            satış-dili bir paragraf haline getirir.
+            Ör: Premium: Yok; Prestige: Yok; Sportline: Standart; RS: Standart
+            """
+            if not trims or not status_map:
+                return ""
+
+            # S/O/— -> okunur metin
+            def pretty_status(code: str | None) -> str:
+                if code == "S":
+                    return "Standart"
+                if code == "O":
+                    return "Opsiyonel"
+                return "Yok"
+
+            # Trim durum özetini tek satır string yap
+            parts = []
+            for t in trims:
+                code = status_map.get(t)
+                parts.append(f"{t.title()}: {pretty_status(code)}")
+            value_str = "; ".join(parts)
+
+            # Var olan NLG jeneratörünü kullan
+            return self._nlg_via_openai(
+                model_name=model_name,
+                metric=f"Donanım: {feature}",
+                value=value_str,
+                tone=tone or os.getenv("NLG_TONE", "neutral"),
+                length=length,
+            )
+
     def _extract_models_spaced(self, text: str) -> set:
         """
         'k o d i a q' gibi harfleri ayrı yazımları yakalar.
@@ -1081,6 +1122,13 @@ class ChatbotAPI:
         - Önce value/desc/unit/data gibi kolonlara bakar
         - Rakama/üniteye göre skorlar, en yüksek skorlu hücreyi döner
         """
+        trim_pref = getattr(self, "CURRENT_TRIM_HINT", None)
+        if trim_pref:
+            for i, c in enumerate(cols):
+                if trim_pref.lower().replace(" ", "_") in c.lower():
+                    cell = str(row[i] or "").strip()
+                    if cell:
+                        return cell
         import re
         units_re = re.compile(r"(nm|kw|ps|hp|km/?h|sn|g/km|l/100\s*km|kwh|dm3|cc)", re.I)
         value_like = re.compile(r"(deger|değer|value|val|content|desc|açıklama|aciklama|icerik|içerik|spec|specval|spec_value|unit|birim|data|veri|number|num)", re.I)
@@ -1173,24 +1221,45 @@ class ChatbotAPI:
     
     def _emit_spec_sentence(self, model: str | None, title: str, val: str) -> bytes:
         """
-        SQL'den bulunan tek bir teknik değer için:
-        - OpenAI ile doğal cümle üret,
-        - sayı/ölçü imzası korunmazsa güvenli şablona düş,
-        - bytes döndür (yield için hazır).
+        SQL'den bulunan tek bir değer için:
+        - Eğer içinde sayı varsa → teknik veri gibi davran (tork, güç, 0-100 vb.)
+        - Eğer sayı yoksa → donanım / var-yok / standart-opsiyonel bilgisi gibi davran.
         """
-        if not re.search(r"\d", val or ""):
-            return f"{(model or '').title()} için {title.lower()} değeri veritabanında sayısal olarak bulunamadı.".encode("utf-8")
+        import re
+
+        mdl = (model or "").title()
+        txt_val = (val or "").strip()
+
+        # 📌 1) Sayı YOKSA: donanım bilgisi gibi yorumla
+        if not re.search(r"\d", txt_val):
+            # Durumu normalize et (S = Standart, O = Opsiyonel, — = Yok)
+            status = self._normalize_equipment_status(txt_val)
+
+            if status == "S":
+                msg = f"{mdl} modelinde bu özellik standart olarak sunuluyor."
+            elif status == "O":
+                msg = f"{mdl} modelinde bu özellik opsiyonel (ek paket/opsiyon) olarak sunuluyor."
+            elif status == "—":
+                msg = f"{mdl} modelinde bu özellik bulunmuyor."
+            else:
+                # Standart/opsiyonel/yok dışı serbest metinler için
+                msg = f"{mdl} için bu özellik veritabanında '{txt_val}' olarak kayıtlı."
+
+            return msg.encode("utf-8")
+
+        # 📌 2) Sayı VARSA: eski teknik-veri davranışı
         nlg = self._nlg_via_openai(
             model_name=(model or ""),
             metric=title,
-            value=val,
+            value=txt_val,
             tone=os.getenv("NLG_TONE","neutral"),
             length=os.getenv("NLG_LENGTH","short"),
         )
         if nlg:
             return nlg.encode("utf-8")
+
         # Güvenli yedek cümle
-        return f"{(model or '').title()} için {title.lower()}, {val}.".encode("utf-8")
+        return f"{mdl} için {title.lower()}, {txt_val}.".encode("utf-8")
 
     def _nlg_via_openai(self, *, model_name: str, metric: str, value: str,
                     tone: str = "neutral", length: str = "short") -> str:
@@ -1450,12 +1519,15 @@ class ChatbotAPI:
         """
         Imported_* RAM önbelleğinden arama yapar; SADECE en alakalı satır(lar)ı döndürür.
         Dönüş: [{'ozellik':..., 'durum': 'Standart|Opsiyonel|Var|—', 'deger': '...','_score':float}, ...]
+        EŞLEŞME YOKSA -> [] döner.
         """
         data = self._load_imported_table_all(model_code)
         if not data:
             return []
 
-        def nrm(s): return re.sub(r"\s+", " ", normalize_tr_text(s or "").lower()).strip()
+        def nrm(s): 
+            return re.sub(r"\s+", " ", normalize_tr_text(s or "").lower()).strip()
+
         q_norm = nrm(user_text)
 
         # anahtar seti: tokenlar + bigramlar + TR→EN eşlemler + bilinen kısaltmalar
@@ -1476,7 +1548,6 @@ class ChatbotAPI:
             "arka cam sileceği","ambiyans aydınlatma","karartılmış arka camlar"
         }
 
-        # eşiği belirle (iki kelimelik aramalar daha seçici)
         SCORE_MIN = 3 if len(tokens) >= 2 else 2
 
         patt_exact = [re.compile(rf"(?<!\w){re.escape(t)}(?!\w)") for t in terms if " " not in t]
@@ -1533,8 +1604,6 @@ class ChatbotAPI:
                 "_score": score
             })
 
-            # … mevcut skor hesapları bitti, hits listesi oluştu …
-
         if not hits:
             return []
 
@@ -1543,39 +1612,70 @@ class ChatbotAPI:
         if rules:
             def ok_by_rules(oz_low: str) -> bool:
                 for pos_list, neg_list in rules:
-                    # NEG biri tutarsa elenir
                     if any(n.search(oz_low) for n in neg_list):
                         return False
-                    # POS en az biri tutmalı
                     if not any(p.search(oz_low) for p in pos_list):
                         return False
                 return True
 
             filtered = [h for h in hits if ok_by_rules(nrm(h["ozellik"]))]
-            # kuralı geçen yoksa: "bulunmuyor" demek için boş dön
             if filtered:
                 hits = filtered
             else:
+                # hiçbiri POS/NEG kurallara uymuyorsa "eşleşme yok" say
                 return []
 
-        # kalanları sırala
-        hits.sort(key=lambda h: (-h["_score"], len(h["ozellik"])))
+        # --- BURADAN SONRASI: SERT EŞİK + TOKEN OVERLAP KONTROLÜ ---
 
-        # SERT EŞİK: skor çok düşükse yanlış pozitif olmasın
-        HARD_MIN = 3.0
+        # 1) skor’a göre sırala
+        hits.sort(key=lambda h: (-h["_score"], len(h["ozellik"])))
         best = hits[0]
+
+        # 2) minimum skor eşiği
+        HARD_MIN = 3.0
         if best["_score"] < HARD_MIN:
+            self.logger.info(
+                f"[EQUIP] best score below HARD_MIN: {best['_score']:.2f} < {HARD_MIN} "
+                f"for query='{user_text}', best='{best['ozellik']}'"
+            )
             return []
 
-        # En alakalı 1 satırı döndür (veya istersen 2)
+        # 3) soru token’ları kümesi
+        q_tokens_set = set(tokens)
+
+        # 4) özelliğin token’ları
+        import re as _re
+        oz_tokens = set(_re.findall(r"[0-9a-zçğıöşü]+", nrm(best["ozellik"])))
+
+        # 4.a ÖZEL KURAL: soru "koltuk" içerip özellik "bagaj" içeriyorsa asla eşleştirme
+        if "koltuk" in q_tokens_set and "bagaj" in oz_tokens:
+            self.logger.info(
+                f"[EQUIP] seat vs trunk clash -> ignore row '{best['ozellik']}' "
+                f"for query='{user_text}'"
+            )
+            return []
+
+        # 5) çok genel kelimeleri overlap’ten çıkar
+        GENERIC_OVERLAP_STOP = {"elektrikli", "otomatik", "sistem", "sistemi"}
+
+        strong_overlap = (oz_tokens & q_tokens_set) - GENERIC_OVERLAP_STOP
+
+        # 6) hiç anlamlı ortak kelime yoksa eşleşmeyi yok say
+        if not strong_overlap:
+            self.logger.info(
+                f"[EQUIP] Weak overlap, ignoring best hit '{best['ozellik']}' "
+                f"for query='{user_text}' (q_tokens={q_tokens_set}, oz_tokens={oz_tokens})"
+            )
+            return []
+
+        self.logger.info(
+            f"[EQUIP] ACCEPT '{best['ozellik']}' for '{user_text}' "
+            f"(score={best['_score']:.2f}, overlap={strong_overlap})"
+        )
+
+        # En alakalı 1 satırı döndür
         return hits[:1]
 
-
-        # en alakalıları topla: skor ≥ eşiği ve en yüksek skora bağlı bağıl eşik
-        hits.sort(key=lambda h: (-h["_score"], len(h["ozellik"])))
-        best = hits[0]["_score"]
-        filtered = [h for h in hits if h["_score"] >= max(SCORE_MIN, best - 1)]
-        return filtered[:max(1, topn)]
     def _render_feature_hits_compact(self, rows: list[dict]) -> str:
         if not rows:
             return ""
@@ -1935,17 +2035,16 @@ class ChatbotAPI:
             return [f"%{normalize_tr_text(canon_key).lower()}%"]
 
         # Nihai arama terimleri (ör. “tork” seçildiyse: ["%tork%","%torque%"])
+                # Nihai arama terimleri (ör. “tork” seçildiyse: ["%tork%","%torque%"])
         final_like_terms: list[str] = []
         for k in key_hits:
             final_like_terms.extend(terms_for(k))
 
-        # Hiçbir anahtar tespit edilemediyse, eski davranışa düş:
-        # tam cümleyi parçalamak yerine en azından kelimelerin ANY LIKE’ı
-        if not final_like_terms:
-            # Minimal güvenli fallback: kısa anlamlı token’lar
-            toks = [t for t in re.findall(r"[0-9a-zçğıöşü]+", want_norm_all) if len(t) >= 2]
-            final_like_terms = [f"%{t}%" for t in dict.fromkeys(toks)]
-            self.logger.info(f"[SQL-SPEC] fallback terms={final_like_terms[:5]}..")
+        # ❗ Hiçbir metrik anahtarı bulunamadıysa bu fonksiyonu pas geç.
+        # Örn: "kodiaq elektrikli motora sahip mi" gibi sorular donanım /
+        # var-yok sorusudur, teknik metrik değildir; burada işlem yapmak istemiyoruz.
+        if not key_hits:
+            return None
 
         conn = self._sql_conn(); cur = conn.cursor()
         try:
@@ -7390,121 +7489,124 @@ class ChatbotAPI:
         # --- SQL-RAG: her soruda devrede ---
         # --- normalize & basit çıkarımlar (ilk satırlara koy) ---
         # --- normalize & çıkarımlar ---
+    # --- normalize & çıkarımlar (EN BAŞTA) ---
         q = normalize_tr_text(user_message or "").lower()
-        models_in_msg = list(self._extract_models(q))
+        lower_msg = (user_message or "").lower()
+                # Donanım / özellik / var mı / opsiyonel niyetini erken tespit et
+        equip_words = [
+            "donanım", "donanim",
+            "standart", "opsiyonel",
+            "özellik", "ozellik",
+            "paket", "var mı", "varmi", "bulunuyor mu"
+        ]
+        equip_intent = any(w in lower_msg for w in equip_words)
 
-        # ✅ MODEL ALGILAMA: sadece kullanıcının yazdığı modele bak
-        picked_model = models_in_msg[0] if models_in_msg else None
+        # Teknik / performans metriklerini tespit et (0-100, tork, güç, menzil, vs.)
+        requested_specs = self._find_requested_specs(user_message) if hasattr(self, "_find_requested_specs") else []
+        has_teknik_trigger = any(
+            kw in lower_msg
+            for kw in getattr(self, "TEKNIK_TRIGGERS", [])
+        )
+        is_spec_intent = bool(requested_specs or has_teknik_trigger)
 
-        # 🔒 Kullanıcı açıkça model belirttiyse sadece o modelin veritabanına bak
-        if picked_model:
-            val = self._generic_spec_from_sql(picked_model, q)
-            if val:
-                title = "Değer"
-                if "tork" in q: title = "Tork"
-                elif any(k in q for k in ["güç", "beygir", "hp", "ps", "power", "kw"]): title = "Güç"
-                elif re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
-                elif any(k in q for k in ["maks", "max speed", "top speed", "hız"]): title = "Maksimum hız"
-                elif "co2" in q or "emisyon" in q: title = "CO₂"
-                elif any(k in q for k in ["tüketim", "l/100", "consum"]): title = "Birleşik tüketim"
-                elif "menzil" in q or "range" in q: title = "Menzil (WLTP)"
-                elif any(k in q for k in ["ağırl", "agirlik"]):
-                    title = "Ağırlık (Sürücü Dahil) (kg)"
-                    if not re.search(r"\bkg\b", val, re.I):
-                        val = val.strip() + " kg"
+        trims_in_msg = extract_trims(lower_msg)
+        self.CURRENT_TRIM_HINT = next(iter(trims_in_msg), None)
 
-                yield self._emit_spec_sentence(picked_model, title, val)
-                return
+        # 🔹 1) Modeli bul
+        models_in_msg0 = list(self._extract_models(user_message))
+        model_for_equip = models_in_msg0[0] if models_in_msg0 else None
+
+        # 🔹 2) Donanım niyeti (var mı / donanım / özellik / opsiyonel)
+        equip_like_strict = any(w in lower_msg for w in [
+            "donanım", "donanim",
+            "özellik", "ozellik",
+            "var mı", "varmi",
+            "bulunuyor mu",
+            "opsiyonel"
+        ])
+
+        if equip_like_strict and model_for_equip and not trims_in_msg:
+            rows = self._query_all_features_from_imported(model_for_equip, user_message, topn=1)
+
+            if rows:
+                compact = self._render_feature_hits_compact(rows)
+                if "|" in compact and "\n" in compact:
+                    compact = fix_markdown_table(compact)
+                yield compact.encode("utf-8")
+                return   # ✅ Imported_* içinde net eşleşme varsa erken çık
+
+            # ❌ rows boşsa burada HİÇBİR ŞEY deme, aşağıdaki EquipmentList mantığına
+            # düşsün (_feature_lookup_any model+özellikten S / O / — çıkaracak)
+
+        # --- Buradan sonrası mevcut akışın devamı ---
+        # Donanım tarzı sorular (var mı / donanım / özellik / opsiyonel vs.)
+        equip_like_early = any(w in lower_msg for w in [
+            "donanım", "donanim", "özellik", "ozellik",
+            "var mı", "varmi", "bulunuyor mu", "opsiyonel"
+        ])
+
+        # --- TEKNİK / SAYISAL METRİK SORULARI İÇİN SQL BLOĞU ---
+        # (donanım sorularını bu bloktan çıkarıyoruz)
+        # --- TEKNİK / SAYISAL METRİK SORULARI İÇİN SQL BLOĞU ---
+# (donanım sorularını bu bloktan çıkarıyoruz)
+        if is_spec_intent and not equip_like_early:
+            models_in_msg = list(self._extract_models(user_message))
+            picked_model = models_in_msg[0] if models_in_msg else None
+            
+
+
+            # 1) Önce kullanıcının yazdığı model
+            if picked_model:
+                val = self._generic_spec_from_sql(picked_model, q)
+                if val:
+                    title = "Değer"
+                    if "tork" in q: title = "Tork"
+                    elif any(k in q for k in ["güç","guc","beygir","hp","ps","power","kw"]): title = "Güç"
+                    elif re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
+                    elif any(k in q for k in ["maks","max speed","top speed","hız","hiz"]): title = "Maksimum hız"
+                    elif "co2" in q or "emisyon" in q: title = "CO₂"
+                    elif any(k in q for k in ["tüketim","tuketim","l/100","lt/100"]): title = "Birleşik tüketim"
+                    elif "menzil" in q or "range" in q: title = "Menzil (WLTP)"
+
+                    yield self._emit_spec_sentence(picked_model, title, val)
+                    return
+
+                # Bu soru teknik, ama bu model için değer yok → başka modele bakma
+                # (donanım soruları zaten equip bloğuna düşüyor)
+                # Teknik için hiç değer bulunmadıysa buradan sessizce devam etsin
+            else:
+                # 2) Hiç model yazılmadıysa: önce bağlamdaki model(ler), sonra tüm modeller
+                last_models_ctx = list(self.user_states.get(user_id, {}).get("last_models", []))
+                probe_models = last_models_ctx or [
+                    "fabia","scala","kamiq","karoq","kodiaq",
+                    "octavia","superb","enyaq","elroq"
+                ]
+                for m in probe_models:
+                    val = self._generic_spec_from_sql(m, q)
+                    if val:
+                        yield self._emit_spec_sentence(m, "Değer", val)
+                        # bağlam güncelle
+                        self.user_states.setdefault(user_id, {}).setdefault("last_models", set()).add(m)
+                        return
+        # --- TEKNİK BLOK SONU ---
+
 
             # Model yazıldı ama değer bulunamadıysa diğer modellere bakma
             yield f"{picked_model.title()} için bu metrik veritabanında bulunamadı.".encode("utf-8")
             return
-
+        if is_spec_intent:
         # 🚨 Eğer kullanıcı model yazmadıysa o zaman fallback devreye girsin
-        last_models = list(self.user_states.get(user_id, {}).get("last_models", []))
-        probe_models = last_models or ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
-        for m in probe_models:
-            val = self._generic_spec_from_sql(m, q)
-            if val:
-                yield self._emit_spec_sentence(m, "Değer", val)
-                return
-
-        yield "Bu metrik için veri bulunamadı."
-        q = normalize_tr_text(user_message or "").lower()
-        models_in_msg = list(self._extract_models(user_message))
-        if models_in_msg:
-            picked_model = models_in_msg[0]
-
-            val = self._generic_spec_from_sql(picked_model, q)
-
-            if val:
-                title = "Değer"
-                if "tork" in q: title = "Tork"
-                elif any(k in q for k in ["güç","beygir","hp","ps","power","kw"]): title = "Güç"
-                elif re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
-                elif any(k in q for k in ["maks","max speed","top speed","hız"]): title = "Maksimum hız"
-                elif "co2" in q or "emisyon" in q: title = "CO₂"
-                elif any(k in q for k in ["tüketim","l/100","consum"]): title = "Birleşik tüketim"
-                elif "menzil" in q or "range" in q: title = "Menzil (WLTP)"
-                elif any(k in q for k in ["ağırl","agirlik"]):
-                    title = "Ağırlık (Sürücü Dahil) (kg)"
-                    if not re.search(r"\bkg\b", val, re.I):
-                        val = val.strip() + " kg"
-
-                yield self._emit_spec_sentence(picked_model, title, val)
-                return
-
-            # Model yazıldı ama değer çıkmadıysa da başka modele düşme → net bilgi
-            yield f"{picked_model.title()} için bu metrik veritabanında bulunamadı.".encode("utf-8")
-            return
-        # 1) Kullanıcının açıkça yazdığı model
-        models_in_msg = list(self._extract_models(user_message))
-        picked_model = models_in_msg[0] if models_in_msg else None
-
-        val = None
-
-        if picked_model:
-            # KULLANICININ YAZDIĞI MODEL DIŞINA ÇIKMA!
-            val = self._generic_spec_from_sql(picked_model, q)
-        else:
-            # Model yoksa: önce last_models sonra tüm modeller
-            probe_list = []
-            ctx = self.user_states.get(user_id, {}) or {}
-            lm = list(ctx.get("last_models", []))
-            if lm: probe_list += list(lm)
-            for m in ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]:
-                if m not in probe_list:
-                    probe_list.append(m)
-            for m in probe_list:
+            last_models = list(self.user_states.get(user_id, {}).get("last_models", []))
+            probe_models = last_models or ["fabia","scala","kamiq","karoq","kodiaq","octavia","superb","enyaq","elroq"]
+            for m in probe_models:
                 val = self._generic_spec_from_sql(m, q)
                 if val:
-                    picked_model = m
-                    self.user_states.setdefault(user_id, {}).setdefault("last_models", set()).add(m)
-                    break
+                    yield self._emit_spec_sentence(m, "Değer", val)
+                    return
 
-        if val:
-            # başlık sezgisi
-            title = "Değer"
-            if "tork" in q: title = "Tork"
-            elif any(k in q for k in ["güç","beygir","hp","ps","power","kw"]): title = "Güç"
-            elif re.search(r"\b0\s*[-–—]?\s*100\b", q): title = "0-100"
-            elif any(k in q for k in ["maks","max speed","top speed","hız"]): title = "Maksimum hız"
-            elif "co2" in q or "emisyon" in q: title = "CO₂"
-            elif any(k in q for k in ["tüketim","l/100","consum"]): title = "Birleşik tüketim"
-            elif "menzil" in q or "range" in q: title = "Menzil (WLTP)"
-            elif any(k in q for k in ["ağırl","agirlik"]): 
-                title = "Ağırlık (Sürücü Dahil) (kg)"
-                if not re.search(r"\bkg\b", val, re.I):
-                    val = val.strip() + " kg"
-
-            # >>> burada sadece picked_model kullanılıyor
-            yield self._emit_spec_sentence(picked_model, title, val)
+            yield "Bu metrik için veri bulunamadı."
             return
-
-
-         
-             
-
+        
 
         q = normalize_tr_text(user_message or "").lower()
         models_in_msg0 = list(self._extract_models(user_message))
@@ -7789,20 +7891,7 @@ class ChatbotAPI:
                     return
             # birden çok metrik istendiyse eski teknik karşılaştırma tablosuna düş
         # === FULL Imported_* kapsama: kullanıcı özellik/var mı niyeti → tüm tablo içinden ara ===
-        equip_like = any(w in lower_msg for w in ["donanım","donanim","özellik","ozellik","var mı","varmi","bulunuyor mu","matrix","dcc"])
-        if equip_like and model:
-            rows = self._query_all_features_from_imported(model, user_message, topn=1)  # sadece en alakalı satır
-            if rows:
-                compact = self._render_feature_hits_compact(rows)
-                # tek satırsa düz metin, tabloysa hizala
-                if "|" in compact and "\n" in compact:
-                    compact = fix_markdown_table(compact)
-                yield compact.encode("utf-8")
-                return
-            if not rows:
-                # İstersen sorudan kısa başlık üret; en basiti:
-                yield f"{model.title()} için bu özellik bulunmuyor.".encode("utf-8")
-                return
+         
 
             compact = self._render_feature_hits_compact(rows)
             if "|" in compact and "\n" in compact:
@@ -7811,23 +7900,61 @@ class ChatbotAPI:
             return
 
 
-        equip_words = ["donanım","donanim","standart","opsiyonel","özellik","ozellik","paket"]
-        equip_intent = any(w in lower_msg for w in equip_words)
-
-        # --- DONANIM (STANDART/OPSİYONEL) KARŞILAŞTIRMA — DB KAYNAKLI ---
-        if equip_intent:
-            # ör: user_text = "Octavia'da arka çapraz trafik uyarısı var mı?"
+        if equip_intent and not wants_compare:
+            # Örnek: "Kodiaq head up display var mı?"
             models = list(self._extract_models(user_message))
             model = models[0] if models else self._resolve_display_model(user_id).lower()
-            trims, st = self._feature_lookup_any(model, user_message)
-            if trims and st:
-                # Küçük bir tablo üret
-                header = "| Özellik | " + " | ".join(trims) + " |\n|" + "|".join(["---"]*(len(trims)+1)) + "|\n"
-                # tek özellik soruldu varsayımıyla:
-                row = "| " + self._norm_alias(user_message) + " | " + " | ".join(("✓" if st.get(t)=="S" else ("○" if st.get(t)=="O" else "—")) for t in trims) + " |"
-                md = header + row
-                yield md.encode("utf-8")
+            trims, status_map = self._feature_lookup_any(model, user_message)
+
+            if trims and status_map:
+                # Trim sütunlarında dönen S/O/— kodlarını okunur hale getir
+                def pretty_status(code: str | None) -> str:
+                    if code == "S":
+                        return "Standart"
+                    if code == "O":
+                        return "Opsiyonel"
+                    return "Yok"
+
+                #feature_name = self._norm_alias(user_message).title()
+                canon_key, disp = canonicalize_feature(user_message)
+                norm_q    = normalize_tr_text(user_message).lower().strip()
+                norm_disp = normalize_tr_text(disp).lower().strip()
+
+                if (not disp) or (norm_disp == norm_q):
+                    # Eşleştiremediysek generic isim ver (soru asla yazılmasın)
+                    feature_name = "Sorgulanan donanım"
+                else:
+                    feature_name = disp
+                header = ["Donanım"] + [t.title() for t in trims]
+                lines = [
+                    "| " + " | ".join(header) + " |",
+                    "|" + "|".join(["---"] * len(header)) + "|",
+                    "| " + feature_name + " | " + " | ".join(pretty_status(status_map.get(t)) for t in trims) + " |",
+                ]
+                md = "\n".join(lines)
+                md = fix_markdown_table(md)
+
+                # 1) Tabloyu gönder
+                #yield md.encode("utf-8")
+                yield (md + "\n\n<br><br>").encode("utf-8")
+                # 2) Altına OpenAI cümlesi ekle
+                try:
+                    sent = self._nlg_equipment_status(
+                        model_name=model,
+                        feature=feature_name,
+                        trims=trims,
+                        status_map=status_map,
+                    )
+                except Exception:
+                    sent = ""
+
+                if sent:
+                    # Tablo ile cümle arasında biraz boşluk bırak
+                    yield (sent + "\n").encode("utf-8")
+
                 return
+
+
 
         
         # Teknik anahtar kelimesi var mı?
