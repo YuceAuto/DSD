@@ -1478,7 +1478,7 @@ class ChatbotAPI:
         st = self.user_states.setdefault(user_id, {})
         st["fallback_depth"] = st.get("fallback_depth", 0) + 1
         if st["fallback_depth"] > 2:
-            return "Bu konuda net bir kayda ulaşamadım. Model yılı ve donanım seviyesini yazar mısın?"
+            return "Bu konuda net bir kayda ulaşamadım. İsterseniz başka bir konuda yardımcı olabilirim?"
 
         prompt = (
             f"Kullanıcı sorusu: {user_message}\n"
@@ -11320,15 +11320,46 @@ class ChatbotAPI:
             state["cs_answer_type"] = answer_type
             state["cs_ratio_raw"] = ratio
             state["cs_ratio_01"] = r01
-            if r01 < 0.40:
+            # ✅ BURAYA EKLE (ratio=0.0 override)
+            if r01 <= 0.0001:
+                asst_id = self._pick_assistant_for_message(user_id, corrected_message) or self._pick_least_busy_assistant()
+                if asst_id:
+                    self.user_states.setdefault(user_id, {})["assistant_id"] = asst_id
+                    out = self._ask_assistant(
+                        user_id=user_id,
+                        assistant_id=asst_id,
+                        content=corrected_message,
+                        timeout=60.0,
+                        instructions_override=(
+                            "Sen Škoda Türkiye dijital satış danışmanısın. "
+                            "Varsayım yapma, fiyat uydurma. 2-6 cümle, sonda 1 kısa soru."
+                        ),
+                        ephemeral=False
+                    ) or ""
+                    if out.strip():
+                        return self.app.response_class(
+                            self._deliver_locally(body=out, original_user_message=user_message, user_id=user_id),
+                            mimetype="text/html; charset=utf-8",
+                        )
+            # ✅ EKLEME BİTTİ
+            LOW_GATE = float(os.getenv("CS_LOW_GATE", "0.40"))
+
+            if r01 < LOW_GATE:
                 # ✅ Model + var mı/yok mu gibi donanım sorularını DB’ye bırak
                 if self._extract_models(corrected_message) and self._is_equipment_presence_question(corrected_message):
                     self.logger.info("[CS-ROUTE] low ratio ama model+presence var → DB akışına izin verildi")
                 else:
+                    # ❗ Artık “Sorunuzu tam anlamadım” yerine asistana düş
+                    txt = self._fallback_via_assistant(
+                        user_id=user_id,
+                        user_message=corrected_message,
+                        reason=f"ContextSearch low confidence r01={r01:.3f}"
+                    )
                     return self.app.response_class(
-                        "Sorunuzu tam anlamadım. Tekrardan sorabilir misiniz?".encode("utf-8"),
+                        self._deliver_locally(body=txt, original_user_message=user_message, user_id=user_id),
                         mimetype="text/html; charset=utf-8",
                     )
+
             # 🔹 Küçük sohbetler / ratio düşük sınıf 'llm' ise → direkt sohbet modu
             if answer_type == "llm":
                 print(">> LLM ROUTE ENTERED → smalltalk via OpenAI")
