@@ -1,0 +1,6 @@
+C:\Users\yuceuipathadmin\Documents\UrunBot\modules\chat\chatbot.py:1989: SyntaxWarning: invalid escape sequence '\_'
+  cur.execute("""
+Traceback (most recent call last):
+  File "C:\Users\yuceuipathadmin\Documents\UrunBot\modules\chat\chatbot.py", line 21, in <module>
+    from modules.managers.image_manager import ImageManager
+ModuleNotFoundError: No module named 'modules'

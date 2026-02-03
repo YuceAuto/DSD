@@ -13,16 +13,33 @@ class Config:
             "görsel", "resim", "fotoğraf", "fotograf"
         }
 
-        # Asistan konfigürasyonu
+        # =================================================
+        # A S S I S T A N T   C O N F I G
+        # =================================================
         self.ASSISTANT_CONFIG = {
-            "asst_fw6RpRp8PbNiLUR1KB2XtAkK": ["Kamiq"],
-            "asst_yeDl2aiHy0uoGGjHRmr2dlYB": ["Fabia"],
-            "asst_njSG1NVgg4axJFmvVYAIXrpM": ["Scala"]
+            "asst_zHRanQW6MFeNJGT0jHpoFui9": ["Kamiq"],
+            "asst_ird4cTcv0F7GfD8wNP6EeY6m": ["Fabia"],
+            "asst_auvtMOFGNr5eBTdpj84djsHl": ["Scala"],
+            "asst_tsOiy8kcBg5LFj9y5GIExhVp": ["Karoq"],
+            "asst_wtNfFO8xRIxkIllnd3jSniX4": ["Enyaq"],
+            "asst_k5bzE3OgZPHWqqznI9Q6xZWu": ["Elroq"],
+            "asst_B6FOudmcuC87S8ShPscN8GKs": ["Superb"],
+            # YENİ: KODIAQ
+            "asst_RsNmuLkbWbScrgE1crVV38Ct": ["Kodiaq"],
+            "asst_5UshQUbxpJBu49DHIeeNalqW": ["Octavia"]
         }
+
         self.ASSISTANT_NAME_MAP = {
-            "asst_fw6RpRp8PbNiLUR1KB2XtAkK": "Kamiq",
-            "asst_yeDl2aiHy0uoGGjHRmr2dlYB": "Fabia",
-            "asst_njSG1NVgg4axJFmvVYAIXrpM": "Scala"
+            "asst_zHRanQW6MFeNJGT0jHpoFui9": "Kamiq",
+            "asst_ird4cTcv0F7GfD8wNP6EeY6m": "Fabia",
+            "asst_auvtMOFGNr5eBTdpj84djsHl": "Scala",
+            "asst_tsOiy8kcBg5LFj9y5GIExhVp": "Karoq",
+            "asst_wtNfFO8xRIxkIllnd3jSniX4": "Enyaq",
+            "asst_k5bzE3OgZPHWqqznI9Q6xZWu": "Elroq",
+            "asst_B6FOudmcuC87S8ShPscN8GKs": "Superb",
+            # YENİ: KODIAQ
+            "asst_RsNmuLkbWbScrgE1crVV38Ct": "Kodiaq",
+            "asst_5UshQUbxpJBu49DHIeeNalqW": "Octavia"
         }
 
         # Bilinen renkler
@@ -36,6 +53,13 @@ class Config:
             "yarış mavisi",
             "phoenix turuncu"
         ]
+        self.MODEL_VALID_TRIMS = {
+            # … mevcut modeller …
+            "kodiaq": ["premium", "prestige", "sportline", "rs"],
+            "superb": ["premium", "prestige", "l&k crystal", "sportline phev"],
+            "octavia": ["elite", "premium", "prestige", "sportline", "rs"],
+            "test": ["premium", "prestige", "sportline", "e-Prestige 60"]
+}
 
         # A) Monte Carlo listesi (12 adım)
         self.monte_carlo_12 = [

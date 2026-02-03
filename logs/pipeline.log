@@ -1,0 +1,251 @@
+2026-01-26 16:28:05,520 - INFO - ChatbotAPI - ChatbotAPI initializing...
+2026-01-26 16:28:05,523 - INFO - ChatbotAPI - [ENV] HYBRID_RAG=True, EMBED_MODEL=text-embedding-3-large
+2026-01-26 16:28:05,524 - INFO - ChatbotAPI - [ENV] USE_OPENAI_FILE_SEARCH=1, RAG_ONLY=1, RAG_FROM_SQL_ONLY=0, DISABLE_BRIDGE=1, OPENAI_API_KEY_SET=yes
+2026-01-26 16:28:36,864 - INFO - ChatbotAPI - ChatbotAPI initializing...
+2026-01-26 16:28:36,867 - INFO - ChatbotAPI - [ENV] HYBRID_RAG=True, EMBED_MODEL=text-embedding-3-large
+2026-01-26 16:28:36,867 - INFO - ChatbotAPI - [ENV] USE_OPENAI_FILE_SEARCH=1, RAG_ONLY=1, RAG_FROM_SQL_ONLY=0, DISABLE_BRIDGE=1, OPENAI_API_KEY_SET=yes
+2026-01-26 16:28:50,999 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:51,151 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_ELROQ_MY_20251 → 4 vektör
+2026-01-26 16:28:51,959 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:52,255 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_ENYAQ_MY_20251 → 21 vektör
+2026-01-26 16:28:52,602 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:53,142 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_FABIA_MY_20251 → 18 vektör
+2026-01-26 16:28:53,672 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:53,857 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_KAMIQ_MY_20251 → 27 vektör
+2026-01-26 16:28:54,552 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:54,739 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_KAROQ_MY_20251 → 33 vektör
+2026-01-26 16:28:55,377 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:55,497 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_KODIAQ_MY_20251 → 48 vektör
+2026-01-26 16:28:55,923 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:56,005 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_OCTAVIA_MY_20251 → 36 vektör
+2026-01-26 16:28:56,710 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:56,783 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_SCALA_MY_20251 → 30 vektör
+2026-01-26 16:28:57,342 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:57,663 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_SUPERB_MY_20251 → 36 vektör
+2026-01-26 16:28:58,694 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:28:59,252 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_ELROQ_MY_20251 → 96 vektör
+2026-01-26 16:29:00,137 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:00,663 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_ENYAQ_MY_20251 → 130 vektör
+2026-01-26 16:29:01,399 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:01,675 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_FABIA_MY_20251 → 81 vektör
+2026-01-26 16:29:02,441 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:02,633 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_KAMIQ_MY_20251 → 91 vektör
+2026-01-26 16:29:03,551 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:03,748 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_KAROQ_MY_20251 → 95 vektör
+2026-01-26 16:29:04,930 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:05,237 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_KODIAQ_MY_20251 → 150 vektör
+2026-01-26 16:29:05,827 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:06,704 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_OCTAVIA_MY_20251 → 101 vektör
+2026-01-26 16:29:07,320 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:07,742 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_SCALA_MY_20251 → 89 vektör
+2026-01-26 16:29:08,875 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:09,166 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_SUPERB_MY_20251 → 144 vektör
+2026-01-26 16:29:09,489 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:09,799 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ELROQ_MY_20251 → 23 vektör
+2026-01-26 16:29:10,836 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:10,906 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ENYAQ_MY_20251 → 23 vektör
+2026-01-26 16:29:11,320 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:11,756 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_FABIA_MY_20251 → 19 vektör
+2026-01-26 16:29:12,212 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:12,640 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAMIQ_MY_20251 → 19 vektör
+2026-01-26 16:29:13,183 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:13,241 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAROQ_MY_20251 → 19 vektör
+2026-01-26 16:29:13,617 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:13,797 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KODIAQ_MY_20251 → 20 vektör
+2026-01-26 16:29:14,699 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:14,883 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_OCTAVIA_MY_20251 → 20 vektör
+2026-01-26 16:29:15,235 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:15,667 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SCALA_MY_20251 → 19 vektör
+2026-01-26 16:29:16,108 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:16,293 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SUPERB_MY_20251 → 25 vektör
+2026-01-26 16:29:16,658 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:16,723 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ELROQ_MY_20251 → 23 vektör
+2026-01-26 16:29:17,379 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:17,810 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ENYAQ_MY_20251 → 23 vektör
+2026-01-26 16:29:18,361 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:18,405 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_FABIA_MY_20251 → 19 vektör
+2026-01-26 16:29:18,781 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:18,834 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAMIQ_MY_20251 → 19 vektör
+2026-01-26 16:29:19,271 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:19,699 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAROQ_MY_20251 → 19 vektör
+2026-01-26 16:29:20,103 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:20,158 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KODIAQ_MY_20251 → 20 vektör
+2026-01-26 16:29:20,694 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:21,008 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_OCTAVIA_MY_20251 → 20 vektör
+2026-01-26 16:29:21,857 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:22,126 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SCALA_MY_20251 → 19 vektör
+2026-01-26 16:29:22,924 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:23,357 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SUPERB_MY_20251 → 25 vektör
+2026-01-26 16:29:23,867 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:29:23,899 - INFO - ChatbotAPI - [KB-IDX] MODEL_SEGMENT_KODA_MY_20251 → 12 vektör
+2026-01-26 16:29:23,900 - INFO - ChatbotAPI - [KB-IDX] boot reindex done: 1429 vectors
+2026-01-26 16:29:24,063 - INFO - ChatbotAPI - === YENI VERSIYON KOD CALISIYOR ===
+2026-01-26 16:29:24,076 - INFO - ChatbotAPI - [CACHE] Purge: 'kaç' içeren 0 kayıt silindi.
+2026-01-26 16:29:24,121 - INFO - ChatbotAPI - [KB] Collected 23 data chunks from modules.data/*.
+2026-01-26 16:29:24,122 - INFO - ChatbotAPI - [KB-DUMP] elroq_data.ELROQ_DATA_MD
+2026-01-26 16:29:24,122 - INFO - ChatbotAPI - [KB-DUMP] elroq_teknik.ELROQ_TEKNIK_MD
+2026-01-26 16:29:24,123 - INFO - ChatbotAPI - [KB-DUMP] enyaq_data.ENYAQ_DATA_MD
+2026-01-26 16:29:24,124 - INFO - ChatbotAPI - [KB-DUMP] enyaq_teknik.ENYAQ_TEKNIK_MD
+2026-01-26 16:29:24,125 - INFO - ChatbotAPI - [KB-DUMP] fabia_data.FABIA_DATA_MD
+2026-01-26 16:29:24,126 - INFO - ChatbotAPI - [KB-DUMP] fabia_teknik.FABIA_TEKNIK_MD
+2026-01-26 16:29:24,127 - INFO - ChatbotAPI - [KB-DUMP] fiyat_data.FIYAT_LISTESI_MD
+2026-01-26 16:29:24,128 - INFO - ChatbotAPI - [KB-DUMP] kamiq_data.KAMIQ_DATA_MD
+2026-01-26 16:29:24,128 - INFO - ChatbotAPI - [KB-DUMP] kamiq_teknik.KAMIQ_TEKNIK_MD
+2026-01-26 16:29:24,129 - INFO - ChatbotAPI - [KB-DUMP] karoq_data.KAROQ_DATA_MD
+2026-01-26 16:29:24,129 - INFO - ChatbotAPI - [KB-DUMP] karoq_teknik.KAROQ_TEKNIK_MD
+2026-01-26 16:29:24,130 - INFO - ChatbotAPI - [KB-DUMP] kodiaq_data.KODIAQ_DATA_MD
+2026-01-26 16:29:24,130 - INFO - ChatbotAPI - [KB-DUMP] kodiaq_teknik.KODIAQ_TEKNIK_MD
+2026-01-26 16:29:24,131 - INFO - ChatbotAPI - [KB-DUMP] octavia_data.OCTAVIA_DATA_MD
+2026-01-26 16:29:24,131 - INFO - ChatbotAPI - [KB-DUMP] octavia_teknik.OCTAVIA_TEKNIK_MD
+2026-01-26 16:29:24,132 - INFO - ChatbotAPI - [KB-DUMP] scala_data.SCALA_DATA_MD
+2026-01-26 16:29:24,133 - INFO - ChatbotAPI - [KB-DUMP] scala_teknik.SCALA_TEKNIK_MD
+2026-01-26 16:29:24,134 - INFO - ChatbotAPI - [KB-DUMP] superb_data.SUPERB_DATA_MD
+2026-01-26 16:29:24,134 - INFO - ChatbotAPI - [KB-DUMP] superb_teknik.SUPERB_TEKNIK_MD
+2026-01-26 16:29:24,135 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_E_PRESTIGE_60_MD
+2026-01-26 16:29:24,135 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_PREMIUM_MD
+2026-01-26 16:29:24,136 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_PRESTIGE_MD
+2026-01-26 16:29:24,136 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_SPORTLINE_MD
+2026-01-26 16:29:24,137 - INFO - ChatbotAPI - [KB] USE_OPENAI_FILE_SEARCH = True
+2026-01-26 16:29:24,138 - INFO - ChatbotAPI - [KB] Initializing vector store upload...
+2026-01-26 16:29:25,149 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/vector_stores "HTTP/1.1 200 OK"
+2026-01-26 16:29:25,155 - INFO - ChatbotAPI - [SQL-RAG] Found 0 *.sql.md file(s).
+2026-01-26 16:29:25,155 - WARNING - ChatbotAPI - [SQL-RAG] *.sql.md bulunamadı.
+2026-01-26 16:29:26,179 - INFO - ChatbotAPI - vector_stores available: True
+2026-01-26 16:29:32,845 - INFO - werkzeug - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on https://127.0.0.1:8000
+ * Running on https://10.0.0.21:8000
+2026-01-26 16:29:32,845 - INFO - werkzeug - [33mPress CTRL+C to quit[0m
+2026-01-26 16:29:32,849 - INFO - werkzeug -  * Restarting with stat
+2026-01-26 16:29:58,297 - INFO - ChatbotAPI - ChatbotAPI initializing...
+2026-01-26 16:29:58,300 - INFO - ChatbotAPI - [ENV] HYBRID_RAG=True, EMBED_MODEL=text-embedding-3-large
+2026-01-26 16:29:58,300 - INFO - ChatbotAPI - [ENV] USE_OPENAI_FILE_SEARCH=1, RAG_ONLY=1, RAG_FROM_SQL_ONLY=0, DISABLE_BRIDGE=1, OPENAI_API_KEY_SET=yes
+2026-01-26 16:30:12,367 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:12,514 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_ELROQ_MY_20251 → 4 vektör
+2026-01-26 16:30:13,115 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:13,539 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_ENYAQ_MY_20251 → 21 vektör
+2026-01-26 16:30:14,274 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:14,669 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_FABIA_MY_20251 → 18 vektör
+2026-01-26 16:30:15,279 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:15,462 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_KAMIQ_MY_20251 → 27 vektör
+2026-01-26 16:30:16,057 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:16,610 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_KAROQ_MY_20251 → 33 vektör
+2026-01-26 16:30:17,102 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:17,316 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_KODIAQ_MY_20251 → 48 vektör
+2026-01-26 16:30:17,774 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:18,335 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_OCTAVIA_MY_20251 → 36 vektör
+2026-01-26 16:30:19,083 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:19,501 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_SCALA_MY_20251 → 30 vektör
+2026-01-26 16:30:19,990 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:20,181 - INFO - ChatbotAPI - [KB-IDX] PriceList_KODA_SUPERB_MY_20251 → 36 vektör
+2026-01-26 16:30:20,870 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:21,646 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_ELROQ_MY_20251 → 96 vektör
+2026-01-26 16:30:22,206 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:22,670 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_ENYAQ_MY_20251 → 130 vektör
+2026-01-26 16:30:23,358 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:23,639 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_FABIA_MY_20251 → 81 vektör
+2026-01-26 16:30:24,108 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:24,498 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_KAMIQ_MY_20251 → 91 vektör
+2026-01-26 16:30:25,091 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:25,381 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_KAROQ_MY_20251 → 95 vektör
+2026-01-26 16:30:26,372 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:26,741 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_KODIAQ_MY_20251 → 150 vektör
+2026-01-26 16:30:27,296 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:28,183 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_OCTAVIA_MY_20251 → 101 vektör
+2026-01-26 16:30:28,685 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:29,105 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_SCALA_MY_20251 → 89 vektör
+2026-01-26 16:30:29,967 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:30,331 - INFO - ChatbotAPI - [KB-IDX] EquipmentList_KODA_SUPERB_MY_20251 → 144 vektör
+2026-01-26 16:30:31,009 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:31,433 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ELROQ_MY_20251 → 23 vektör
+2026-01-26 16:30:31,795 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:31,857 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ENYAQ_MY_20251 → 23 vektör
+2026-01-26 16:30:32,466 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:32,879 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_FABIA_MY_20251 → 19 vektör
+2026-01-26 16:30:33,429 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:33,959 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAMIQ_MY_20251 → 19 vektör
+2026-01-26 16:30:34,271 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:34,439 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAROQ_MY_20251 → 19 vektör
+2026-01-26 16:30:34,786 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:34,856 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KODIAQ_MY_20251 → 20 vektör
+2026-01-26 16:30:35,366 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:35,833 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_OCTAVIA_MY_20251 → 20 vektör
+2026-01-26 16:30:36,519 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:36,927 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SCALA_MY_20251 → 19 vektör
+2026-01-26 16:30:37,287 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:37,593 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SUPERB_MY_20251 → 25 vektör
+2026-01-26 16:30:38,145 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:38,201 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ELROQ_MY_20251 → 23 vektör
+2026-01-26 16:30:38,733 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:39,133 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_ENYAQ_MY_20251 → 23 vektör
+2026-01-26 16:30:39,728 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:39,779 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_FABIA_MY_20251 → 19 vektör
+2026-01-26 16:30:40,289 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:40,501 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAMIQ_MY_20251 → 19 vektör
+2026-01-26 16:30:40,804 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:40,915 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KAROQ_MY_20251 → 19 vektör
+2026-01-26 16:30:41,515 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:41,574 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_KODIAQ_MY_20251 → 20 vektör
+2026-01-26 16:30:42,032 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:42,093 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_OCTAVIA_MY_20251 → 20 vektör
+2026-01-26 16:30:42,817 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:43,235 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SCALA_MY_20251 → 19 vektör
+2026-01-26 16:30:43,664 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:43,978 - INFO - ChatbotAPI - [KB-IDX] Imported_KODA_SUPERB_MY_20251 → 25 vektör
+2026-01-26 16:30:44,434 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:30:44,708 - INFO - ChatbotAPI - [KB-IDX] MODEL_SEGMENT_KODA_MY_20251 → 12 vektör
+2026-01-26 16:30:44,709 - INFO - ChatbotAPI - [KB-IDX] boot reindex done: 1429 vectors
+2026-01-26 16:30:44,837 - INFO - ChatbotAPI - === YENI VERSIYON KOD CALISIYOR ===
+2026-01-26 16:30:44,848 - INFO - ChatbotAPI - [CACHE] Purge: 'kaç' içeren 0 kayıt silindi.
+2026-01-26 16:30:44,889 - INFO - ChatbotAPI - [KB] Collected 23 data chunks from modules.data/*.
+2026-01-26 16:30:44,889 - INFO - ChatbotAPI - [KB-DUMP] elroq_data.ELROQ_DATA_MD
+2026-01-26 16:30:44,890 - INFO - ChatbotAPI - [KB-DUMP] elroq_teknik.ELROQ_TEKNIK_MD
+2026-01-26 16:30:44,891 - INFO - ChatbotAPI - [KB-DUMP] enyaq_data.ENYAQ_DATA_MD
+2026-01-26 16:30:44,892 - INFO - ChatbotAPI - [KB-DUMP] enyaq_teknik.ENYAQ_TEKNIK_MD
+2026-01-26 16:30:44,892 - INFO - ChatbotAPI - [KB-DUMP] fabia_data.FABIA_DATA_MD
+2026-01-26 16:30:44,895 - INFO - ChatbotAPI - [KB-DUMP] fabia_teknik.FABIA_TEKNIK_MD
+2026-01-26 16:30:44,899 - INFO - ChatbotAPI - [KB-DUMP] fiyat_data.FIYAT_LISTESI_MD
+2026-01-26 16:30:44,915 - INFO - ChatbotAPI - [KB-DUMP] kamiq_data.KAMIQ_DATA_MD
+2026-01-26 16:30:44,928 - INFO - ChatbotAPI - [KB-DUMP] kamiq_teknik.KAMIQ_TEKNIK_MD
+2026-01-26 16:30:44,930 - INFO - ChatbotAPI - [KB-DUMP] karoq_data.KAROQ_DATA_MD
+2026-01-26 16:30:44,930 - INFO - ChatbotAPI - [KB-DUMP] karoq_teknik.KAROQ_TEKNIK_MD
+2026-01-26 16:30:44,931 - INFO - ChatbotAPI - [KB-DUMP] kodiaq_data.KODIAQ_DATA_MD
+2026-01-26 16:30:44,933 - INFO - ChatbotAPI - [KB-DUMP] kodiaq_teknik.KODIAQ_TEKNIK_MD
+2026-01-26 16:30:44,934 - INFO - ChatbotAPI - [KB-DUMP] octavia_data.OCTAVIA_DATA_MD
+2026-01-26 16:30:44,934 - INFO - ChatbotAPI - [KB-DUMP] octavia_teknik.OCTAVIA_TEKNIK_MD
+2026-01-26 16:30:44,935 - INFO - ChatbotAPI - [KB-DUMP] scala_data.SCALA_DATA_MD
+2026-01-26 16:30:44,936 - INFO - ChatbotAPI - [KB-DUMP] scala_teknik.SCALA_TEKNIK_MD
+2026-01-26 16:30:44,936 - INFO - ChatbotAPI - [KB-DUMP] superb_data.SUPERB_DATA_MD
+2026-01-26 16:30:44,937 - INFO - ChatbotAPI - [KB-DUMP] superb_teknik.SUPERB_TEKNIK_MD
+2026-01-26 16:30:44,938 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_E_PRESTIGE_60_MD
+2026-01-26 16:30:44,939 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_PREMIUM_MD
+2026-01-26 16:30:44,940 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_PRESTIGE_MD
+2026-01-26 16:30:44,941 - INFO - ChatbotAPI - [KB-DUMP] test_data.TEST_SPORTLINE_MD
+2026-01-26 16:30:44,942 - INFO - ChatbotAPI - [KB] USE_OPENAI_FILE_SEARCH = True
+2026-01-26 16:30:44,942 - INFO - ChatbotAPI - [KB] Initializing vector store upload...
+2026-01-26 16:30:45,903 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/vector_stores "HTTP/1.1 200 OK"
+2026-01-26 16:30:45,909 - INFO - ChatbotAPI - [SQL-RAG] Found 0 *.sql.md file(s).
+2026-01-26 16:30:45,909 - WARNING - ChatbotAPI - [SQL-RAG] *.sql.md bulunamadı.
+2026-01-26 16:30:46,901 - INFO - ChatbotAPI - vector_stores available: True
+2026-01-26 16:30:47,010 - WARNING - werkzeug -  * Debugger is active!
+2026-01-26 16:30:47,020 - INFO - werkzeug -  * Debugger PIN: 861-954-117
+2026-01-26 16:31:02,225 - INFO - werkzeug - 192.168.254.7 - - [26/Jan/2026 16:31:02] "OPTIONS /ask/berkeb HTTP/1.1" 200 -
+2026-01-26 16:31:02,256 - INFO - modules.chat.chatbot - [Q] path=/ask/berkeb user_id=f02847dc-80b3-4cf6-8102-dbc8d8559539 | kamiq ile ilgili bilgi verebilir misin
+2026-01-26 16:31:03,377 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-26 16:31:03,488 - WARNING - neo4j.notifications - Received notification from DBMS server: {severity: WARNING} {code: Neo.ClientNotification.Statement.FeatureDeprecationWarning} {category: DEPRECATION} {title: This feature is deprecated and will be removed in future versions.} {description: CALL subquery without a variable scope clause is deprecated. Use CALL (node) { ... }} {position: line: 4, column: 13, offset: 115} for query: "\n            CALL db.index.fulltext.queryNodes($idx, $query, {limit: 2})\n            YIELD node, score\n            CALL {\n            WITH node\n            MATCH (node)-[r:!MENTIONS]->(neighbor)\n            RETURN node.id + ' - ' + type(r) + ' -> ' + neighbor.id AS output\n            UNION ALL\n            WITH node\n            MATCH (node)<-[r:!MENTIONS]-(neighbor)\n            RETURN neighbor.id + ' - ' + type(r) + ' -> ' + node.id AS output\n            }\n            RETURN output LIMIT 50\n            "
+2026-01-26 16:31:03,490 - WARNING - neo4j.notifications - Received notification from DBMS server: {severity: WARNING} {code: Neo.ClientNotification.Statement.UnknownRelationshipTypeWarning} {category: UNRECOGNIZED} {title: The provided relationship type is not in the database.} {description: One of the relationship types in your query is not available in the database, make sure you didn't misspell it or that the label is available when you run this statement in your application (the missing relationship type is: MENTIONS)} {position: line: 6, column: 30, offset: 173} for query: "\n            CALL db.index.fulltext.queryNodes($idx, $query, {limit: 2})\n            YIELD node, score\n            CALL {\n            WITH node\n            MATCH (node)-[r:!MENTIONS]->(neighbor)\n            RETURN node.id + ' - ' + type(r) + ' -> ' + neighbor.id AS output\n            UNION ALL\n            WITH node\n            MATCH (node)<-[r:!MENTIONS]-(neighbor)\n            RETURN neighbor.id + ' - ' + type(r) + ' -> ' + node.id AS output\n            }\n            RETURN output LIMIT 50\n            "
+2026-01-26 16:31:03,490 - WARNING - neo4j.notifications - Received notification from DBMS server: {severity: WARNING} {code: Neo.ClientNotification.Statement.UnknownRelationshipTypeWarning} {category: UNRECOGNIZED} {title: The provided relationship type is not in the database.} {description: One of the relationship types in your query is not available in the database, make sure you didn't misspell it or that the label is available when you run this statement in your application (the missing relationship type is: MENTIONS)} {position: line: 10, column: 31, offset: 347} for query: "\n            CALL db.index.fulltext.queryNodes($idx, $query, {limit: 2})\n            YIELD node, score\n            CALL {\n            WITH node\n            MATCH (node)-[r:!MENTIONS]->(neighbor)\n            RETURN node.id + ' - ' + type(r) + ' -> ' + neighbor.id AS output\n            UNION ALL\n            WITH node\n            MATCH (node)<-[r:!MENTIONS]-(neighbor)\n            RETURN neighbor.id + ' - ' + type(r) + ' -> ' + node.id AS output\n            }\n            RETURN output LIMIT 50\n            "
+2026-01-26 16:31:04,842 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:31:05,460 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2026-01-26 16:31:08,481 - INFO - httpx - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-26 16:31:08,491 - INFO - ChatbotAPI - [ANSWER-SRC] user_id=f02847dc-80b3-4cf6-8102-dbc8d8559539 src=neo4j_graphrag meta={}
+2026-01-26 16:31:08,500 - INFO - werkzeug - 192.168.254.7 - - [26/Jan/2026 16:31:08] "POST /ask/berkeb HTTP/1.1" 200 -
+2026-01-26 16:31:08,504 - INFO - root - [DEBUG] save_to_db called with ->
+2026-01-26 16:31:08,504 - INFO - root - user_id: f02847dc-80b3-4cf6-8102-dbc8d8559539 (type=<class 'str'>)
+2026-01-26 16:31:08,504 - INFO - root - question: kamiq ile ilgili bilgi verebilir misin (type=<class 'str'>)
+2026-01-26 16:31:08,504 - INFO - root - answer: Kamiq, bir SUV modelidir ve çeşitli donanım seçenekleri sunar.<br>&bull; Monte Carlo triminde 0-100 km/h ivmelenme süresi 8.3 saniyedir.<br>&bull; Elite triminde 0-100 km/h ivmelenme süresi 10.2 saniyedir.<br>&bull; Premium triminde 0-100 km/h ivmelenme süresi 10.2 saniyedir.<br>&bull; Monte Carlo triminde motor bilgisi 1.5 TSI 150 PS DSG'dir.<br>Hangi trim ile ilgileniyorsunuz?<br> (type=<class 'str'>)
+2026-01-26 16:31:08,504 - INFO - root - username: Berke Başara (type=<class 'str'>)
+2026-01-26 16:31:08,504 - INFO - root - customer_answer: 0 (type=<class 'int'>)
+2026-01-26 16:31:08,545 - INFO - modules.chat.chatbot - [A] path=/ask/berkeb user_id=f02847dc-80b3-4cf6-8102-dbc8d8559539 status=200 | Kamiq, bir SUV modelidir ve çeşitli donanım seçenekleri sunar. &bull; Monte Carlo triminde 0-100 km/h ivmelenme süresi 8.3 saniyedir. &bull; Elite triminde 0-100 km/h ivmelenme süresi 10.2 saniyedir. &bull; Premium triminde 0-100 km/h ivmelenme süresi 10.2 saniyedir. &bull; Monte Carlo triminde motor bilgisi 1.5 TSI 150 PS DSG'dir. Hangi trim ile ilgileniyorsunuz? 👍 👎 <span class="conv-mar
+2026-01-26 16:39:06,947 - INFO - werkzeug -  * Detected change in 'c:\\Users\\yuceuipathadmin\\Documents\\UrunBot\\modules\\chat\\chatbot.py', reloading
+2026-01-26 16:39:08,664 - INFO - werkzeug -  * Restarting with stat

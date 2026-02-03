@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
-from modules.chatbot import ChatbotAPI
+from modules.chat.chatbot import ChatbotAPI
 
 class TestChatbotAPI(unittest.TestCase):
     def setUp(self):

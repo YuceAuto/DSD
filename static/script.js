@@ -1,6 +1,35 @@
 // ----------------------------------------------------
-// script.js (Tablolu cevap + özel parçalama yaklaşımı)
+// script.js 
 // ----------------------------------------------------
+
+function getOrCreateUserId() {
+  let existing = localStorage.getItem("skodaBotUserId");
+  if (existing) {
+    return existing;
+  }
+  // Yeni bir UUID üret
+  let newId;
+  if (window.crypto && crypto.randomUUID) {
+    newId = crypto.randomUUID();
+  } else {
+    newId = 'xxxx-4xxx-yxxx-xxxx'.replace(/[xy]/g, function (c) {
+      let r = Math.random() * 16 | 0;
+      let v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  localStorage.setItem("skodaBotUserId", newId);
+  return newId;
+}
+
+function showPopupImage(imgUrl, size = 'normal') {
+  $("#popupImage").attr("src", imgUrl);
+  if (size === 'smaller') {
+    $("#popupImage").addClass("popupImageSmaller");
+  } else {
+    $("#popupImage").removeClass("popupImageSmaller");
+  }
+}
 
 function extractTextContentBlock(fullText) {
   const regex = /\[TextContentBlock\(.*?value=(['"])([\s\S]*?)\1.*?\)\]/;
@@ -21,12 +50,16 @@ function markdownTableToHTML(mdTable) {
   const bodyLines = lines.slice(2);
 
   let html = `<table class="table table-bordered table-sm my-blue-table">
-<thead><tr>`;
+                <thead>
+                  <tr>`;
 
   headerCells.forEach(cell => {
     html += `<th>${cell}</th>`;
   });
-  html += `</tr></thead><tbody>\n`;
+  html +=    `</tr>
+            </thead>
+            <tbody>
+  `;
 
   bodyLines.forEach(line => {
     if (!line.trim()) return;
@@ -36,9 +69,11 @@ function markdownTableToHTML(mdTable) {
     cols.forEach(col => {
       html += `<td>${col}</td>`;
     });
-    html += `</tr>\n`;
+    html += `</tr>`;
   });
-  html += `</tbody>\n</table>`;
+  html += `
+            </tbody>
+          </table>`;
   return html;
 }
 
@@ -111,10 +146,18 @@ function splitNonTableTextIntoBubbles(fullText) {
 }
 
 function processBotMessage(fullText, uniqueId) {
-  const normalizedText = fullText
+  let normalizedText = fullText
     .replace(/\\n/g, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/[–—]/g, '-');
+
+  // "[CONVERSATION_ID=xxx]" yakala
+  let conversationId = null;
+  const matchConv = normalizedText.match(/\[CONVERSATION_ID=(\d+)\]/);
+  if (matchConv) {
+    conversationId = matchConv[1];
+    normalizedText = normalizedText.replace(matchConv[0], "");
+  }
 
   const extractedValue = extractTextContentBlock(normalizedText);
   const textToCheck = extractedValue ? extractedValue : normalizedText;
@@ -147,68 +190,37 @@ function processBotMessage(fullText, uniqueId) {
     }
   }
 
-  // -- ÖZEL KONTROL: 2. baloncuk varsa, son satırı '-' ile başlamıyorsa 3. baloncuğa taşı
-  if (newBubbles.length >= 3) {
-    let secondBubble = newBubbles[1];
-    let thirdBubble  = newBubbles[2];
-    if (secondBubble.type === "text" && thirdBubble.type === "text") {
-      let lines = secondBubble.content.split(/\r?\n/).map(line => line.trim());
-      if (lines.length > 0) {
-        let lastLine = lines[lines.length - 1];
-        if (!lastLine.startsWith('-')) {
-          lines.pop();
-          secondBubble.content = lines.join('\n');
-          if (thirdBubble.content.trim()) {
-            thirdBubble.content = lastLine + '\n' + thirdBubble.content;
-          } else {
-            thirdBubble.content = lastLine;
-          }
-        }
-      }
-    }
-  }
-
-  // EĞER 2. BALONCUĞUN SON SATIRINI ZORLA KOPARMAK İSTİYORSANIZ
-  if (newBubbles.length === 2) {
-    let secondBubble = newBubbles[1];
-    if (secondBubble.type === "text") {
-      let lines = secondBubble.content.split(/\r?\n/).map(l => l.trim());
-      if (lines.length > 0) {
-        let lastLine = lines[lines.length - 1];
-        if (!lastLine.startsWith('-')) {
-          lines.pop();
-          secondBubble.content = lines.join('\n');
-          if (newBubbles[2]) {
-            newBubbles[2].content = lastLine + '\n' + newBubbles[2].content;
-          } else {
-            // Yeni bir baloncuk yarat
-            newBubbles.push({ type: 'text', content: lastLine });
-          }
-        }
-      }
-    }
-  }
-
   $(`#botMessageContent-${uniqueId}`).closest(".d-flex").remove();
 
-  newBubbles.forEach((bubble) => {
+  newBubbles.forEach((bubble, index) => {
     const bubbleId = "separateBubble_" + Date.now() + "_" + Math.random();
-    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     let bubbleContent = "";
+
     if (bubble.type === "table") {
       bubbleContent = markdownTableToHTML(bubble.content);
     } else {
       bubbleContent = bubble.content.replace(/\n/g, "<br>");
     }
+
+    const isLastBubble = (index === newBubbles.length - 1);
+    let likeButtonHtml = "";
+    if (isLastBubble && conversationId) {
+      likeButtonHtml = `
+        <button class="like-button" data-conversation-id="${conversationId}">
+          <i class="fa-solid fa-thumbs-up" style="color: #f2f2f2;"></i>
+        </button>
+        <button class="dislike-button" data-conversation-id="${conversationId}">
+          <i class="fa-solid fa-thumbs-down" style="color: #f2f2f2;"></i>
+        </button>
+      `;
+    }
+
     const botHtml = `
-      <div class="d-flex justify-content-start mb-4">
-        <img src="static/images/fotograf.png"
-             class="rounded-circle user_img_msg"
-             alt="bot image">
-        <div class="msg_cotainer">
+      <div class="d-flex justify-content-center mb-4 w-100">
+        <div class="assistant_message_container">
           <span id="botMessageContent-${bubbleId}">${bubbleContent}</span>
+          ${likeButtonHtml}
         </div>
-        <span class="msg_time">${currentTime}</span>
       </div>
     `;
     $("#messageFormeight").append(botHtml);
@@ -217,6 +229,50 @@ function processBotMessage(fullText, uniqueId) {
 }
 
 $(document).ready(function () {
+  const localUserId = getOrCreateUserId();
+
+  // ---------------------------------------------
+  //  SAYFA İLK YÜKLENDİĞİNDE -> "Boş question" ile istek at
+  //  Böylece chatbot "Merhaba X, nasıl yardımcı olabilirim?" diyor.
+  // ---------------------------------------------
+  fetch("/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question: "",
+      user_id: localUserId
+    })
+  })
+    .then(r => r.json())
+    .then(data => {
+      // Eğer JSON'da "response" varsa, bunu ekrana bot mesajı gibi basalım
+      if (data.response) {
+        // Bot "placeholder" ekleyip kaldırmak için benzersiz ID
+        const uniqueId = Date.now();
+        const loaderHtml = `
+          <div class="d-flex justify-content-start mb-4">
+            <img src="static/images/fotograf.png"
+                 class="rounded-circle user_img_msg"
+                 alt="bot image">
+            <div class="msg_cotainer" id="botMessageContent-${uniqueId}">
+              Yazıyor...
+            </div>
+          </div>
+        `;
+        $("#messageFormeight").append(loaderHtml);
+
+        // 0.5 sn sonra gösterelim
+        setTimeout(() => {
+          processBotMessage(data.response, uniqueId);
+        }, 500);
+      }
+    })
+    .catch(err => console.error("Greeting fetch hata:", err));
+
+
+  // ---------------------------------------------
+  // MESAJ GÖNDERME (KULLANICI YAZINCA)
+  // ---------------------------------------------
   $("#messageArea").on("submit", function (e) {
     e.preventDefault();
     const inputField = $("#text");
@@ -224,7 +280,7 @@ $(document).ready(function () {
     if (!rawText) return;
 
     const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
+    // Kullanıcı mesajı
     const userHtml = `
       <div class="d-flex justify-content-end mb-4">
         <div class="msg_cotainer_send">
@@ -245,10 +301,9 @@ $(document).ready(function () {
         <img src="static/images/fotograf.png"
              class="rounded-circle user_img_msg"
              alt="bot image">
-        <div class="msg_cotainer">
-          <span id="botMessageContent-${uniqueId}"></span>
+        <div class="msg_cotainer" id="botMessageContent-${uniqueId}">
+          Yazıyor...
         </div>
-        <span class="msg_time">${currentTime}</span>
       </div>
     `;
     $("#messageFormeight").append(botHtml);
@@ -259,7 +314,7 @@ $(document).ready(function () {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         question: rawText,
-        user_id: "default_user"
+        user_id: localUserId
       })
     })
       .then(response => {
@@ -291,9 +346,83 @@ $(document).ready(function () {
         console.error("Hata:", err);
         $(`#botMessageContent-${uniqueId}`).text("Bir hata oluştu: " + err.message);
       });
-
-    setTimeout(() => {
-      document.getElementById('notificationBar').style.display = 'block';
-    }, 9 * 60 * 1000);
   });
 });
+
+
+  // ---- Tek bir kök API adresi: aynı origin'den çalışıyorsanız bu yeterli
+  const API_BASE = window.location.origin;
+
+  // Küçük yardımcı
+  function postJSON(url, data) {
+    return fetch(url, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(data ?? {})
+    });
+  }
+
+  // LIKE
+  $(document).on("click", ".like-button", function(e){
+    e.preventDefault();
+    const $likeBtn = $(this);
+    const $wrap = $likeBtn.closest(".assistant_message_container");
+    const $dislikeBtn = $wrap.find(".dislike-button");
+    $likeBtn.toggleClass("clicked");
+    const isLiked = $likeBtn.hasClass("clicked");
+    $dislikeBtn.removeClass("clicked").removeClass("faded");
+    $wrap.find(".feedback-input-container").removeClass("open");
+
+    const convId = $likeBtn.data("conversation-id");
+    if (isLiked && convId) {
+      postJSON(`${API_BASE}/like`, { conversation_id: convId })
+        .catch(err => console.error("Like POST hatası:", err));
+    }
+  });
+
+  // DISLIKE (ARTIK /feedback DEĞİL, /dislike)
+  $(document).on("click", ".dislike-button", function(e){
+    e.preventDefault();
+    const $dislikeBtn = $(this);
+    const $wrap = $dislikeBtn.closest(".assistant_message_container");
+    const $likeBtn = $wrap.find(".like-button");
+
+    $dislikeBtn.toggleClass("clicked");
+    const isDisliked = $dislikeBtn.hasClass("clicked");
+    $likeBtn.removeClass("clicked").toggleClass("faded", isDisliked);
+
+    const inputContainer = $wrap.find(".feedback-input-container")[0];
+    if (inputContainer) inputContainer.classList.toggle("open", isDisliked);
+
+    const convId = $dislikeBtn.data("conversation-id");
+    // Sadece beğenmeme işaretlemesi -> /dislike
+    if (isDisliked && convId) {
+      postJSON(`${API_BASE}/dislike`, { conversation_id: convId })
+        .catch(err => console.error("Dislike POST hatası:", err));
+    }
+  });
+
+  // METİNSEL GERİ BİLDİRİM (opsiyonel) -> /feedback/<id>
+  $(document).on("click", ".submit-feedback", function(e){
+    e.preventDefault();
+    const $wrap = $(this).closest(".feedback-wrapper");
+    const convId = $wrap.find(".dislike-button").data("conversation-id");
+    const text = $wrap.find(".feedback-input").val().trim();
+    if (!text) { alert("Lütfen bir geri bildirim girin."); return; }
+
+    postJSON(`${API_BASE}/feedback/${convId}`, { feedback: text })
+      .then(res => {
+        if (!res.ok) throw new Error("Sunucu hatası");
+        return res.json();
+      })
+      .then(() => {
+        $wrap.find(".feedback-input").val("");
+        $wrap.find(".feedback-input-container").removeClass("open");
+        // İsteğe bağlı: like'ı devre dışı bırak
+        $wrap.closest(".assistant_message_container").find(".like-button").prop("disabled", true);
+      })
+      .catch(err => {
+        console.error("Geri bildirim gönderme hatası:", err);
+        alert("Gönderme sırasında bir hata oluştu.");
+      });
+  });

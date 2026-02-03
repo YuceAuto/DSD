@@ -1,41 +1,50 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ŠkodaBot</title>
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/fotograf.png') }}">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Dijital Satış Danışmanı</title>
 
-  <!-- Bootstrap -->
-  <link rel="stylesheet"
-        href="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css"
-        id="bootstrap-css">
-  <link rel="stylesheet"
-        href="https://use.fontawesome.com/releases/v5.5.0/css/all.css"
-        integrity="sha384-B4dIHKNBt8Bc12p+WXckhzcICo0wtJAoU8YZTY5qE0Id1GSseTk6S+L3BlXeVIU"
-        crossorigin="anonymous">
+  <link rel="icon" type="image/png"
+        href="{{ url_for('static', filename='images/fotograf.png') }}">
 
-  <!-- style.css -->
+  <!-- Bootstrap & ikonlar -->
   <link rel="stylesheet"
-        type="text/css"
-        href="{{ url_for('static', filename='style.css')}}" />
+        href="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css">
+  <link rel="stylesheet"
+        href="https://pro.fontawesome.com/releases/v6.0.0-beta3/css/all.css"
+        crossorigin="anonymous" referrerpolicy="no-referrer">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap&subset=latin-ext"
+        rel="stylesheet">
+
+  <!-- Ana CSS -->
+  <link rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}">
 
   <style>
-    .notification-text {
-      background-color: #dff0d8;
-      color: #3c763d;
-      height: 30px;
-      line-height: 30px;
-      text-align: center;
-      font-family: Arial, sans-serif;
-      font-size: 16px;
-      box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
-      width: 100%;
-    }
+    /* Temel font ailesi */
+    body,b,strong{font-family:'Roboto','Helvetica Neue',Helvetica,Arial,sans-serif;}
   </style>
 </head>
 
 <body>
+  <!-- ========== KVKK Tam‑Ekran Katmanı ========== -->
+  <div id="disclosure-overlay">
+    <iframe id="disclosure-frame"
+            src="{{ url_for('static', filename='docs/disclosure.pdf') }}"></iframe>
+    <button class="consent-btn" data-consent="1" style="top: 18%; left: 4%;">Onaylıyorum</button>
+    <button class="consent-btn" data-consent="2" style="top: 40%; left: 4%;">Onaylıyorum</button>
+    <button class="consent-btn" data-consent="3" style="top: 63%; left: 4%;">Onaylıyorum</button>
+    <div id="disclosure-footer">
+      <button onclick="hideDisclosure()">Onaylıyorum</button>
+    </div>
+  </div>
+
+  <!-- ======================= Chat UI ====================== -->
   <div class="container-fluid h-100">
     <div class="row justify-content-center h-100">
       <div class="chat">
@@ -49,20 +58,16 @@
                 <span class="online_icon"></span>
               </div>
               <div class="user_info">
-                <span>ŠkodaBot</span>
-                <p>Škoda Help Center</p>
+                <span>Dijital Satış Danışmanı</span>
+                <p>Yüce Auto A.Ş.</p>
               </div>
             </div>
           </div>
 
-          <div class="notification-text" id="notificationBar" style="display:none;">
-            <p>Oturumunuz 10 dakika sonra sona erecektir.</p>
-          </div>
+          <!-- Mesaj alanı -->
+          <div id="messageFormeight" class="card-body msg_card_body"></div>
 
-          <div id="messageFormeight" class="card-body msg_card_body">
-            <!-- Mesajlar burada görüntülenecek -->
-          </div>
-
+          <!-- Mesaj yazma -->
           <div class="card-footer">
             <form id="messageArea" class="input-group">
               <input type="text"
@@ -70,10 +75,10 @@
                      name="msg"
                      placeholder="Taleplerinizi bekliyorum..."
                      autocomplete="off"
-                     class="form-control type_msg" />
+                     class="form-control type_msg">
               <div class="input-group-append">
-                <button type="submit" class="input-group-text send_btn">
-                  <i class="fas fa-location-arrow"></i>
+                <button type="submit" class="input-group-text send_btn" aria-label="Gönder" title="Gönder">
+                  Gönder
                 </button>
               </div>
             </form>
@@ -83,11 +88,44 @@
     </div><!-- .row -->
   </div><!-- .container-fluid -->
 
-  <!-- jQuery / Bootstrap JS -->
+  <!-- =================== Görsel Modal =================== -->
+  <div class="modal fade" id="imageModal" tabindex="-1"
+       role="dialog" aria-labelledby="imageModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+      <div class="modal-content" style="background: none; border: none;">
+        <div class="modal-body text-center" style="position: relative;">
+          <button type="button" class="close" data-dismiss="modal"
+                  aria-label="Close"
+                  style="position: absolute; right: 15px; top: 15px; color: #fff;">
+            <span aria-hidden="true">&times;</span>
+          </button>
+          <img id="popupImage" src="" alt="Büyük Görsel"
+               style="max-width: 100%; height: auto; border-radius: 8px;">
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ==================================================== -->
+
+  <!-- jQuery & Bootstrap JS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
   <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
 
-  <!-- script.js (Birinci Kod'daki tablo-parçalama yapısıyla) -->
+  <!-- script.js -->
   <script src="{{ url_for('static', filename='script.js') }}"></script>
+
+  <!-- ========== KVKK Katmanı JavaScript ========== -->
+  <script>
+    function hideDisclosure(){
+      document.getElementById('disclosure-overlay').style.display='none';
+      /* Eğer aynı sekmede bir daha çıkmasın istiyorsanız:            *
+       * sessionStorage.setItem('kvkk_shown', 'yes');                 */
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      /* Her yenilemede göstermek istiyorsanız bu kontrolü kapatın     */
+      // if(sessionStorage.getItem('kvkk_shown')==='yes'){ hideDisclosure(); }
+    });
+  </script>
 </body>
 </html>

@@ -1,36 +1,59 @@
-/* Body / HTML tam ekran + gradyan arka plan */
+/* --------------------------------------------- */
+/* style.css - Tüm kod, Font Awesome ikonlu Like/Dislike */
+/* --------------------------------------------- */
+
+/* Body ve HTML - Arka plan gradyan korunuyor, ekrana tam oturacak şekilde */
 body, html {
   margin: 0;
   padding: 0;
-  height: 100%;
   background: #6F797A;
   background: -webkit-linear-gradient(to right, #0E3A2F, #78FAAE);
   background: linear-gradient(to right, #0E3A2F, #78FAAE);
+  height: 100%; /* Body %100 yükseklik */
 }
 
-.container-fluid, .row.justify-content-center.h-100 {
-  height: 100vh;
+/* container-fluid - normal reset */
+.container-fluid {
+  margin: 0 auto;
+  padding: 0;
+}
+
+/* row.justify-content-center - yükseklik otomatik / margin ile ortala */
+.row.justify-content-center {
   display: flex;
-  flex-direction: column;
-  align-items: center;
   justify-content: center;
+  align-items: flex-start; /* üst kısma hizala */
+  margin: 20px auto;       /* Üst-alt 20px boşluk */
+  width: 100%;
 }
+
+/*
+  .chat:
+  - Ekran yüksekliğini tam doldurması için: height: calc(100vh - 40px);
+  - 40px = margin-top (20px) + margin-bottom (20px) kadar boşluğu hesaba katalım.
+  - Genişlik responsive kalsın, max-width 1200px'e kadar büyüsün.
+*/
 .chat {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  max-width: 95%;
-  min-width: 760px;
-  height: 100%;
+  width: 100%;
+  max-width: 1200px;
+  height: calc(100vh - 40px);
+  border-radius: 15px;
+  margin: 0 10px;
 }
+
+/* Kart, chat alanını tam doldurur */
 .card {
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100%;
   border-radius: 15px !important;
-  background-color: #000000 !important; 
+  background-color: #000000 !important;
+  height: 100%;
 }
+
+/* Header (üst kısım) */
 .card-header.msg_head {
   display: flex;
   align-items: center;
@@ -39,17 +62,21 @@ body, html {
   border-radius: 15px 15px 0 0 !important;
   border-bottom: 0 !important;
 }
+
+/* Footer (mesaj yazma alanı) */
 .card-footer {
   border-radius: 0 0 15px 15px !important;
   border-top: 0 !important;
   display: flex;
 }
 
+/* Mesajların listelendiği alan */
 .msg_card_body {
   flex: 1;
   overflow-y: auto;
 }
 
+/* Kullanıcı / Bot görsel boyutları */
 .user_img {
   height: 70px;
   width: 70px;
@@ -76,6 +103,7 @@ body, html {
   border: 1.5px solid white;
 }
 
+/* Bot başlık bilgisi */
 .user_info {
   margin-top: auto;
   margin-bottom: auto;
@@ -90,6 +118,7 @@ body, html {
   color: rgba(255,255,255,0.6);
 }
 
+/* Mesaj yazma input */
 .type_msg {
   background-color: #394748 !important;
   border: 0 !important;
@@ -103,33 +132,33 @@ body, html {
   outline: 0px !important;
 }
 
+/* Gönderme butonu */
 .send_btn {
   background-color: #0E3A2F;
   border: 2px solid #0E3A2F;
   color: white;
   cursor: pointer;
-  width: 60px;
+  width: 130px;
   height: 60px;
+  padding: 0 18px;         /* yazı için yatay iç boşluk */
+  white-space: nowrap;
   border-radius: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: border 0.3s;
+  font-weight: 600;        /* yazıyı belirginleştir */
+  flex-shrink: 0;          /* dar ekranlarda küçülmesin */
+  
 }
-.send_btn:active {
-  border: 2px solid black;
+.send_btn:active { border: 2px solid black; }
+
+/* Mobilde biraz daha kompakt bir genişlik */
+@media (max-width: 768px) {
+  .send_btn { min-width: 110px; }
 }
 
-.msg_cotainer {
-  margin-top: auto;
-  margin-bottom: auto;
-  margin-left: 10px;
-  border-radius: 25px;
-  background-color: rgb(82, 172, 255);
-  padding: 10px;
-  position: relative;
-  color: #000;
-}
+/* Kullanıcı mesaj balonu (yeşil) */
 .msg_cotainer_send {
   margin-top: auto;
   margin-bottom: auto;
@@ -139,14 +168,6 @@ body, html {
   padding: 10px;
   position: relative;
   color: #000;
-}
-
-.msg_time {
-  position: absolute;
-  left: 0;
-  bottom: -15px;
-  color: rgba(255,255,255,0.5);
-  font-size: 10px;
 }
 .msg_time_send {
   position: absolute;
@@ -158,6 +179,178 @@ body, html {
 
 /* Tablonun baloncuk rengiyle uyumlu olması için */
 .my-blue-table {
-  background-color: rgb(82, 172, 255) !important;
+  background-color: rgb(255, 255, 255) !important;
   color: #000 !important;
+}
+
+/* =========================================== */
+/* BOT MESAJINI SOLDAN BALONCUKSUZ GÖSTERMEK İÇİN */
+/* =========================================== */
+.assistant_message_container {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: #fff;
+  max-width: 80%;
+}
+
+/* =========================================== */
+/* Şeffaf Like/Dislike Butonları - Sadece ikon renklensin */
+/* =========================================== */
+.like-button,
+.dislike-button {
+  background: none;       /* Şeffaf arka plan */
+  border: none;           /* Çerçeve yok */
+  cursor: pointer;
+  font-size: 20px;        /* Ikon boyutu */
+  margin-left: 6px;
+  color: #f2f2f2;         /* İlk hali: açık gri / beyaz */
+}
+
+/* TIKLANDIĞINDA YALNIZCA IKON RENGİ DEĞİŞSİN */
+.like-button.clicked i {
+  color: #78FAAE !important; /* Açık yeşil */
+}
+.dislike-button.clicked i {
+  color: #78FAAE !important; /* Koyu yeşil */
+}
+
+/* Hover efekti (opsiyonel) */
+.like-button:hover i,
+.dislike-button:hover i {
+  opacity: 0.8;
+}
+
+/* =========================================== */
+/* POP-UP GÖRSELİ BÜYÜTME VE ARKA PLAN */
+/* =========================================== */
+#popupImage {
+  max-width: 75%;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 4px solid #fff;
+  padding: 2px;
+  background-color: #fff;
+}
+.my-blue-table td.td-empty {
+    background: transparent !important;   /* veya #000; temanız neyse */
+    border: none;                         /* isterseniz kenarlığı da gizleyin */
+    padding: 0;
+}
+.popupImageSmaller {
+  max-width: 60% !important;
+}
+.modal-dialog.modal-lg {
+  max-width: 800px;
+}
+.modal-backdrop.show {
+  background-color: rgba(0, 0, 0, 0.7) !important;
+  opacity: 1 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* =========================================== */
+/* Media Query: Daha dar ekranlar (max-width: 768px) */
+/* =========================================== */
+@media (max-width: 768px) {
+  .user_info span {
+    font-size: 16px;
+  }
+  .user_img {
+    height: 50px;
+    width: 50px;
+  }
+  .chat {
+    margin: 0 auto;
+    height: calc(100vh - 20px);
+  }
+}
+/* ========== KVKK Tam‑Ekran Katmanı ========== */
+#disclosure-overlay{
+  position:fixed;top:0;left:0;
+  width:100vw;height:100vh;
+  background:#fff;display:flex;flex-direction:column;
+  z-index:999999;           /* Her şeyin üzerinde */
+}
+#disclosure-frame{flex:1;border:0;}
+#disclosure-footer{
+  text-align:center;padding:12px;border-top:1px solid #ccc;
+}
+#disclosure-footer button{
+  padding:8px 24px;font-size:1rem;cursor:pointer;
+}
+/* Overlay içi */
+#disclosure-wrapper{ position:relative; width:100%; height:100%; }
+#disclosure-frame  { width:100%; height:100%; border:0; }
+
+.consent-btn{
+  position:fixed;                  /* mutlak viewport koordinatı */
+  width:130px; height:30px;
+  background:#78faae;
+  border:2px solid #0e3a2f; color:#000;
+  font-size:.82rem; border-radius:6px; cursor:pointer;
+  z-index: 10000;                  /* iframe üzerinde kalmalı */
+}
+.consent-btn.approved{
+  background:#0e3a2f; color:#fff; border-color:#0e3a2f; cursor:default;
+}
+
+
+/* Chat kilitliyken gri / pasif görünüm */
+input[type="text"].locked-input{background:#555 !important;cursor:not-allowed;opacity:.6;}
+.send_btn.locked-btn{opacity:.4;cursor:not-allowed;}
+/* Örnek talepler başlığı ve chip alanı */
+.suggestion-title {
+  color: rgba(255,255,255,0.85);
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+}
+.suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Chip (tıklanabilir örnek) */
+.chip {
+  border: 1px solid #78FAAE;
+  background: #0E3A2F;
+  color: #fff;
+  border-radius: 22px;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: transform .08s ease, box-shadow .15s ease, opacity .2s ease;
+}
+.chip:hover { transform: translateY(-1px); box-shadow: 0 2px 12px rgba(120,250,174,.18); }
+.chip:disabled { opacity: .6; cursor: default; }
+/* Buton satırı – sadece kendi satırında flex, hizayı bozmaz */
+
+/* =========================================== */
+/* ✅ TABLO BAŞLIKLARINDAKİ YEŞİL ÇİZGİLERİ KALDIR + BAŞLIĞI GÖSTER */
+/* =========================================== */
+
+/* Chat içindeki tabloların başlık metni görünür olsun */
+.msg_card_body table thead th,
+.msg_card_body table thead th a {
+  color: #eaeaea !important;        /* başlık yazısı görünür */
+  text-decoration: none !important; /* alt çizgi kalkar */
+  border-bottom: none !important;   /* çizgi/border varsa kalkar */
+}
+
+/* Eğer başlıklar link/sort gibi davranıyorsa */
+.msg_card_body table thead th a {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* İstersen header altındaki border’ı nötrle (ya da komple kaldır) */
+.msg_card_body table thead th {
+  border-bottom: 1px solid rgba(255,255,255,0.15) !important;
+  /* tamamen kapatmak istersen:
+  border-bottom: none !important;
+  */
 }
