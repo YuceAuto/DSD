@@ -14,8 +14,8 @@ Run this test module with ``python -m unittest modules.test.neo4j_test``.
 
 import unittest
 
-from modules.skoda.graph.neo4j_skoda_graph import Neo4jGraph
-from modules.chat.chatbot import Chatbot
+from modules.neo4j_skoda_graph import Neo4jGraph
+from modules.chatbot import Chatbot
 
 
 class TestNeo4jGraph(unittest.TestCase):

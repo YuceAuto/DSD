@@ -14,9 +14,12 @@ abstraction for domain knowledge.  The API defines two endpoints:
 * ``POST /clear`` – accepts a conversation identifier and purges any stored
   history for that conversation.
 
-This simplified application demonstrates how to orchestrate request/response
-cycles without relying on external dependencies or prior versions of the
-project.  It is written to be self‑contained and easy to understand.
+By default the chatbot will rely on a deterministic rule‑based response
+generator.  If the ``OPENAI_API_KEY`` environment variable is set and the
+OpenAI Python SDK is installed, the chatbot will instead call OpenAI's
+ChatCompletion API to produce generative responses.  This simplified
+application demonstrates how to orchestrate request/response cycles while
+remaining easy to understand.
 """
 
 from __future__ import annotations
