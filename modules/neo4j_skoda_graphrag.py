@@ -420,7 +420,7 @@ class Neo4jSkodaGraphRAG:
         "head up", "head-up", "hud", "head up display",
         "koltuk ısıt", "koltuk isit", "ısıtmalı koltuk", "isitmali koltuk",
         "adaptif hız", "adaptif hiz", "acc",
-        "şerit", "serit", "lane", "travel assist", "park assist", "kamera", "elektrikli",
+        "şerit", "serit", "lane", "travel assist", "park assist", "kamera"
     ]
     _SAFETY_HINTS = [
         "airbag", "abs", "esp", "adas", "acil fren", "front assist",
@@ -515,8 +515,7 @@ class Neo4jSkodaGraphRAG:
 
         return " AND (" + " OR ".join(where_parts) + ")", params
 
-    def _relation_retrieve(self, *, ql_neo, model_id: str, trims: list[str], category: str, limit: int = 500):
-        
+    def _relation_retrieve(self, *, model_id: str, trims: list[str], category: str, limit: int = 200):
         if not model_id or not category:
             return {"hits": [], "text": ""}
 
@@ -564,81 +563,50 @@ class Neo4jSkodaGraphRAG:
                     fv = f"{r['feature']}: {val}".strip(": ").strip()
                     lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | TECH_SPEC | {fv}")
             return {"hits": rows, "text": "\n".join(lines).strip()}
-        # EQUIPMENT: liste + arama + availability intent
+        
+        # 2) EQUIPMENT -> Equipment (HAS_EQUIPMENT)  [availability = r.type]
         if cat == "EQUIPMENT":
-            def pick_availabilities(ql: str) -> list[str]:
-                q = (ql or "").lower()
-
-                # yok / bulunmaz / mevcut değil
-                if any(k in q for k in ["yok", "bulunmaz", "mevcut değil", "bulunmuyor"]):
-                    return ["NotAvailable"]
-
-                # opsiyonel / isteğe bağlı
-                if any(k in q for k in ["opsiyon", "opsiyonel", "isteğe bağlı"]):
-                    return ["Optional"]
-
-                # var / vardır / neler var
-                if any(k in q for k in ["neler var", "var mı", "vardır", "mevcut"]):
-                    return ["Standard"]
-
-                return []  # filtre yok (hepsi)
-            question_text = (ql_neo or "")
-            availabilities = pick_availabilities(question_text)
-
-            # q: sistemin extractor'ı yoksa en azından soru metnini kullan
-            q_raw = (trim_params.get("q") or "").strip()
-            if not q_raw:
-                q_raw = question_text
-
-            cypher = f"""
+            cypher = """
             MATCH (m:Model)
             WHERE toLower(m.name) CONTAINS toLower($model_id)
-
-            MATCH (m)-[:HAS_BODY_TYPE]->(b:BodyType)-[:HAS_TRIM]->(t:Trim)
-            WHERE 1=1 {trim_where}
-
-            MATCH (t)-[r:HAS_EQUIPMENT]->(e:Equipment)
-
-            WITH m, b, t, r, e,
-                trim(coalesce(toString(r.type), '')) AS availability,
-                toLower(trim(coalesce(e.name,'') + ' ' + coalesce(e.description,''))) AS hay,
-                // q temizle: apostrof ve fazla boşluk
-                toLower(trim(replace(replace($q, \"'\", \"\"), '\"', ''))) AS q2
-
-            WHERE (size($availabilities) = 0 OR availability IN $availabilities)
-            AND (q2 = '' OR hay CONTAINS q2)
-
+        
+            MATCH (m)-[:HAS_BODY_TYPE]->(b:BodyType)
+            MATCH (b)-[:HAS_TRIM]->(t:Trim)
+            WHERE ($body_type = '' OR b.name = $body_type)
+            AND ($trim_name = '' OR t.name = $trim_name)
+        
+            OPTIONAL MATCH (t)-[r:HAS_EQUIPMENT]->(e:Equipment)
+            WITH m, t, r, e
+            WHERE e IS NOT NULL
+        
             RETURN
             m.name AS model_id,
-            b.name AS body_type,
             coalesce(t.name,'') AS trim_name,
             'EQUIPMENT' AS category,
             coalesce(e.name,'') AS feature,
-            availability AS value
-            ORDER BY body_type, trim_name, feature
+            coalesce(toString(r.type), '') AS value
             LIMIT $limit
             """
-
+        
             params = {
-                "model_id": model_id,
-                "q": q_raw,
-                "availabilities": availabilities,
+                "model_id": model_id,  # "octavia" gelse bile artık sorun yok
+                "body_type": (trim_params.get("body_type") or "").strip(),
+                "trim_name": (trim_params.get("trim_name") or "").strip(),
                 "limit": int(limit),
                 **trim_params
             }
-
+        
             rows = self._run_cypher_traced(self._uid(), cypher, params) or []
-
+        
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
                 if not feat:
                     continue
-                bt = r.get("body_type","-") or "-"
-                tr = r.get("trim_name","-") or "-"
                 val = (r.get("value") or "").strip()
-                lines.append(f"Kayıt: {r.get('model_id', model_id)} | {bt} | {tr} | EQUIPMENT | {feat}: {val}".strip())
-
+                fv = f"{feat}: {val}".strip(": ").strip() if val else feat
+                lines.append(f"Kayıt: {r.get('model_id', model_id)} | - | {r.get('trim_name','-') or '-'} | EQUIPMENT | {fv}")
+        
             return {"hits": rows, "text": "\n".join(lines).strip()}
         
 
@@ -794,7 +762,6 @@ class Neo4jSkodaGraphRAG:
     def _relation_retrieve_any_category(
         self,
         *,
-        ql_neo,
         model_id: str,
         trims: list[str],
         categories: list[str],
@@ -807,7 +774,7 @@ class Neo4jSkodaGraphRAG:
         all_hits = []
         text_parts = []
         for cat in categories:
-            res = self._relation_retrieve(ql_neo, model_id=model_id, trims=trims, category=cat, limit=limit_each) or {}
+            res = self._relation_retrieve(model_id=model_id, trims=trims, category=cat, limit=limit_each) or {}
             hits = res.get("hits") or []
             t = (res.get("text") or "").strip()
             if hits:
@@ -865,7 +832,7 @@ class Neo4jSkodaGraphRAG:
             return False
 
         if not plain_q:
-            return {"found": False, "message": "Bu özellik için net bir bilgi bulunamadı.", "hits": hits}
+            return {"found": False, "message": "KB’de bu özellik için net bir kayıt bulunamadı.", "hits": hits}
 
         # "cam tavan" -> satır içinde geçiyor mu?
         matched = []
@@ -2221,7 +2188,7 @@ class Neo4jSkodaGraphRAG:
         # ✅ Artık models buradan gelsin
         models = resolved_models
         ql = user_question.lower()
-        ql_neo = ql
+
         trims = self._extract_trims_in_text(user_question)
         trim_compare_mode = (len(models) == 1 and len(trims) >= 2)
 
@@ -2244,7 +2211,7 @@ class Neo4jSkodaGraphRAG:
 
                 # feature aramada çıkmadıysa: yine de tüm kategorilerden context dene
                 cats = ["EQUIPMENT", "OPTION", "MULTIMEDIA", "INTERIOR", "SAFETY", "WHEEL", "COLOR", "TECH_SPEC"]
-                res_any = self._relation_retrieve_any_category(ql_neo, model_id=m0, trims=trims, categories=cats, limit_each=250) or {}
+                res_any = self._relation_retrieve_any_category(model_id=m0, trims=trims, categories=cats, limit_each=250) or {}
                 ctx_any = (res_any.get("text") or "").strip()
                 if ctx_any:
                     return self._render_with_llm(
@@ -2259,10 +2226,10 @@ class Neo4jSkodaGraphRAG:
             # ✅ 2) Diğer sorular: kategori varsa onu çek, yoksa tüm kategorileri dene
             category = self._infer_category(user_question)
             if category:
-                res = self._relation_retrieve(ql_neo, model_id=m0, trims=trims, category=category, limit=800) or {}
+                res = self._relation_retrieve(model_id=m0, trims=trims, category=category, limit=800) or {}
             else:
                 cats = ["EQUIPMENT", "OPTION", "MULTIMEDIA", "INTERIOR", "SAFETY", "WHEEL", "COLOR", "TECH_SPEC"]
-                res = self._relation_retrieve_any_category(ql_neo, model_id=m0, trims=trims, categories=cats, limit_each=250) or {}
+                res = self._relation_retrieve_any_category(model_id=m0, trims=trims, categories=cats, limit_each=250) or {}
                 category = "MIXED"
 
             relation_ctx = (res.get("text") or "").strip()

@@ -77,7 +77,7 @@ def _tee_stream_for_logging(resp, *, app, uid: str, path: str, max_chars: int = 
             # stream bitti -> preview logla
             preview = _strip_html("".join(buf))[:400]
             msg = f"[A] path={path} user_id={uid} status={resp.status_code} | {preview}"
-            print(msg, flush=True)
+            # print(msg, flush=True)
             app.logger.info(msg)
 
     # response iterable'ını wrapper ile değiştir
@@ -148,7 +148,7 @@ def create_app():
 
             if q:
                 msg = f"[Q] path={request.path} user_id={uid} | {q}"
-                print(msg, flush=True)
+                # print(msg, flush=True)
                 app.logger.info(msg)
 
     @app.after_request
@@ -168,7 +168,7 @@ def create_app():
                 body = resp.get_data(as_text=True) or ""
                 preview = _strip_html(body)[:400]
                 msg = f"[A] path={request.path} user_id={uid} status={resp.status_code} | {preview}"
-                print(msg, flush=True)
+                # print(msg, flush=True)
                 app.logger.info(msg)
 
         except Exception as e:
