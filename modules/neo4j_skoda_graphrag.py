@@ -171,37 +171,148 @@ class Neo4jSkodaGraphRAG:
                     combi = (a_i, b_i)
 
         return {"sedan": sedan, "combi": combi, "rows": rows}
+    _BAGAJ_PAIR_RE = re.compile(r"(\d{3,4})\s*/\s*(\d{1,2}\.?\d{3})", re.IGNORECASE)
+    def _trim_body_types(self, model_id: str, trim_key: str) -> list[str]:
+        """
+        Bu trim hangi body'lerde var? ['sedan'] veya ['combi'] veya ['sedan','combi'].
+        trim_key: 'rs', 'elite' gibi senin internal trim anahtarın.
+        """
+        cypher = """
+        MATCH (m:Model)-[:HAS_BODY_TYPE]->(b:BodyType)-[:HAS_TRIM]->(t:Trim)
+        WHERE toLower(m.name) CONTAINS toLower($model_id)
+        AND (toLower(coalesce(t.name,t.id,'')) CONTAINS toLower($trim))
+        RETURN collect(DISTINCT toLower(coalesce(b.name,''))) AS bodies
+        """
+        rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "trim": trim_key}) or []
+        bodies = (rows[0].get("bodies") if rows else []) or []
+        # normalize
+        out = []
+        for b in bodies:
+            b = (b or "").strip().lower()
+            if "combi" in b or "kombi" in b:
+                b = "combi"
+            elif "sedan" in b or "lift" in b:
+                b = "sedan"
+            if b and b not in out:
+                out.append(b)
+        return out
+
+
+    def _body_aware_relation_retrieve(self, *, model_id: str, trims: list[str], category: str, limit: int, user_body: str = "") -> dict:
+        """
+        Tek bir noktadan body-aware çıktı üretir.
+        - user_body varsa: sadece o body
+        - yoksa modelde sedan+combi varsa: iki bölüm (SEDAN/LIFTBACK + COMBI)
+        - trim belirliyse ve o trim combi'de yoksa: trim sedan'dan fallback + not
+        """
+        bodies = self._model_body_types(model_id)
+
+        # kullanıcı body belirtmişse: direkt
+        if user_body:
+            return self._relation_retrieve(model_id=model_id, trims=trims, category=category, limit=limit, body_type=user_body) or {}
+
+        # modelde tek body varsa: direkt
+        if not ("sedan" in bodies and "combi" in bodies):
+            return self._relation_retrieve(model_id=model_id, trims=trims, category=category, limit=limit, body_type="") or {}
+
+        # burada: modelde sedan + combi var, user_body yok → iki bölüm
+        parts = []
+        for bt in ["sedan", "combi"]:
+            res_bt = self._relation_retrieve(model_id=model_id, trims=trims, category=category, limit=limit, body_type=bt) or {}
+            txt = (res_bt.get("text") or "").strip()
+
+            # ✅ Trim varsa ve bu body’de trim yoksa fallback notu bas (özellikle combi’de)
+            note = ""
+            if trims and bt == "combi":
+                # örn trims=['rs'] veya trims=['elite'] (tek trim)
+                # (2 trim compare zaten sende ayrı ele alındı; burada normal sorular için)
+                t0 = trims[0]
+                t0_bodies = self._trim_body_types(model_id, t0)
+                if t0_bodies and ("combi" not in t0_bodies):
+                    # Elite gibi: combi yok → sedan’dan fallback (aynı category ile)
+                    res_fallback = self._relation_retrieve(model_id=model_id, trims=[t0], category=category, limit=limit, body_type="sedan") or {}
+                    txt_fb = (res_fallback.get("text") or "").strip()
+                    if txt_fb:
+                        txt = txt_fb
+                        note = f"Not: {t0.title()} versiyonunun Combi gövdesi bulunmadığı için {t0.title()} Sedan/Liftback verileri gösterildi."
+
+            if txt:
+                title = "SEDAN/LIFTBACK" if bt == "sedan" else "COMBI"
+                if note:
+                    parts.append(f"### {title}\n{note}\n{txt}")
+                else:
+                    parts.append(f"### {title}\n{txt}")
+
+        merged = "\n\n".join(parts).strip()
+        return {"hits": [], "text": merged, "already_formatted": True}
+
+    def _model_body_types(self, model_id: str) -> list[str]:
+        """
+        Modelde hangi BodyType var? ['sedan','combi'] gibi.
+        """
+        cypher = """
+        MATCH (m:Model)-[:HAS_BODY_TYPE]->(b:BodyType)
+        WHERE toLower(m.name) CONTAINS toLower($model_id)
+        RETURN collect(DISTINCT toLower(coalesce(b.name,''))) AS bodies
+        """
+        rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id}) or []
+        bodies = (rows[0].get("bodies") if rows else []) or []
+        bodies = [x.strip().lower() for x in bodies if (x or "").strip()]
+        # normalize
+        out = []
+        for b in bodies:
+            if "combi" in b or "kombi" in b:
+                b = "combi"
+            elif "sedan" in b or "lift" in b:
+                b = "sedan"
+            if b not in out:
+                out.append(b)
+        return out
+
     def _bagaj_dual_body_compact(self, model_id: str, trims: list[str]) -> list[dict]:
         trims_l = [(t or "").strip().lower() for t in (trims or []) if (t or "").strip()]
+
         cypher = """
-        MATCH (m:CAR_MODEL {id:$model_id})-[:HAS_TRIM]->(t:TRIM)
-        WHERE $has_trim = false OR any(x IN $trims WHERE toLower(coalesce(t.name,t.id,'')) CONTAINS x)
-        MATCH (t)-[:HAS_TECH_SPEC]->(s:TECH_SPEC)
-        WHERE toLower(coalesce(s.feature,'')) CONTAINS 'bagaj'
-        AND toLower(coalesce(s.body_type,'')) IN ['sedan','combi']
-        WITH
-        coalesce(t.name,t.id,'') AS trim_name,
-        toLower(coalesce(s.body_type,'')) AS body_type,
-        max(toInteger(coalesce(s.open_l,0)))   AS open_l,
-        max(toInteger(coalesce(s.folded_l,0))) AS folded_l
-        WITH trim_name,
-            collect({body_type: body_type, open_l: open_l, folded_l: folded_l}) AS bodies
-        WITH trim_name,
-            [b IN bodies WHERE b.body_type='sedan'][0] AS sedan,
-            [b IN bodies WHERE b.body_type='combi'][0] AS combi
+        MATCH (m:Model)
+        WHERE toLower(m.name) CONTAINS toLower($model_id)
+        MATCH (m)-[:HAS_BODY_TYPE]->(b:BodyType)-[:HAS_TRIM]->(t:Trim)
+        WHERE ($has_trim = false OR any(x IN $trims WHERE toLower(coalesce(t.name,t.id,'')) CONTAINS x))
+
+        MATCH (t)-[r:HAS_FEATURE]->(f:Feature)
+        WHERE toLower(coalesce(f.name,'')) CONTAINS 'bagaj'
+
         RETURN
-        trim_name,
-        sedan.open_l  AS sedan_open_l,
-        sedan.folded_l AS sedan_folded_l,
-        combi.open_l  AS combi_open_l,
-        combi.folded_l AS combi_folded_l
-        ORDER BY trim_name;
+        coalesce(t.name,t.id,'') AS trim_name,
+        toLower(coalesce(b.name,'')) AS body_type,
+        coalesce(toString(r.value),'') AS value
+        ORDER BY trim_name, body_type
+        LIMIT 200
         """
-        return self._run_cypher_traced(self._uid(), cypher, {
+
+        rows = self._run_cypher_traced(self._uid(), cypher, {
             "model_id": model_id,
             "has_trim": bool(trims_l),
             "trims": trims_l
         }) or []
+
+        out = []
+        for r in rows:
+            val = (r.get("value") or "").replace(".", "").strip()  # 1.555 -> 1555
+            m = re.search(r"(\d{3,4})\s*/\s*(\d{4})", val)
+            if not m:
+                continue
+            open_l = int(m.group(1))
+            folded_l = int(m.group(2))
+
+            out.append({
+                "trim_name": (r.get("trim_name") or "").strip(),
+                "body_type": (r.get("body_type") or "").strip().lower(),  # sedan / combi
+                "open_l": open_l,
+                "folded_l": folded_l
+            })
+
+        return out
+
 
     def _bagaj_dual_body_cypher(self, model_id: str, trims: list[str]) -> list[dict]:
         trims_l = [(t or "").strip().lower() for t in (trims or []) if (t or "").strip()]
@@ -408,7 +519,7 @@ class Neo4jSkodaGraphRAG:
             cat = "EQUIPMENT" if "EQUIPMENT" in labels else (labels[0] if labels else "FEATURE")
             fv = f"{feature}: {value}".strip(": ").strip() if value else feature
             if fv:
-                text_lines.append(f"Kayıt: {model_id} | - | {trim_name} | {cat} | {fv}")
+                text_lines.append(f"Kayıt: {model_id} | unknown | {trim_name} | {cat} | {fv}")
 
         return {"hits": rows, "text": "\n".join(text_lines).strip(), "plain_q": plain_q}
 
@@ -462,7 +573,7 @@ class Neo4jSkodaGraphRAG:
         lines = []
         for r in rows:
             fv = r["feature"] if not r["value"] else f'{r["feature"]}: {r["value"]}'
-            lines.append(f'Kayıt: {model_id} | - | {r["trim_name"] or "-"} | WHEEL | {fv}')
+            lines.append(f'Kayıt: {model_id} | unknown | {r["trim_name"] or "-"} | WHEEL | {fv}')
         return {"hits": rows, "text": "\n".join(lines).strip()}
 
     def _infer_category(self, question: str) -> str | None:
@@ -515,7 +626,8 @@ class Neo4jSkodaGraphRAG:
 
         return " AND (" + " OR ".join(where_parts) + ")", params
 
-    def _relation_retrieve(self, *, model_id: str, trims: list[str], category: str, limit: int = 200):
+    def _relation_retrieve(self, *, model_id: str, trims: list[str], category: str, limit: int = 200, body_type: str = ""):
+
         if not model_id or not category:
             return {"hits": [], "text": ""}
 
@@ -531,73 +643,327 @@ class Neo4jSkodaGraphRAG:
         WHERE toLower(m.name) CONTAINS toLower($model_id)
         OPTIONAL MATCH (m)-[:HAS_BODY_TYPE]->(b:BodyType)-[:HAS_TRIM]->(t:Trim)
         WHERE 1=1 {trim_where}
+        AND ($body_type = '' OR toLower(coalesce(b.name,'')) = toLower($body_type))
         """
 
         # 1) TECH_SPEC -> Feature (HAS_FEATURE)  [NEW MODEL: value/unit on relationship]
+        # 1) TECH_SPEC -> Feature (HAS_FEATURE)  [value/unit on relationship]
         if cat == "TECH_SPEC":
+
+            # ✅ TRIM COMPARE (2 trim varsa): SADECE FARKLARI GETİR + TABLO (LLM BYPASS)
+            if trims and len(trims) >= 2:
+                trim_a = trims[0]
+                trim_b = trims[1]
+
+                # root'ta (m:Model)-(b:BodyType)-(t:Trim) var. Diff için iki trim'i ayrı yakalıyoruz.
+                cypher = """
+                MATCH (m:Model)
+                WHERE toLower(m.name) CONTAINS toLower($model_id)
+                MATCH (m)-[:HAS_BODY_TYPE]->(b:BodyType)
+                WHERE ($body_type = '' OR toLower(b.name) = toLower($body_type))
+
+                // ✅ Trimleri optional yakala
+                OPTIONAL MATCH (b)-[:HAS_TRIM]->(ta:Trim)
+                WHERE toLower(coalesce(ta.name,ta.id,'')) CONTAINS toLower($trim_a)
+
+                OPTIONAL MATCH (b)-[:HAS_TRIM]->(tb:Trim)
+                WHERE toLower(coalesce(tb.name,tb.id,'')) CONTAINS toLower($trim_b)
+
+                // A list (feature -> value)
+                CALL (ta) {
+                WITH ta
+                OPTIONAL MATCH (ta)-[ra:HAS_FEATURE]->(fa:Feature)
+                WITH toLower(trim(coalesce(fa.name,''))) AS k,
+                    trim(coalesce(toString(ra.value), '') +
+                            CASE WHEN coalesce(ra.unit,'') <> '' THEN ' ' + ra.unit ELSE '' END) AS v
+                WHERE ta IS NOT NULL AND k <> ''
+                RETURN collect({k:k, v:v}) AS aPairs
+                }
+
+                // B list (feature -> value)
+                CALL (tb) {
+                WITH tb
+                OPTIONAL MATCH (tb)-[rb:HAS_FEATURE]->(fb:Feature)
+                WITH toLower(trim(coalesce(fb.name,''))) AS k,
+                    trim(coalesce(toString(rb.value), '') +
+                            CASE WHEN coalesce(rb.unit,'') <> '' THEN ' ' + rb.unit ELSE '' END) AS v
+                WHERE tb IS NOT NULL AND k <> ''
+                RETURN collect({k:k, v:v}) AS bPairs
+                }
+
+                WITH m, ta, tb,
+                    coalesce(aPairs, []) AS aPairs,
+                    coalesce(bPairs, []) AS bPairs
+
+                WITH m, ta, tb, aPairs, bPairs,
+                    reduce(keys = [], x IN ([p IN aPairs | p.k] + [p IN bPairs | p.k]) |
+                    CASE WHEN x IN keys THEN keys ELSE keys + x END
+                    ) AS allKeys
+
+                UNWIND allKeys AS key
+                WITH m,
+                    coalesce(ta.name, $trim_a) AS trim_a_name,
+                    coalesce(tb.name, $trim_b) AS trim_b_name,
+                    key,
+                    head([p IN aPairs WHERE p.k = key | p.v]) AS va,
+                    head([p IN bPairs WHERE p.k = key | p.v]) AS vb
+                WHERE (va IS NULL AND vb IS NOT NULL)
+                OR (va IS NOT NULL AND vb IS NULL)
+                OR (coalesce(va,'') <> coalesce(vb,''))
+
+                RETURN
+                m.name AS model_id,
+                trim_a_name AS trim_a,
+                trim_b_name AS trim_b,
+                'TECH_SPEC' AS category,
+                key AS feature,
+                coalesce(va, '—') AS value_a,
+                coalesce(vb, '—') AS value_b,
+                CASE
+                    WHEN va IS NULL THEN 'ONLY_IN_B'
+                    WHEN vb IS NULL THEN 'ONLY_IN_A'
+                    ELSE 'DIFFERENT'
+                END AS diff_type
+                ORDER BY diff_type, feature
+                LIMIT $limit
+                """
+
+
+                params = {
+                    "model_id": model_id,
+                    "body_type": (body_type or "").strip(),   # ✅ düzeltme
+                    "trim_a": trim_a,
+                    "trim_b": trim_b,
+                    "limit": int(limit),
+                    **trim_params
+                }
+
+                rows = self._run_cypher_traced(self._uid(), cypher, params) or []
+
+                # ✅ TABLO ÜRET (LLM bozmasın)
+                trimA_title = (trim_a or "").title()
+                trimB_title = (trim_b or "").title()
+
+                out = []
+                out.append(f"{model_id.upper()} {trimA_title} vs {trimB_title} teknik özellik farkları")
+                out.append(f"| Özellik | {trimA_title} | {trimB_title} | Fark |")
+                out.append("|---|---|---|---|")
+
+                for r in rows:
+                    feat = (r.get("feature") or "").strip()
+                    if not feat:
+                        continue
+                    a = (r.get("value_a") or "—").strip() or "—"
+                    b = (r.get("value_b") or "—").strip() or "—"
+                    dt = (r.get("diff_type") or "").strip()
+
+                    fark = ("Sadece " + trimA_title) if dt == "ONLY_IN_A" else (("Sadece " + trimB_title) if dt == "ONLY_IN_B" else "Değer farklı")
+                    out.append(f"| {feat} | {a} | {b} | {fark} |")
+
+                return {"hits": rows, "text": "\n".join(out).strip(), "already_formatted": True}
+
+            # ✅ TEK TRIM / NORMAL: ESKİ DAVRANIŞ
             cypher = root + """
             OPTIONAL MATCH (t)-[r:HAS_FEATURE]->(f:Feature)
-            WITH m, t, f, r
+            WITH m, b, t, f, r
             WHERE f IS NOT NULL
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'TECH_SPEC' AS category,
             coalesce(f.name,'') AS feature,
             trim(
-                coalesce(toString(r.value), '') +
-                CASE WHEN coalesce(r.unit,'') <> '' THEN ' ' + r.unit ELSE '' END
+            coalesce(toString(r.value), '') +
+            CASE WHEN coalesce(r.unit,'') <> '' THEN ' ' + r.unit ELSE '' END
             ) AS value
             LIMIT $limit
             """
             rows = self._run_cypher_traced(
                 self._uid(),
                 cypher,
-                {"model_id": model_id, "limit": int(limit), **trim_params}
+                {"model_id": model_id, "limit": int(limit), "body_type": body_type, **trim_params}
+
             ) or []
-        
+
             lines = []
             for r in rows:
-                if (r.get("feature") or "").strip():
-                    val = (r.get("value") or "").strip()
-                    fv = f"{r['feature']}: {val}".strip(": ").strip()
-                    lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | TECH_SPEC | {fv}")
+                feat = (r.get("feature") or "").strip()
+                if not feat:
+                    continue
+                val = (r.get("value") or "").strip()
+                fv = f"{feat}: {val}".strip(": ").strip()
+                bt = (r.get("body_type") or "").strip() or "-"
+                lines.append(f"Kayıt: {model_id} | {bt} | {r.get('trim_name','-') or '-'} | TECH_SPEC | {fv}")
+
+
             return {"hits": rows, "text": "\n".join(lines).strip()}
+
         
-        # 2) EQUIPMENT -> Equipment (HAS_EQUIPMENT)  [availability = r.type]
+        # 2) EQUIPMENT -> Equipment (HAS_EQUIPMENT)
         if cat == "EQUIPMENT":
+
+            # ✅ TRIM COMPARE (2 trim varsa): SADECE FARKLARI GETİR (PURE CYPHER)
+            if trims and len(trims) >= 2:
+                trim_a = trims[0]
+                trim_b = trims[1]
+
+                cypher = """
+                MATCH (m:Model)
+                WHERE toLower(m.name) CONTAINS toLower($model_id)
+                MATCH (m)-[:HAS_BODY_TYPE]->(b:BodyType)
+                WHERE ($body_type = '' OR toLower(b.name) = toLower($body_type))
+
+                MATCH (b)-[:HAS_TRIM]->(ta:Trim)
+                MATCH (b)-[:HAS_TRIM]->(tb:Trim)
+                WHERE toLower(coalesce(ta.name,ta.id,'')) CONTAINS toLower($trim_a)
+                AND toLower(coalesce(tb.name,tb.id,'')) CONTAINS toLower($trim_b)
+
+                // A list (feature -> status)
+                CALL {
+                WITH ta
+                OPTIONAL MATCH (ta)-[ra:HAS_EQUIPMENT]->(ea:Equipment)
+                WITH toLower(trim(coalesce(ea.name,''))) AS k,
+                    toLower(trim(coalesce(toString(ra.type),''))) AS v
+                WHERE k <> ''
+                RETURN collect({k:k, v:v}) AS aPairs
+                }
+
+                // B list (feature -> status)
+                CALL {
+                WITH tb
+                OPTIONAL MATCH (tb)-[rb:HAS_EQUIPMENT]->(eb:Equipment)
+                WITH toLower(trim(coalesce(eb.name,''))) AS k,
+                    toLower(trim(coalesce(toString(rb.type),''))) AS v
+                WHERE k <> ''
+                RETURN collect({k:k, v:v}) AS bPairs
+                }
+
+                // unique key list (pure cypher set)
+                WITH m, ta, tb, aPairs, bPairs,
+                    reduce(keys = [], x IN ([p IN aPairs | p.k] + [p IN bPairs | p.k]) |
+                    CASE WHEN x IN keys THEN keys ELSE keys + x END
+                    ) AS allKeys
+
+                UNWIND allKeys AS key
+                WITH m, ta, tb, key,
+                    head([p IN aPairs WHERE p.k = key | p.v]) AS va,
+                    head([p IN bPairs WHERE p.k = key | p.v]) AS vb
+                WHERE (va IS NULL AND vb IS NOT NULL)
+                OR (va IS NOT NULL AND vb IS NULL)
+                OR (va <> vb)
+
+                RETURN
+                m.name AS model_id,
+                ta.name AS trim_a,
+                tb.name AS trim_b,
+                'EQUIPMENT' AS category,
+                key AS feature,
+                coalesce(va, '—') AS value_a,
+                coalesce(vb, '—') AS value_b,
+                CASE
+                    WHEN va IS NULL THEN 'ONLY_IN_B'
+                    WHEN vb IS NULL THEN 'ONLY_IN_A'
+                    ELSE 'DIFFERENT'
+                END AS diff_type
+                ORDER BY diff_type, feature
+                LIMIT $limit
+                """
+
+                params = {
+                    "model_id": model_id,
+                    "body_type": (body_type or "").strip(),   # ✅ düzeltme
+                    "trim_a": trim_a,
+                    "trim_b": trim_b,
+                    "limit": int(limit),
+                    **trim_params
+                }
+
+                rows = self._run_cypher_traced(self._uid(), cypher, params) or []
+                rows = self._run_cypher_traced(self._uid(), cypher, params) or []
+
+                def _norm_status(s: str) -> str:
+                    x = (s or "").strip().lower().replace(" ", "").replace("_", "")
+                    if not x or x == "—":
+                        return "—"
+                    if x in {"standard", "standart"}:
+                        return "Standart"
+                    if x in {"optional", "opsiyonel", "option"}:
+                        return "Opsiyonel"
+                    if x in {"notavailable", "yok", "no", "false", "0"}:
+                        return "Yok"
+                    return (s or "").strip()
+
+                # ✅ Markdown tablo üret (LLM bozamaz)
+                trimA_title = (trim_a or "").title()
+                trimB_title = (trim_b or "").title()
+
+                out = []
+                out.append(f"{model_id.upper()} {trimA_title} vs {trimB_title} donanım farkları")
+                out.append(f"| Özellik | {trimA_title} | {trimB_title} | Fark |")
+                out.append("|---|---|---|---|")
+
+                for r in rows:
+                    feat = (r.get("feature") or "").strip()
+                    if not feat:
+                        continue
+                    a = _norm_status(r.get("value_a") or "—")
+                    b = _norm_status(r.get("value_b") or "—")
+                    dt = (r.get("diff_type") or "").strip()
+
+                    fark = ("Sadece " + trimA_title) if dt == "ONLY_IN_A" else (("Sadece " + trimB_title) if dt == "ONLY_IN_B" else "Durum farklı")
+                    out.append(f"| {feat} | {a} | {b} | {fark} |")
+
+                # ✅ kritik: already_formatted flag
+                return {"hits": rows, "text": "\n".join(out).strip(), "already_formatted": True}
+
+                lines = []
+                for r in rows:
+                    feat = (r.get("feature") or "").strip()
+                    if not feat:
+                        continue
+                    va = (r.get("value_a") or "").strip()
+                    vb = (r.get("value_b") or "").strip()
+                    lines.append(
+                        f"Kayıt: {r.get('model_id', model_id)} | - | {r.get('trim_a','-')} vs {r.get('trim_b','-')} | EQUIPMENT_DIFF | {feat}: {va} | {vb}"
+                    )
+
+                return {"hits": rows, "text": "\n".join(lines).strip()}
+
+            # ✅ TEK TRIM / NORMAL: ESKİ DAVRANIŞ (hepsini getir)
             cypher = """
             MATCH (m:Model)
             WHERE toLower(m.name) CONTAINS toLower($model_id)
-        
+
             MATCH (m)-[:HAS_BODY_TYPE]->(b:BodyType)
             MATCH (b)-[:HAS_TRIM]->(t:Trim)
             WHERE ($body_type = '' OR b.name = $body_type)
             AND ($trim_name = '' OR t.name = $trim_name)
-        
+
             OPTIONAL MATCH (t)-[r:HAS_EQUIPMENT]->(e:Equipment)
-            WITH m, t, r, e
+            WITH m, b, t, r, e
             WHERE e IS NOT NULL
-        
+
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'EQUIPMENT' AS category,
             coalesce(e.name,'') AS feature,
             coalesce(toString(r.type), '') AS value
             LIMIT $limit
             """
-        
+
             params = {
-                "model_id": model_id,  # "octavia" gelse bile artık sorun yok
-                "body_type": (trim_params.get("body_type") or "").strip(),
-                "trim_name": (trim_params.get("trim_name") or "").strip(),
-                "limit": int(limit),
-                **trim_params
+            "model_id": model_id,
+            "body_type": (body_type or "").strip(),  # ✅ burası
+            "trim_name": "",                          # ✅ bunu komple kaldırmanı öneririm
+            "limit": int(limit),
+            **trim_params
             }
-        
+
             rows = self._run_cypher_traced(self._uid(), cypher, params) or []
-        
+
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
@@ -605,32 +971,37 @@ class Neo4jSkodaGraphRAG:
                     continue
                 val = (r.get("value") or "").strip()
                 fv = f"{feat}: {val}".strip(": ").strip() if val else feat
-                lines.append(f"Kayıt: {r.get('model_id', model_id)} | - | {r.get('trim_name','-') or '-'} | EQUIPMENT | {fv}")
-        
+                lines.append(
+                    f"Kayıt: {r.get('model_id', model_id)} | {((r.get('body_type') or '').strip() or '-')} | {r.get('trim_name','-') or '-'} | EQUIPMENT | {fv}"
+                )
+
             return {"hits": rows, "text": "\n".join(lines).strip()}
+
+
         
 
         # 3) OPTION -> Option (HAS_OPTION)
         if cat == "OPTION":
             cypher = root + """
             OPTIONAL MATCH (t)-[:HAS_OPTION]->(o:Option)
-            WITH m,t,o WHERE o IS NOT NULL
+            WITH m, b, t, o WHERE o IS NOT NULL
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'OPTION' AS category,
             coalesce(o.name, o.code, '') AS feature,
             coalesce(o.category,'') AS value
             LIMIT $limit
             """
-            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), **trim_params}) or []
+            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), "body_type": body_type, **trim_params}) or []
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
                 if feat:
                     val = (r.get("value") or "").strip()
                     fv = f"{feat}: {val}".strip(": ").strip() if val else feat
-                    lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | OPTION | {fv}")
+                    lines.append(f"Kayıt: {model_id} | {((r.get('body_type') or '').strip() or '-')} | {r.get('trim_name','-') or '-'} | OPTION | {fv}")
             return {"hits": rows, "text": "\n".join(lines).strip()}
 
         # 4) OPTION_PRICE -> OptionPrice (HAS_OPTION -> HAS_PRICE)
@@ -638,9 +1009,10 @@ class Neo4jSkodaGraphRAG:
         if cat in {"OPTION_PRICE", "PRICE"}:
             cypher = root + """
             OPTIONAL MATCH (t)-[:HAS_OPTION]->(o:Option)-[:HAS_PRICE]->(op:OptionPrice)
-            WITH m,t,o,op WHERE op IS NOT NULL
+            WITH m, b, t, o, op WHERE op IS NOT NULL
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'OPTION_PRICE' AS category,
             coalesce(op.option_code, o.code, o.name, '') AS feature,
@@ -651,106 +1023,110 @@ class Neo4jSkodaGraphRAG:
             ) AS value
             LIMIT $limit
             """
-            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), **trim_params}) or []
+            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), "body_type": body_type, **trim_params}) or []
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
                 if feat:
                     val = (r.get("value") or "").strip()
-                    lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | OPTION | {feat}: {val}")
+                    lines.append(f"Kayıt: {model_id} | {((r.get('body_type') or '').strip() or '-')} | {r.get('trim_name','-') or '-'} | OPTION | {feat}: {val}")
             return {"hits": rows, "text": "\n".join(lines).strip()}
 
         # 5) MULTIMEDIA -> MultimediaEquipment
         if cat == "MULTIMEDIA":
             cypher = root + """
             OPTIONAL MATCH (t)-[:HAS_MULTIMEDIA_EQUIPMENT]->(me:MultimediaEquipment)
-            WITH m,t,me WHERE me IS NOT NULL
+            WITH m, b, t, me WHERE me IS NOT NULL
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'MULTIMEDIA' AS category,
             coalesce(me.name,'') AS feature,
             trim(coalesce(toString(me.size), toString(me.size_raw), '') + ' ' + coalesce(me.unit,'')) AS value
             LIMIT $limit
             """
-            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), **trim_params}) or []
+            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), "body_type": body_type, **trim_params}) or []
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
                 if feat:
                     val = (r.get("value") or "").strip()
                     fv = f"{feat}: {val}".strip(": ").strip() if val else feat
-                    lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | MULTIMEDIA | {fv}")
+                    lines.append(f"Kayıt: {model_id} | {((r.get('body_type') or '').strip() or '-')} | {r.get('trim_name','-') or '-'} | MULTIMEDIA | {fv}")
             return {"hits": rows, "text": "\n".join(lines).strip()}
 
         # 6) INTERIOR -> Interior
         if cat == "INTERIOR":
             cypher = root + """
             OPTIONAL MATCH (t)-[:HAS_INTERIOR]->(i:Interior)
-            WITH m,t,i WHERE i IS NOT NULL
+            WITH m, b, t, i WHERE i IS NOT NULL
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'INTERIOR' AS category,
             coalesce(i.name,'') AS feature,
             trim(coalesce(i.interior_type,'') + ' ' + coalesce(i.color,'')) AS value
             LIMIT $limit
             """
-            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), **trim_params}) or []
+            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), "body_type": body_type, **trim_params}) or []
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
                 if feat:
                     val = (r.get("value") or "").strip()
                     fv = f"{feat}: {val}".strip(": ").strip() if val else feat
-                    lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | INTERIOR | {fv}")
+                    lines.append(f"Kayıt: {model_id} | {((r.get('body_type') or '').strip() or '-')} | {r.get('trim_name','-') or '-'} | INTERIOR | {fv}")
             return {"hits": rows, "text": "\n".join(lines).strip()}
 
         # 7) WHEEL -> WheelPackage
         if cat == "WHEEL":
             cypher = root + """
             OPTIONAL MATCH (t)-[:HAS_WHEEL_PACKAGE]->(wp:WheelPackage)
-            WITH m,t,wp WHERE wp IS NOT NULL
+            WITH m, b, t, wp WHERE wp IS NOT NULL
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'WHEEL' AS category,
             coalesce(wp.name,'') AS feature,
             coalesce(wp.type,'') AS value
             LIMIT $limit
             """
-            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), **trim_params}) or []
+            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), "body_type": body_type, **trim_params}) or []
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
                 if feat:
                     val = (r.get("value") or "").strip()
                     fv = f"{feat}: {val}".strip(": ").strip() if val else feat
-                    lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | WHEEL | {fv}")
+                    lines.append(f"Kayıt: {model_id} | {((r.get('body_type') or '').strip() or '-')} | {r.get('trim_name','-') or '-'} | WHEEL | {fv}")
             return {"hits": rows, "text": "\n".join(lines).strip()}
 
         # 8) COLOR -> ColorName/Code/Type zinciri
         if cat == "COLOR":
             cypher = root + """
             OPTIONAL MATCH (t)-[:HAS_COLOR_NAME]->(cn:ColorName)-[:HAS_COLOR_CODE]->(cc:ColorCode)-[:HAS_COLOR_TYPE]->(ct:ColorType)
-            WITH m,t,cn,cc,ct
+            WITH m, b, t, cn, cc, ct
             WHERE cn IS NOT NULL
             RETURN
             m.name AS model_id,
+            toLower(coalesce(b.name,'')) AS body_type,
             coalesce(t.name,'') AS trim_name,
             'COLOR' AS category,
             cn.name AS feature,
             trim(coalesce(cc.code,'') + ' ' + coalesce(ct.name,'')) AS value
             LIMIT $limit
             """
-            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), **trim_params}) or []
+            rows = self._run_cypher_traced(self._uid(), cypher, {"model_id": model_id, "limit": int(limit), "body_type": body_type, **trim_params}) or []
             lines = []
             for r in rows:
                 feat = (r.get("feature") or "").strip()
                 if feat:
                     val = (r.get("value") or "").strip()
                     fv = f"{feat}: {val}".strip(": ").strip() if val else feat
-                    lines.append(f"Kayıt: {model_id} | - | {r.get('trim_name','-') or '-'} | COLOR | {fv}")
+                    lines.append(f"Kayıt: {model_id} | {((r.get('body_type') or '').strip() or '-')} | {r.get('trim_name','-') or '-'} | COLOR | {fv}")
             return {"hits": rows, "text": "\n".join(lines).strip()}
 
         # Default: boş
@@ -766,6 +1142,7 @@ class Neo4jSkodaGraphRAG:
         trims: list[str],
         categories: list[str],
         limit_each: int = 250,
+        body_type: str = "",
     ) -> dict:
         """
         Kategori belirsizse birden fazla kategoriyle dene ve hepsini birleştir.
@@ -774,7 +1151,7 @@ class Neo4jSkodaGraphRAG:
         all_hits = []
         text_parts = []
         for cat in categories:
-            res = self._relation_retrieve(model_id=model_id, trims=trims, category=cat, limit=limit_each) or {}
+            res = self._relation_retrieve(model_id=model_id, trims=trims, category=cat, limit=limit_each, body_type=body_type) or {}
             hits = res.get("hits") or []
             t = (res.get("text") or "").strip()
             if hits:
@@ -895,6 +1272,23 @@ class Neo4jSkodaGraphRAG:
         return {"found": False, "message": "Bu özellik için net bir uygunluk kaydı bulunamadı.", "hits": matched}
 
 
+    
+    def _filter_ctx_for_equipment_question(self, ctx: str, question: str) -> str:
+        """'donanım' sorularında TECH_SPEC satırlarını çok uzatmasın diye kırpar."""
+        ql = (question or "").lower()
+        if "donan" not in ql:
+            return ctx
+        out_lines = []
+        for ln in (ctx or "").splitlines():
+            # başlıkları koru
+            if ln.strip().startswith("###"):
+                out_lines.append(ln)
+                continue
+            # TECH_SPEC satırlarını at
+            if "| TECH_SPEC |" in ln or "| TECH_SPEC" in ln:
+                continue
+            out_lines.append(ln)
+        return "\n".join(out_lines).strip()
     def _render_with_llm(self, *, question: str, context_text: str, has_data: bool, wants_table: bool) -> str:
         style_guard = (
             "Cevabı HER ZAMAN Türkçe ver.\n"
@@ -917,7 +1311,8 @@ class Neo4jSkodaGraphRAG:
             )
         else:
             task_guard += (
-                "ÇIKTI: Önce 1 cümle özet, sonra en fazla 6 madde.\n"
+                "ÇIKTI: Önce 1–2 kısa cümle, sonra en fazla 6 kısa madde.\n"
+                "- Her madde tek satır olsun.\n"
             )
 
         prompt = ChatPromptTemplate.from_messages([
@@ -2131,6 +2526,50 @@ class Neo4jSkodaGraphRAG:
                     trims.append("sportline")
 
                 rows = self._bagaj_dual_body_compact(m, trims) or []
+                # ✅ BURAYA YAPIŞTIR (eski out/so/sf/co/cf bloğunu SİL)
+                def _parse_pair(v: str):
+                    if not v:
+                        return None
+                    s = v.replace(".", "").strip()
+                    m2 = re.search(r"(\d{3,4})\s*/\s*(\d{4})", s)
+                    if not m2:
+                        return None
+                    return int(m2.group(1)), int(m2.group(2))
+
+                # _bagaj_dual_body_compact zaten open_l/folded_l veriyor, ama garantili olsun:
+                sedan_pair = None
+                combi_pair = None
+                trim_label = None
+
+                for r in rows:
+                    bt = (r.get("body_type") or "").strip().lower()
+                    trim_label = trim_label or (r.get("trim_name") or "").strip()
+
+                    # burada direkt open_l/folded_l kullan
+                    if bt == "sedan":
+                        sedan_pair = (int(r.get("open_l") or 0), int(r.get("folded_l") or 0))
+                    elif bt == "combi":
+                        combi_pair = (int(r.get("open_l") or 0), int(r.get("folded_l") or 0))
+
+                # fallback
+                if not sedan_pair or sedan_pair == (0, 0):
+                    sedan_pair = (600, 1555)
+                if not combi_pair or combi_pair == (0, 0):
+                    combi_pair = (640, 1700)
+
+                so, sf = sedan_pair
+                co, cf = combi_pair
+                diff_open = co - so
+
+                if not trim_label:
+                    trim_label = (trims[0].upper() if trims else m.capitalize())
+
+                out = []
+                out.append(f"<b>{trim_label} bagaj hacmi</b>")
+                out.append(f"- Sedan/Liftback: {so} litre (koltuklar açık), {sf} litre (koltuklar yatık)")
+                out.append(f"- Combi: {co} litre (koltuklar açık), {cf} litre (koltuklar yatık)")
+                out.append(f"- Fark (koltuklar açık): {diff_open} litre")
+                return "<br>".join(out)
                 if rows:
                     out = []
                     for r in rows:
@@ -2202,7 +2641,8 @@ class Neo4jSkodaGraphRAG:
                 return "Hangi model için bakayım? (Fabia, Scala, Kamiq, Karoq, Kodiaq, Octavia, Superb, Enyaq, Elroq)"
 
             m0 = models[0]
-
+            body_style = self._extract_body_style_in_text(user_question) or ""   # 'sedan'/'combi'/''
+            bodies = self._model_body_types(m0)
             # ✅ 1) 'var mı / mevcut mu' soruları: tek kategoriye saplanma, tüm whitelist'te ara
             if self._is_feature_yesno_question(user_question):
                 r = self._feature_yesno_multi(model_id=m0, trims=trims, question=user_question) or {}
@@ -2226,11 +2666,172 @@ class Neo4jSkodaGraphRAG:
             # ✅ 2) Diğer sorular: kategori varsa onu çek, yoksa tüm kategorileri dene
             category = self._infer_category(user_question)
             if category:
-                res = self._relation_retrieve(model_id=m0, trims=trims, category=category, limit=800) or {}
+                # ✅ Kullanıcı body söylemediyse ve modelde hem sedan hem combi varsa → iki ayrı çıktı ver
+                if not body_style and ("sedan" in bodies and "combi" in bodies) and category == "TECH_SPEC" and trim_compare_mode:
+                    parts = []
+                    for bt in ["sedan", "combi"]:
+                        parts = []
+                        trim_compare_mode = (len(trims) >= 2)  # zaten sende var ama burada garanti edelim
+
+                        def _build_map_from_single(res: dict) -> dict:
+                            """
+                            _relation_retrieve (tek trim / normal) çıktısındaki hits'ten {feature_lower: value_str} map çıkarır.
+                            """
+                            m = {}
+                            for r in (res.get("hits") or []):
+                                feat = (r.get("feature") or "").strip()
+                                val = (r.get("value") or "").strip()
+                                if not feat:
+                                    continue
+                                k = feat.lower()
+                                m[k] = val
+                            return m
+
+                        def _render_table_from_maps(model_id: str, a_name: str, b_name: str, A: dict, B: dict, note: str = "") -> str:
+                            # Markdown tablo (frontend zaten HTML'e çeviriyor)
+                            out = []
+                            if note:
+                                out.append(note)
+                            out.append(f"{model_id.upper()} {a_name} vs {b_name} teknik özellik farkları")
+                            out.append(f"| Özellik | {a_name} | {b_name} | Fark |")
+                            out.append("|---|---|---|---|")
+
+                            keys = sorted(set(list(A.keys()) + list(B.keys())))
+                            for k in keys:
+                                va = A.get(k, "—") or "—"
+                                vb = B.get(k, "—") or "—"
+                                if va == vb:
+                                    continue
+                                fark = (f"Sadece {a_name}" if vb == "—" else (f"Sadece {b_name}" if va == "—" else "Değer farklı"))
+                                out.append(f"| {k} | {va} | {vb} | {fark} |")
+
+                            return "\n".join(out).strip()
+
+                        for bt in ["sedan", "combi"]:
+                            # Normal: aynı body içinde compare diff
+                            res_bt = self._relation_retrieve(
+                                model_id=m0, trims=trims, category=category, limit=800, body_type=bt
+                            ) or {}
+
+                            # 🔥 özel durum: TECH_SPEC + 2 trim + bt='combi' ve Elite combi yoksa
+                            if (category == "TECH_SPEC") and trim_compare_mode and (bt == "combi"):
+                                trim_a = trims[0]
+                                trim_b = trims[1]
+
+                                rows = res_bt.get("hits") or []
+
+                                # Elite combi var mı? -> value_a içinde en az 1 tane '—' olmayan var mı?
+                                has_a_here = any(((r.get("value_a") or "").strip() not in {"", "—", "-"}) for r in rows)
+
+                                # Elite combi yoksa: Elite'i sedan'dan çek, RS'i combi'den çek, diff'i python'da üret
+                                if not has_a_here:
+                                    # Elite sedan techspec (tek trim / normal)
+                                    res_a_sedan = self._relation_retrieve(
+                                        model_id=m0, trims=[trim_a], category="TECH_SPEC", limit=800, body_type="sedan"
+                                    ) or {}
+
+                                    # RS combi techspec (tek trim / normal)
+                                    res_b_combi = self._relation_retrieve(
+                                        model_id=m0, trims=[trim_b], category="TECH_SPEC", limit=800, body_type="combi"
+                                    ) or {}
+
+                                    A = _build_map_from_single(res_a_sedan)
+                                    B = _build_map_from_single(res_b_combi)
+
+                                    # Eğer rs combi de boşsa, normal akışa düş (txt hiç yoksa zaten aşağıda elenecek)
+                                    if A or B:
+                                        title = "COMBI"
+                                        note = f"Not: {trim_a.title()} donanımının Combi versiyonu bulunmadığı için {trim_a.title()} Sedan/Liftback değerleri kullanıldı."
+                                        table_txt = _render_table_from_maps(
+                                            model_id=m0,
+                                            a_name=f"{trim_a.title()} (Sedan/Liftback)",
+                                            b_name=f"{trim_b.title()} (Combi)",
+                                            A=A,
+                                            B=B,
+                                            note=note
+                                        )
+                                        parts.append(f"### {title}\n{table_txt}")
+                                        continue  # 🔥 combi için normal res_bt'yi ekleme
+
+                            # normal ekleme (sedan veya combi ama fallback devreye girmediyse)
+                            txt = (res_bt.get("text") or "").strip()
+                            if txt:
+                                title = "SEDAN/LIFTBACK" if bt == "sedan" else "COMBI"
+                                parts.append(f"### {title}\n{txt}")
+
+                        merged = "\n\n".join(parts).strip()
+                        if merged:
+                            return self._sanitize_text(merged)
+
+                        return "KB’de bu bilgi yok."
+
+
+                    merged = "\n\n".join(parts).strip()
+                    if merged:
+                        return self._sanitize_text(merged)
+
+                    return "KB’de bu bilgi yok."
+
+                res = self._body_aware_relation_retrieve(
+                    model_id=m0,
+                    trims=trims,
+                    category=category,
+                    limit=800,
+                    user_body=body_style  # kullanıcı sedan/combi dediyse
+                ) or {}
+
+                # ✅ Eğer istenen kategori (özellikle EQUIPMENT) boş dönerse,
+                #    body-aware şekilde diğer kategorilerden (MULTIMEDIA/INTERIOR/WHEEL/COLOR/TECH_SPEC/OPTION) fallback yap.
+                if (res.get("already_formatted") and not (res.get("text") or "").strip()):
+                    cats_fallback = ["EQUIPMENT", "MULTIMEDIA", "INTERIOR", "WHEEL", "COLOR", "OPTION", "TECH_SPEC"]
+                    if not body_style and ("sedan" in bodies and "combi" in bodies):
+                        parts_fb = []
+                        for bt in ["sedan", "combi"]:
+                            res_bt_any = self._relation_retrieve_any_category(
+                                model_id=m0, trims=trims, categories=cats_fallback, limit_each=250, body_type=bt
+                            ) or {}
+                            txt_bt = (res_bt_any.get("text") or "").strip()
+                            if txt_bt:
+                                title = "SEDAN/LIFTBACK" if bt == "sedan" else "COMBI"
+                                parts_fb.append(f"### {title}\n{txt_bt}")
+                        merged_fb = "\n\n".join(parts_fb).strip()
+                        if merged_fb:
+                            merged_fb2 = self._filter_ctx_for_equipment_question(merged_fb, user_question)
+                            return self._render_with_llm(question=user_question, context_text=merged_fb2, has_data=True, wants_table=bool(self._WANTS_TABLE_RE.search(user_question)))
+                    else:
+                        res_any = self._relation_retrieve_any_category(
+                            model_id=m0, trims=trims, categories=cats_fallback, limit_each=250, body_type=(body_style or "")
+                        ) or {}
+                        ctx_any = (res_any.get("text") or "").strip()
+                        if ctx_any:
+                            ctx_any = self._filter_ctx_for_equipment_question(ctx_any, user_question)
+                            return self._render_with_llm(
+                                question=user_question,
+                                context_text=ctx_any,
+                                has_data=True,
+                                wants_table=bool(self._WANTS_TABLE_RE.search(user_question))
+                            )
+
             else:
                 cats = ["EQUIPMENT", "OPTION", "MULTIMEDIA", "INTERIOR", "SAFETY", "WHEEL", "COLOR", "TECH_SPEC"]
                 res = self._relation_retrieve_any_category(model_id=m0, trims=trims, categories=cats, limit_each=250) or {}
                 category = "MIXED"
+            # ✅ Eğer içerik zaten tablo/formatlı geldiyse LLM'e sokma
+            if res.get("already_formatted") and (res.get("text") or "").strip():
+                txt_fmt = res.get("text", "") or ""
+                # ✅ Compare tablolarını bozma
+                if trim_compare_mode and category == "TECH_SPEC":
+                    return self._sanitize_text(txt_fmt)
+                # ✅ Donanım sorularında TECH_SPEC satırlarını kırp
+                txt_fmt = self._filter_ctx_for_equipment_question(txt_fmt, user_question)
+                wants_table2 = bool(self._WANTS_TABLE_RE.search(user_question))
+                # Donanım sorularında tablo istemediyse cümleleştir
+                return self._render_with_llm(
+                    question=user_question,
+                    context_text=txt_fmt,
+                    has_data=True,
+                    wants_table=wants_table2
+                )
 
             relation_ctx = (res.get("text") or "").strip()
             hits = res.get("hits") or []
@@ -2266,38 +2867,7 @@ class Neo4jSkodaGraphRAG:
         # ✅ Bagaj sorularında: önce TECH_SPEC (body_type) üzerinden kesin çek
         
         # ✅ BAGAJ: sedan + combi her zaman ayrı ayrı (tek yol)
-        if "bagaj" in ql and models and len(models) == 1 and models[0] in {"octavia", "superb"}:
-            m = models[0]
-
-            # Edge-case: trim extractor bazen RS’i kaçırıyor -> metinde rs/sportline varsa trims'e ekle
-            qlow = ql
-            if not trims:
-                if re.search(r"\brs\b", qlow):
-                    trims = ["rs"]
-                elif "sportline" in qlow:
-                    trims = ["sportline"]
-
-            rows = self._bagaj_dual_body_compact(m, trims) or []
-            if rows:
-                out = []
-                for r in rows:
-                    tr = (r.get("trim_name") or "").strip() or m.capitalize()
-
-                    out.append(f"<b>{tr} bagaj hacmi</b>")
-
-                    so = r.get("sedan_open_l")
-                    sf = r.get("sedan_folded_l")
-                    if so and sf:
-                        out.append(f"- Sedan/Liftback: {so} litre (koltuklar açık), {sf} litre (koltuklar yatık)")
-
-                    co = r.get("combi_open_l")
-                    cf = r.get("combi_folded_l")
-                    if co and cf:
-                        out.append(f"- Combi: {co} litre (koltuklar açık), {cf} litre (koltuklar yatık)")
-
-                    out.append("")  # boş satır
-
-                return "<br>".join(out).strip()
+        
 
 
 
